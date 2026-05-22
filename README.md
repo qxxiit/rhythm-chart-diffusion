@@ -42,8 +42,8 @@ See [`MASTERPLAN.md`](MASTERPLAN.md) for the full 9-month project plan.
 ### Setup
 
 ```bash
-# Clone the repo (replace YOUR_GITHUB_USERNAME with your actual GitHub handle)
-git clone https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion.git
+# Clone the repo (replace qxxiit with your actual GitHub handle)
+git clone https://github.com/qxxiit/rhythm-chart-diffusion.git
 cd rhythm-chart-diffusion
 
 # Create environment (choose one)
@@ -126,7 +126,7 @@ If you use this code in academic work, please cite:
   author = {Moon, Jeonghyun and Ji, Hyunwoo and Pyo, Youngbok},
   year   = {2026},
   note   = {POSTECH UGRP},
-  url    = {https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion}
+  url    = {https://github.com/qxxiit/rhythm-chart-diffusion}
 }
 ```
 

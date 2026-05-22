@@ -24,10 +24,10 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage"      = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion"
-"Repository"    = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion"
-"Issues"        = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion/issues"
-"Documentation" = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion#readme"
+"Homepage"      = "https://github.com/qxxiit/rhythm-chart-diffusion"
+"Repository"    = "https://github.com/qxxiit/rhythm-chart-diffusion"
+"Issues"        = "https://github.com/qxxiit/rhythm-chart-diffusion/issues"
+"Documentation" = "https://github.com/qxxiit/rhythm-chart-diffusion#readme"
 
 # ===== Ruff (linter + formatter) =====
 [tool.ruff]
