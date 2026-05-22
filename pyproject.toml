@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rhythm-chart-diffusion"
+version = "0.0.1"
+description = "Audio-conditioned discrete diffusion for rhythm-game chart generation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Jeonghyun Moon"},
+    {name = "Hyunwoo Ji"},
+    {name = "Youngbok Pyo"},
+]
+keywords = ["deep-learning", "music-information-retrieval", "diffusion", "rhythm-game"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+"Homepage"      = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion"
+"Repository"    = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion"
+"Issues"        = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion/issues"
+"Documentation" = "https://github.com/YOUR_GITHUB_USERNAME/rhythm-chart-diffusion#readme"
+
+# ===== Ruff (linter + formatter) =====
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["notebooks", "data", "outputs", "wandb"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults (common in Hydra)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ===== Pytest =====
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests requiring GPU",
+]
+
+# ===== Coverage =====
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

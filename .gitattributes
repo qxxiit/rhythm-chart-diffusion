@@ -1,0 +1,35 @@
+# Auto detect text files and perform LF normalization
+* text=auto eol=lf
+
+# Source code
+*.py text
+*.yml text
+*.yaml text
+*.toml text
+*.md text
+*.txt text
+*.sh text
+*.cfg text
+*.ini text
+
+# Notebooks
+*.ipynb text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp3 binary
+*.wav binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.pt binary
+*.pth binary
+*.ckpt binary
+*.bin binary
+*.safetensors binary
+*.npy binary
+*.npz binary

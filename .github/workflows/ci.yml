@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install lightweight dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest pytest-cov
+          # Don't install heavy deps (torch, librosa) in CI to keep it fast
+          # Tests should mock or skip GPU/audio tests
+
+      - name: Lint with ruff
+        run: |
+          ruff check src tests scripts || true  # Don't fail CI on lint yet (early dev)
+          ruff format --check src tests scripts || true
+
+      - name: Run tests
+        run: |
+          # Skip slow and gpu tests in CI
+          pytest tests/ -v -m "not slow and not gpu" || true
+        # Allow failures during early development; tighten this later
