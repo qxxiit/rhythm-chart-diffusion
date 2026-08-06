@@ -83,6 +83,7 @@ Thumbs.db
 
 # ===== ML / Data =====
 # Raw and processed data (too large for git, use external storage)
+/data/
 data/raw/
 data/processed/
 data/cache/
@@ -142,6 +143,7 @@ secrets/
 credentials.json
 
 # ===== Misc =====
+sample_response.json
 .cache/
 tmp/
 temp/
