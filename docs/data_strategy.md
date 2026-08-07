@@ -28,3 +28,6 @@ From `.beatmapsets[0].beatmaps[0]` in `sample_response.json`:
 총 세트: 7363
 4K 포함 세트: 5882
 중복: 0
+
+## 260808
+5881 sets → catalog.csv

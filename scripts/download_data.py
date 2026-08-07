@@ -34,8 +34,9 @@ MIRRORS = [
 ]
 MIN_SIZE = 10_000  # bytes; smaller responses are treated as error pages
 
-
 def download_one(sid: int, out_dir: pathlib.Path, session: requests.Session) -> str:
+    if (pathlib.Path("data/raw") / str(sid)).exists():   # 이미 추출 완료
+            return "skip"
     out = out_dir / f"{sid}.osz"
     if out.exists() and out.stat().st_size > MIN_SIZE:
         return "skip"
