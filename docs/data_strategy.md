@@ -29,5 +29,7 @@ From `.beatmapsets[0].beatmaps[0]` in `sample_response.json`:
 4K 포함 세트: 5882
 중복: 0
 
-## 260808
-5881 sets → catalog.csv
+## 260808: 데이터셋 구축 완료
+- ranked mania 세트: 7,363 → 4K 필터 5,882 → 다운로드 성공 5,782 (fail 0)
+- 최종 4K 채보(.osu): 18,452개, 파싱 실패 0
+- 파이프라인: fetch_metadata → make_target_list → download_data → extract_osz → chart_parser
