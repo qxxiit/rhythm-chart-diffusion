@@ -1,36 +1,25 @@
-# ===== Core ML =====
-torch>=2.0.0
-torchaudio>=2.0.0
-numpy>=1.24.0,<2.0
-scipy>=1.10.0
+# Core
+torch>=2.0
+numpy>=1.24
 
-# ===== Audio =====
-librosa>=0.10.1
-soundfile>=0.12.1
+# Audio / MIR
+librosa>=0.10
+soundfile>=0.12
 
-# ===== Config / Experiment Tracking =====
-hydra-core>=1.3.2
-omegaconf>=2.3.0
-wandb>=0.16.0
+# Data collection & pipeline
+requests>=2.31
+python-dotenv>=1.0
 
-# ===== Data utilities =====
-pandas>=2.0.0
-pyarrow>=14.0.0
-tqdm>=4.66.0
-requests>=2.31.0
+# Analysis & visualization
+pandas>=2.0
+matplotlib>=3.7
+tqdm>=4.66
 
-# ===== Plotting / Notebooks =====
-matplotlib>=3.7.0
-seaborn>=0.12.0
-jupyter>=1.0.0
-ipykernel>=6.27.0
+# Config & experiment tracking
+hydra-core>=1.3
+omegaconf>=2.3
+wandb>=0.16
 
-# ===== Dev tools =====
-ruff>=0.1.0
-pytest>=7.4.0
-pytest-cov>=4.1.0
-pre-commit>=3.5.0
-
-# ===== Optional but useful =====
-einops>=0.7.0  # Tensor manipulation
-rich>=13.0.0   # Pretty terminal output
+# Development
+pytest>=8.0
+ipykernel>=6.29
