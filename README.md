@@ -1,6 +1,6 @@
-# Rhythm Game Chart Generation via Audio-Conditioned Discrete Diffusion
+# Audio-Conditioned Discrete Diffusion for Rhythm Game Chart Generation
 
-> ActFusion-inspired discrete diffusion model for generating rhythm-game charts from audio.
+> Discrete diffusion model for generating rhythm-game charts from audio.
 > POSTECH UGRP 2026. **Open source** from day one — contributions and feedback welcome.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -10,115 +10,123 @@
 
 ## Overview
 
-This project develops an automatic chart generation system for rhythm games. Given an audio file (mp3/wav), the model produces a playable chart for 4–8 key rhythm games. We compare:
+Rhythm game charts (note placement data) are normally authored by hand, taking hours to tens of hours per song. This project develops an automatic chart generation system: given an audio file (mp3/wav), the model produces a playable chart.
 
-1. **Baseline**: Beat-Aligned autoregressive Transformer (Yi et al., ISMIR 2023)
-2. **Main contribution**: ActFusion-inspired audio-conditioned discrete diffusion (Gong et al., NeurIPS 2024 → audio domain)
+Existing learning-based approaches generate charts token by token (autoregressive), which makes it hard to maintain structural consistency across a whole song and offers little control over difficulty or pattern style. We investigate **discrete diffusion** as an alternative — generating the note sequence as a whole and refining it iteratively, conditioned on audio.
 
-See [`MASTERPLAN.md`](MASTERPLAN.md) for the full 9-month project plan.
+The project compares two approaches on the same dataset:
+
+1. **Baseline** — Beat-Aligned autoregressive Transformer (Yi et al., ISMIR 2023), reproduced as a reference point
+2. **Proposed** — Audio-conditioned discrete diffusion (D3PM-style masking with a cross-attention denoiser)
+
+See [`MASTERPLAN.md`](MASTERPLAN.md) for the full project plan.
 
 ## Status
 
-🚧 **In development.** Project started May 2026. Target completion: January 2027.
+🚧 **In development.** Started July 2026. Target completion: January 2027.
 
-| Phase | Period | Status |
-|---|---|---|
-| Phase 0 — Setup | 2026.05 ~ 06 | 🟡 In progress |
-| Phase 1 — Baseline | 2026.07 ~ 08 | ⚪ Not started |
-| Phase 2 — Diffusion | 2026.08 ~ 09 | ⚪ Not started |
-| Phase 3 — Ablation | 2026.10 ~ 11 | ⚪ Not started |
-| Phase 4 — Demo + Eval | 2026.11 | ⚪ Not started |
-| Phase 5 — Paper | 2026.12 | ⚪ Not started |
-| Phase 6 — Submission | 2027.01 | ⚪ Not started |
+| Phase | Status |
+|---|---|
+| Phase 0 — Setup & data pipeline | ✅ **Complete** (Aug 2026) |
+| Phase 1 — Problem formulation & baseline | 🟡 In progress — tokenization and model design |
+| Phase 2 — Discrete diffusion | ⚪ Not started |
+| Phase 3 — Ablation & multi-key | ⚪ Not started |
+| Phase 4 — Unity integration & user study | ⚪ Not started |
+| Phase 5 — Paper | ⚪ Not started |
+
+### Dataset (built Aug 2026)
+
+| | |
+|---|---|
+| Ranked osu!mania beatmapsets surveyed | 7,363 |
+| Sets containing 4K difficulties | 5,882 |
+| Sets downloaded | 5,882 (0 failures) |
+| **4K charts (`.osu`) parsed** | **18,452** (0 parse failures) |
+
+Collection, extraction, and parsing are fully scripted and reproducible. Raw beatmap data is **not redistributed** — the pipeline downloads from the official API and community mirrors using the beatmapset ID list, so anyone can rebuild the same dataset from scratch.
 
 ## Quick Start
 
 ### Requirements
 
 - Python ≥ 3.10
-- PyTorch ≥ 2.0 (with CUDA or MPS support)
-- 4TB+ free disk space (for osu!mania dataset)
+- PyTorch ≥ 2.0 (CUDA or MPS)
+- ~30 GB free disk space (`.osz` archives are discarded after extracting 4K charts and audio)
+- osu! API v2 credentials (`OSU_CLIENT_ID`, `OSU_CLIENT_SECRET`) — register an OAuth application at <https://osu.ppy.sh/home/account/edit>
 
 ### Setup
 
 ```bash
-# Clone the repo (replace qxxiit with your actual GitHub handle)
 git clone https://github.com/qxxiit/rhythm-chart-diffusion.git
 cd rhythm-chart-diffusion
 
-# Create environment (choose one)
-# Option A: conda
-conda env create -f environment.yml
-conda activate rhythm-chart
+# Environment (choose one)
+conda env create -f environment.yml && conda activate rhythm-chart   # Option A
+python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt   # Option B
 
-# Option B: pip
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+cp .env.example .env    # then fill in OSU_CLIENT_ID / OSU_CLIENT_SECRET
 
-# Verify installation
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-### Data Preparation
+### Building the Dataset
+
+The pipeline runs in four stages; each step is resumable and skips work already done.
 
 ```bash
-# Download osu!mania 4K ranked beatmaps (requires osu! API key in .env)
-python scripts/download_data.py --mode mania-4k --status ranked --output data/raw
+# 1. Fetch metadata for all ranked mania beatmapsets (cursor pagination, resumable)
+python scripts/fetch_metadata.py
 
-# Preprocess: extract mel-spectrograms and tokenize charts
-python scripts/preprocess_data.py --input data/raw --output data/processed
+# 2. Filter to sets containing 4K difficulties -> data/metadata/targets.txt
+python scripts/make_target_list.py
+
+# 3. Download .osz archives (mirror fallback, rate limited, logged)
+python scripts/download_data.py --output data/osz
+
+# 4. Extract 4K .osu charts + audio only, discard the rest
+python scripts/extract_osz.py
+python scripts/build_catalog.py       # -> data/metadata/catalog.csv
 ```
 
-### Training
+Downloading the full set takes several hours. Run steps 3 and 4 concurrently to keep disk usage flat — `extract_osz.py` removes each archive once its charts are extracted.
 
-```bash
-# Train baseline (autoregressive Transformer)
-python scripts/train.py model=transformer_baseline data=osu_mania_4k
+### Parsing Charts
 
-# Train diffusion model (Phase 2)
-python scripts/train.py model=diffusion data=osu_mania_4k
+```python
+from src.data.chart_parser import parse_osu
+
+chart = parse_osu("data/raw/1154776/xxx.osu")
+chart.key_count   # 4
+chart.bpm         # 202.0
+chart.notes       # [Note(time_ms, lane, end_ms), ...]  end_ms set for hold notes
 ```
 
-### Evaluation
+### Training and Inference
 
-```bash
-python scripts/evaluate.py --checkpoint outputs/<run_id>/best.ckpt
-```
-
-### Inference (single song)
-
-```bash
-python scripts/inference.py \
-  --checkpoint outputs/<run_id>/best.ckpt \
-  --audio path/to/song.mp3 \
-  --output path/to/chart.json
-```
+Not yet available — the model is still being designed. Entry points (`scripts/train.py`, `scripts/evaluate.py`, `scripts/inference.py`) exist as stubs and will be filled in as Phases 1–2 progress.
 
 ## Repository Structure
 
 ```
-src/                  # All Python source code
-  data/               # Data download, preprocessing, dataset classes
-  models/             # Model architectures (transformer, diffusion)
+src/
+  data/               # osu! API client, chart parser, tokenizer, dataset classes
+  models/             # Model architectures (transformer baseline, diffusion)
   training/           # Training loops, losses
   evaluation/         # F1, mAP@tIoU, diversity metrics
   unity_export/       # Convert model output to Unity JSON
-  utils/              # Common utilities
+  utils/
 
-configs/              # Hydra configs (model, data, training)
-scripts/              # Entry points (download, preprocess, train, evaluate)
-notebooks/            # Jupyter notebooks (exploration, visualization)
-tests/                # Unit tests
-docs/                 # Architecture, data format, experiment notes
-paper/                # Paper drafts and reading notes
+configs/              # Hydra configs
+scripts/              # Entry points (see pipeline above)
+notebooks/            # Exploration and chart visualization
+tests/
+docs/                 # Architecture, data format, decisions, experiment notes
+paper/                # Drafts and reading notes
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module details.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module details, [`docs/DATA_FORMAT.md`](docs/DATA_FORMAT.md) for the chart representation, and [`docs/DECISIONS.md`](docs/DECISIONS.md) for design decisions and known technical debt.
 
 ## Citation
-
-If you use this code in academic work, please cite:
 
 ```bibtex
 @misc{rhythm-chart-diffusion-2026,
@@ -133,14 +141,14 @@ If you use this code in academic work, please cite:
 ## References
 
 - [1] Donahue, Lipton, McAuley. *Dance Dance Convolution.* ICML 2017.
-- [2] Takada et al. *GenéLive!* AAAI 2023.
+- [2] Takada et al. *GenéLive!: Generating Rhythm Actions in Love Live!* AAAI 2023.
 - [3] Yi, Lee, Lee. *Beat-Aligned Spectrogram-to-Sequence Generation of Rhythm-Game Charts.* arXiv:2311.13687, 2023.
-- [4] Gong, Kwak, Cho. *ActFusion: a Unified Diffusion Model for Action Segmentation and Anticipation.* NeurIPS 2024.
-- [5] Austin et al. *Structured Denoising Diffusion Models in Discrete State-Spaces (D3PM).* NeurIPS 2021.
+- [4] Austin et al. *Structured Denoising Diffusion Models in Discrete State-Spaces (D3PM).* NeurIPS 2021.
+- [5] Ho, Jain, Abbeel. *Denoising Diffusion Probabilistic Models.* NeurIPS 2020.
 
 ## License
 
-MIT License — see [`LICENSE`](LICENSE).
+MIT License — see [`LICENSE`](LICENSE). The license covers this code only; beatmap content remains under its original authors' terms and is not distributed here.
 
 ## Contributing
 
@@ -149,7 +157,7 @@ This is primarily a student research project, but we welcome:
 - Suggestions on model design, evaluation metrics, or related literature
 - PRs for fixes or improvements (please open an issue first to discuss)
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for our internal workflow conventions.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for workflow conventions.
 
 ## Acknowledgments
 
