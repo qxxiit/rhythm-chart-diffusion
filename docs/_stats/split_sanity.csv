@@ -1,0 +1,8 @@
+metric,value
+charts,18452.0
+beatmapsets,5881.0
+charts_per_set_mean,3.14
+distinct_audio_keys,5301.0
+charts_per_audio_mean,3.48
+audio_keys_spanning_multiple_sets,459.0
+charts_affected_by_cross_set_dupes,2779.0

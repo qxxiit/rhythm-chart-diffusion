@@ -1,0 +1,9 @@
+rule,n_charts,pct
+nps < 0.5,3,0.02
+duration < 30s,74,0.4
+duration > 400s,160,0.87
+hold_ratio > 0.9,77,0.42
+timing_sections > 20,849,4.6
+offbeat_red_lines > 0,4613,25.0
+lane_imbalance > 2,15,0.08
+hold shorter than 1/12 beat,159,0.86
