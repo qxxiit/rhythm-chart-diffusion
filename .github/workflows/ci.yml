@@ -25,7 +25,7 @@ jobs:
       - name: Install lightweight dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pytest-cov
+          pip install ruff pytest pytest-cov numpy
           # Don't install heavy deps (torch, librosa) in CI to keep it fast
           # Tests should mock or skip GPU/audio tests
 
@@ -36,6 +36,5 @@ jobs:
 
       - name: Run tests
         run: |
-          # Skip slow and gpu tests in CI
-          pytest tests/ -v -m "not slow and not gpu" || true
-        # Allow failures during early development; tighten this later
+          # Skip slow and gpu tests in CI. Failures fail the build.
+          pytest tests/ -v -m "not slow and not gpu"

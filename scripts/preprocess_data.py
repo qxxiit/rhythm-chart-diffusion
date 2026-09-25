@@ -11,7 +11,7 @@ TODO (Phase 1, week of 7/3):
 - [ ] Parse .osu files (src/data/osu_parser.py)
 - [ ] Extract mel-spectrogram (80 mel bins, FFT 512)
 - [ ] Extract a fixed-hop log-Mel spectrogram, then resample it onto BeatGrid cells
-- [ ] Apply beat alignment with BeatGrid.cell_index/time_from_cell
+- [ ] Frame times per chunk: BeatGrid.frame_times(meta.start_cell, L) (4 frames per token cell)
 - [ ] Tokenize charts (src/data/tokenizer.py)
 - [ ] Save as .npy or .pt (per song or sharded)
 - [ ] Build train/val/test split file (song-level, no leakage)

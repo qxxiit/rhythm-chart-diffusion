@@ -24,7 +24,7 @@ audio (.mp3)                      chart (.osu)
        │                    [data/chart_parser.py] ✅
        │                               │
        ▼                               ▼
-[data/preprocess.py] 🚧        [data/tokenizer.py] 🚧
+[data/preprocess.py] 🚧        [data/tokenizer.py] ✅
  mel-spectrogram                  chart tokens
        └───────────────┬───────────────┘
                        ▼
@@ -53,8 +53,8 @@ audio (.mp3)                      chart (.osu)
 ### `src/data/`
 - ✅ **`osu_api.py`**: osu! API v2 client (client-credentials auth, beatmapset search with cursor pagination, 429 handling).
 - ✅ **`chart_parser.py`**: Parses `.osu` text into `Chart` / `Note` objects — hit objects, timing points, key count, lane derivation, hold notes. See [`DATA_FORMAT.md`](DATA_FORMAT.md).
-- 🚧 **`tokenizer.py`**: Converts chart events to integer tokens and back. Vocabulary definition lives here. *Scheme under design — the decision determines sequence length and the diffusion transition matrix, so it gates everything downstream.*
-- 🚧 **`preprocess.py`**: log-Mel extraction with beat-aligned hop (1/48 beat), BPM-derived frame timing.
+- ✅ **`tokenizer.py`**: `encode` / `decode` between charts and the `[n_chunks, 384, 4]` token grid (1/12-beat cells re-originated at each red line, vocabulary of 7), `grammar_violations`, and the onset-first collision rule. Full-dataset check: `scripts/validate_tokenizer.py`. See design doc §2.
+- 🚧 **`preprocess.py`**: fixed-hop log-Mel, resampled at `BeatGrid.frame_times` (4 frames per token cell, 1/48 beat inside a timing section).
 - ⚪ **`dataset.py`**: PyTorch `Dataset` returning (spectrogram, chart tokens) pairs. Song-level train/val/test split.
 
 > Data acquisition currently lives in `scripts/` rather than `src/data/`, since each stage is a standalone batch job with its own resume state. Reusable pieces (API client, parser) are in `src/data/`.

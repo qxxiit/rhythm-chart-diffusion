@@ -5,23 +5,30 @@ Reused by:
   - src/data/tokenizer.py       (Aug 15, encode/decode)
   - src/data/preprocess.py      (Aug 18, resampling log-Mel onto the beat grid)
 
-Two beat coordinates are deliberately kept separate:
+Coordinates kept deliberately separate:
 
-  local_beat(t)   beats elapsed since the *governing* uninherited timing point.
-                  The metronome restarts at every red line, so snap/alignment
-                  must be measured against this.
+  local_beat(t)     beats elapsed since the *governing* uninherited timing point.
+                    The metronome restarts at every red line, so snap/alignment
+                    must be measured against this.
 
-    global_beat(t)  cumulative beats from the first timing point. Monotone,
-                                    retained for diagnostics and legacy statistics.
+  global_beat(t)    cumulative beats from the first timing point. Monotone,
+                    retained for diagnostics and legacy statistics only.
 
-    cell_index(t, d) / time_from_cell(cell, d)
-                                    the token/audio time axis. Each timing section restarts on
-                                    its own metronome; integer cell offsets keep sections
-                                    contiguous without shifting those local gridlines.
+  cell_index(t, d) / time_from_cell(cell, d)
+                    THE token time axis. Each timing section restarts on its own
+                    metronome; integer cell offsets keep sections contiguous
+                    without shifting those local gridlines.
 
-They differ whenever a red line lands on a non-integer global beat, which is
-common. Measuring snap against global_beat is a silent way to destroy the
-alignment statistics, so don't.
+  frame_times(start_cell, n_cells)
+                    THE audio time axis: r frames per token cell, placed between
+                    consecutive cell times. Never build frame times from a
+                    separate 1/48 grid (cell_starts(48) != 4 * cell_starts(12)
+                    after an off-beat red line) or by passing fractional cells
+                    to time_from_cell (rejected).
+
+global_beat and cell_index differ whenever a red line lands on a non-integer
+global beat, which is common. Measuring snap against global_beat is a silent
+way to destroy the alignment statistics, so don't.
 """
 
 from __future__ import annotations
@@ -150,13 +157,49 @@ class BeatGrid:
 
         A boundary cell belongs to the following timing section, matching the
         section lookup used by :meth:`cell_index` at the red-line time.
+
+        Cells must be whole numbers. Fractional cells used to be truncated
+        silently (124.25 -> 124), which turns sub-cell audio frames into a
+        staircase. Use :meth:`frame_times` for positions between cells.
         """
         scalar = np.isscalar(cell)
-        cell = np.atleast_1d(np.asarray(cell, dtype=np.int64))
+        cell = np.atleast_1d(np.asarray(cell))
+        if cell.dtype.kind == "f":
+            if not np.all(np.isfinite(cell)) or not np.all(cell == np.round(cell)):
+                raise ValueError(
+                    "time_from_cell takes whole cells; use frame_times() for sub-cell positions"
+                )
+        elif cell.dtype.kind not in "iu":
+            raise TypeError(f"integer cells expected, got dtype {cell.dtype}")
+        cell = cell.astype(np.int64)
         starts = self.cell_starts(divisor)
         i = np.clip(np.searchsorted(starts, cell, side="right") - 1, 0, None)
         t = self.times[i] + (cell - starts[i]) / divisor * self.bls[i]
         return float(t[0]) if scalar else t
+
+    def frame_times(self, start_cell: int, n_cells: int, divisor: int = 12,
+                    frames_per_cell: int = 4) -> np.ndarray:
+        """Times (ms) of the audio frames for cells [start_cell, start_cell + n_cells).
+
+        With r = frames_per_cell, frame r*c + j sits j/r of the way from cell c
+        to cell c + 1:
+
+            t = time_from_cell(c) + (j / r) * (time_from_cell(c + 1) - time_from_cell(c))
+
+        so frame r*c lands exactly on cell c (the alignment the Conv1D with
+        kernel = stride = r relies on), and inside one timing section the
+        spacing is beat_length / (divisor * r), i.e. 1/48 beat by default.
+
+        For a chunk: frame_times(meta.start_cell, L) gives its L * r frames.
+        """
+        if n_cells < 0:
+            raise ValueError("n_cells must be >= 0")
+        if frames_per_cell < 1:
+            raise ValueError("frames_per_cell must be >= 1")
+        cells = int(start_cell) + np.arange(n_cells + 1, dtype=np.int64)
+        tc = self.time_from_cell(cells, divisor)          # cell edges, n_cells + 1 of them
+        j = np.arange(frames_per_cell, dtype=np.float64) / frames_per_cell
+        return (tc[:-1, None] + j[None, :] * np.diff(tc)[:, None]).reshape(-1)
 
     # ---------- diagnostics ----------
 
@@ -183,12 +226,18 @@ class BeatGrid:
         return 60000.0 / self.bls[int(np.argmax(durations))]
 
 
-def from_chart(chart: Chart) -> BeatGrid:
-    """Build a beat grid from the parser's uninherited timing-point tuples."""
+def from_timing_points(timing_points) -> BeatGrid:
+    """Build a beat grid from (time_ms, ms_per_beat) tuples, the format used by
+    Chart.timing_points and ChunkMeta.timing_points."""
     return BeatGrid([
         TimingPoint(float(time_ms), float(beat_length))
-        for time_ms, beat_length in chart.timing_points
+        for time_ms, beat_length in timing_points
     ])
+
+
+def from_chart(chart: Chart) -> BeatGrid:
+    """Build a beat grid from the parser's uninherited timing-point tuples."""
+    return from_timing_points(chart.timing_points)
 
 
 # ---------- snapping ----------

@@ -1,7 +1,7 @@
 # ===== Makefile for common project tasks =====
 # Usage: `make <target>`
 
-.PHONY: help install install-dev lint format test test-fast clean download preprocess train-baseline train-diffusion
+.PHONY: help install install-dev lint format test test-fast clean download validate-tokenizer preprocess train-baseline train-diffusion
 
 help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -40,6 +40,9 @@ clean:  ## Remove cache and build artifacts
 # ===== Data pipeline =====
 download:  ## Download osu!mania 4K data (requires OSU_API_KEY)
 	python scripts/download_data.py --mode mania-4k --status ranked --output data/raw
+
+validate-tokenizer:  ## Check tokenizer invariants on every chart in data/raw
+	python scripts/validate_tokenizer.py --root data/raw
 
 preprocess:  ## Preprocess raw data into training-ready format
 	python scripts/preprocess_data.py --input data/raw --output data/processed
