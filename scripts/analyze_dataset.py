@@ -32,7 +32,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.data.beat_grid import (  # noqa: E402
-    BeatGrid, TimingPoint, grid_index, snap_error_ms,
+    BeatGrid, TimingPoint, from_chart, snap_error_ms,
 )
 
 # --------------------------------------------------------------------------
@@ -139,6 +139,7 @@ def iter_charts(root: Path, catalog: Path | None = None, key_count: int | None =
             map_id = abs(hash(str(p))) % 10**9
 
         notes = c.notes
+        grid = from_chart(c)
         yield ChartRecord(
             map_id=map_id,
             set_id=set_id,
@@ -154,8 +155,7 @@ def iter_charts(root: Path, catalog: Path | None = None, key_count: int | None =
                              count=len(notes)),
             end_ms=np.fromiter((n.end_ms if n.end_ms is not None else np.nan
                                 for n in notes), dtype=np.float64, count=len(notes)),
-            timing_points=[TimingPoint(float(t), float(bl))
-                           for t, bl in c.timing_points],
+            timing_points=grid.tps,
         )
 
     print(f"skipped: {skipped}")
@@ -266,7 +266,7 @@ def chart_metrics(rec: ChartRecord) -> tuple[dict, pd.DataFrame]:
     #     This is exactly the loss the Aug 17 round-trip will report; knowing
     #     it now means the grid decision on Aug 15 is already informed. ---
     for d in COLLISION_DIVISORS:
-        cell = grid_index(gb, d)
+        cell = grid.cell_index(t, d)
         key = cell * rec.key_count + rec.lane
         uniq = np.unique(key).size
         row[f"collision_rate_d{d}"] = float((n - uniq) / n)

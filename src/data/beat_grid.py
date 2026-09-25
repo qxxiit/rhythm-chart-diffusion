@@ -11,8 +11,13 @@ Two beat coordinates are deliberately kept separate:
                   The metronome restarts at every red line, so snap/alignment
                   must be measured against this.
 
-  global_beat(t)  cumulative beats from the first timing point. Monotone,
-                  used for grid cell indexing.
+    global_beat(t)  cumulative beats from the first timing point. Monotone,
+                                    retained for diagnostics and legacy statistics.
+
+    cell_index(t, d) / time_from_cell(cell, d)
+                                    the token/audio time axis. Each timing section restarts on
+                                    its own metronome; integer cell offsets keep sections
+                                    contiguous without shifting those local gridlines.
 
 They differ whenever a red line lands on a non-integer global beat, which is
 common. Measuring snap against global_beat is a silent way to destroy the
@@ -23,8 +28,12 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from src.data.chart_parser import Chart
 
 
 @dataclass(frozen=True)
@@ -57,6 +66,7 @@ class BeatGrid:
 
         self._t_list = self.times.tolist()
         self._cum_list = cum.tolist()
+        self._cell_starts: dict[int, np.ndarray] = {}
 
     # ---------- section lookup ----------
 
@@ -102,6 +112,52 @@ class BeatGrid:
         t = self.times[i] + (b - self.cum[i]) * self.bls[i]
         return float(t[0]) if scalar else t
 
+    # ---------- re-originated token/audio grid ----------
+
+    def cell_starts(self, divisor: int) -> np.ndarray:
+        """Integer cell offsets at timing-section starts for ``divisor`` cells/beat.
+
+        Offsets are recursively accumulated from rounded section lengths rather
+        than independently rounded cumulative beats. This gives adjacent timing
+        sections one shared boundary cell and no missing cell between them.
+        """
+        if divisor <= 0:
+            raise ValueError("divisor must be positive")
+        if divisor not in self._cell_starts:
+            starts = np.zeros(self.n_sections, dtype=np.int64)
+            if self.n_sections > 1:
+                spans = np.diff(self.times) / self.bls[:-1]
+                starts[1:] = np.cumsum(np.round(spans * divisor).astype(np.int64))
+            self._cell_starts[divisor] = starts
+        return self._cell_starts[divisor]
+
+    def cell_index(self, t, divisor: int) -> np.ndarray | int:
+        """Map time to the re-originated integer cell coordinate.
+
+        This is the coordinate shared by chart tokenization and audio
+        resampling. It can be negative for times before the first red line.
+        """
+        scalar = np.isscalar(t)
+        t = np.atleast_1d(np.asarray(t, dtype=np.float64))
+        i = self.section_index_array(t)
+        cells = self.cell_starts(divisor)[i] + np.round(
+            (t - self.times[i]) / self.bls[i] * divisor
+        ).astype(np.int64)
+        return int(cells[0]) if scalar else cells
+
+    def time_from_cell(self, cell, divisor: int) -> np.ndarray | float:
+        """Map a re-originated integer cell coordinate back to milliseconds.
+
+        A boundary cell belongs to the following timing section, matching the
+        section lookup used by :meth:`cell_index` at the red-line time.
+        """
+        scalar = np.isscalar(cell)
+        cell = np.atleast_1d(np.asarray(cell, dtype=np.int64))
+        starts = self.cell_starts(divisor)
+        i = np.clip(np.searchsorted(starts, cell, side="right") - 1, 0, None)
+        t = self.times[i] + (cell - starts[i]) / divisor * self.bls[i]
+        return float(t[0]) if scalar else t
+
     # ---------- diagnostics ----------
 
     def offbeat_red_lines(self, tol: float = 1e-6) -> int:
@@ -127,6 +183,14 @@ class BeatGrid:
         return 60000.0 / self.bls[int(np.argmax(durations))]
 
 
+def from_chart(chart: Chart) -> BeatGrid:
+    """Build a beat grid from the parser's uninherited timing-point tuples."""
+    return BeatGrid([
+        TimingPoint(float(time_ms), float(beat_length))
+        for time_ms, beat_length in chart.timing_points
+    ])
+
+
 # ---------- snapping ----------
 
 def snap_error_beats(local_beats: np.ndarray, divisor: int) -> np.ndarray:
@@ -144,5 +208,8 @@ def snap_error_ms(local_beats: np.ndarray, beat_lengths: np.ndarray,
 
 
 def grid_index(global_beats: np.ndarray, divisor: int) -> np.ndarray:
-    """Grid cell index for each note at the given resolution."""
+    """Legacy cumulative grid cell index for diagnostics and statistics.
+
+    Tokenization and audio resampling must use :meth:`BeatGrid.cell_index`.
+    """
     return np.round(np.asarray(global_beats, dtype=np.float64) * divisor).astype(np.int64)

@@ -62,7 +62,17 @@ $$\varepsilon_d(n) = \min_{k\in\mathbb{Z}}\Big|\ell(t_n) - \tfrac{k}{d}\Big|\cdo
 
 계열을 먼저 선택하고 해당 계열 내에서 중단 기준을 적용한다
 
-**부수 결정 — 격자의 원점.** 데이터셋의 **25.00%(4,613곡)** 에서 uninherited timing point가 정수 비트 위치에 있지 않다. osu!의 메트로놈은 red line마다 재시작하므로, 누적 비트 좌표를 기준으로 스냅을 측정하면 이 25%에서 격자와 실제 박자가 어긋난다. 따라서 **격자는 각 timing 구간의 시작점에서 재원점화**하며, 스냅 측정에는 구간 국소 좌표를, 셀 인덱싱에는 누적 좌표를 사용한다(`src/data/beat_grid.py`의 `local_beat` / `global_beat`).
+**부수 결정 — 격자의 원점.** 데이터셋의 **25.00%(4,613곡)** 에서 uninherited timing point가 정수 비트 위치에 있지 않다. osu!의 메트로놈은 red line마다 재시작하므로, 누적 비트 좌표를 기준으로 스냅하면 $d=12$, $\tau=5$ms 커버리지가 97.36%에서 90.81%로 떨어진다. 따라서 **격자는 각 timing 구간의 시작점에서 재원점화**한다.
+
+구간 $i$의 정수 셀 시작점 $s_i$는 $s_0=0$ 및 다음 재귀식으로 정한다. $\Delta_i$는 바로 앞 구간의 길이를 비트 단위로 잰 값이다.
+
+$$s_i = s_{i-1} + \operatorname{round}(d\Delta_i)$$
+
+따라서 시간 $t$의 셀과 그 역변환은 다음과 같다.
+
+$$c(t) = s_i + \operatorname{round}(d\ell_i(t)), \qquad t(c) = T_i + \frac{c-s_i}{d}L_i$$
+
+경계 셀은 다음 구간에 귀속한다. 이 재귀 오프셋은 모든 구간 사이를 연속으로 만들며, 독립적인 $\operatorname{round}(d\,\mathrm{cum}_i)$가 만드는 한 셀의 틈 또는 중복을 피한다. `BeatGrid.cell_index`와 `BeatGrid.time_from_cell`이 tokenizer encode/decode와 log-Mel 리샘플링이 공유하는 유일한 시간축이다. `global_beat`는 통계와 진단 용도로만 남긴다.
 
 ---
 
@@ -99,6 +109,8 @@ $$\varepsilon_d(n) = \min_{k\in\mathbb{Z}}\Big|\ell(t_n) - \tfrac{k}{d}\Big|\cdo
 **청크 길이를 32비트(4/4 기준 8마디) = 384칸으로 둔다.** 곡당 청크 수는 중앙값 약 11개, 95퍼센타일 약 27개다. 청크당 위치 수는 $384 \times 4 = 1{,}536$이다.
 
 8마디를 택한 이유는 리듬게임 채보의 패턴 반복 주기가 통상 4~8마디이므로, 청크 내부에 최소 한 번의 반복 단위가 포함되도록 하기 위함이다. 청크 경계에서의 문맥 단절은 §5에서 다루며, 경계 중첩(overlap) 여부는 §8 실험 항목으로 둔다.
+
+**첫 red line 이전 노트.** `BeatGrid.cell_index`는 osu!의 외삽 규칙을 따라 음수 셀을 낼 수 있다. 전수에서 3,928개 차트의 16,782개 노트가 이에 해당하므로 버리지 않는다. 인코딩 전에 차트별 $b=\max(0,-\min_n c(t_n))$를 계산해 모든 셀에 더하고, `ChunkMeta.cell_offset=b`로 저장한다. decode에서는 청크를 이어 붙인 뒤 $b$를 빼서 `BeatGrid.time_from_cell`에 전달한다.
 
 ---
 

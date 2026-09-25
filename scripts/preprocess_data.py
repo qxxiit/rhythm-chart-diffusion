@@ -10,8 +10,8 @@ Usage:
 TODO (Phase 1, week of 7/3):
 - [ ] Parse .osu files (src/data/osu_parser.py)
 - [ ] Extract mel-spectrogram (80 mel bins, FFT 512)
-- [ ] Compute hop length = 1/48 beat from BPM (TimingPoints)
-- [ ] Apply beat alignment per Yi et al. 2023
+- [ ] Extract a fixed-hop log-Mel spectrogram, then resample it onto BeatGrid cells
+- [ ] Apply beat alignment with BeatGrid.cell_index/time_from_cell
 - [ ] Tokenize charts (src/data/tokenizer.py)
 - [ ] Save as .npy or .pt (per song or sharded)
 - [ ] Build train/val/test split file (song-level, no leakage)
