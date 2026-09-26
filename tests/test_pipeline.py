@@ -70,12 +70,15 @@ def test_manifest(data: Path) -> None:
     assert all(len(splits) == 1 for splits in by_song.values())      # a song never straddles
     reupload = [r for r in rows if r["set_id"] in ("100", "107")]
     assert len({r["audio_key"] for r in reupload}) == 1                # grouped across sets
-    assert sum(r["sr"] == "" for r in rows) == 1                       # the chart without an ID
+    no_id = [r for r in rows if r["beatmap_id"] == "0"]
+    assert len(no_id) == 1 and no_id[0]["sr_api"] == ""               # no API SR ...
+    assert no_id[0]["sr"] == no_id[0]["sr_local"] != ""                # ... but a local label
+    assert all(r["sr_source"] == "local" and r["drop"] == "" for r in rows)
 
 
 def test_token_cache_and_dataset(data: Path) -> None:
     ds = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"))
-    assert len(ds.charts) == 15                                        # one has no SR
+    assert len(ds.charts) == 16                                        # local SR labels all
     item = ds[0]
     assert item["x0"].shape == (L, 4) and item["x0"].dtype == torch.long
     assert item["mel"].shape == (L * 4, 80) and item["mel"].dtype == torch.float32
@@ -122,6 +125,19 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     summary = json.loads(next((tmp_path / "t").glob("eval_*/summary.json")).read_text())
     assert summary["songs"] == 2 and summary["mean_violation_rate"] == 0.0
     assert summary["mean_ceiling_f1@20"] > 0.99                        # tokenizer round trip
+    assert summary["mean_human_rho_all"] > 0          # the fake mel is made from the human chart
+    assert 0.0 <= summary["mean_coverage"] <= 1.0
+
+
+def test_human_baselines(data: Path, tmp_path: Path) -> None:
+    from scripts import human_baselines
+    assert human_baselines.main(["--manifest", str(data / "manifest.csv"),
+                                 "--cache", str(data / "cache"), "--stats", str(tmp_path),
+                                 "--split", "train", "--workers", "1"]) == 0
+    with open(tmp_path / "chart_ssm_lag.csv", newline="") as f:
+        lag = list(csv.DictReader(f))
+    assert len(lag) == 32 and float(lag[0]["mean_chart_similarity"]) > 0
+    assert (tmp_path / "pattern_baseline.csv").exists()
 
 
 def test_sr_check_and_tempo_density(data: Path, tmp_path: Path) -> None:
@@ -138,4 +154,4 @@ def test_sr_check_and_tempo_density(data: Path, tmp_path: Path) -> None:
                                "--cache", str(data / "cache"), "--out", str(tmp_path / "td.csv"),
                                "--longest", "3"]) == 0
     with open(tmp_path / "td.csv", newline="") as f:
-        assert sum(int(r["charts"]) for r in csv.DictReader(f)) == 15
+        assert sum(int(r["charts"]) for r in csv.DictReader(f)) == 16

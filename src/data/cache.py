@@ -7,7 +7,8 @@ One pair of files per chart, named by the manifest key (scripts/build_manifest.p
         tokens        int8    [n_chunks, 384, 4]
         start_cell    int64   [n_chunks]      BeatGrid cell of each chunk's row 0
         beat_len_ms   float32 [n_chunks]      b
-        sr            float32 []              s (NaN if the chart has no SR)
+        sr            float32 []              the label when the cache was built; the
+                                              Dataset reads s from the manifest instead
         cell_offset   int64   []
         n_cells       int64   []              rows before PAD
         timing_points float64 [n_tp, 2]       (time_ms, ms_per_beat)
@@ -17,7 +18,8 @@ One pair of files per chart, named by the manifest key (scripts/build_manifest.p
         from_timing_points(timing_points).frame_times(start_cell[0], n_chunks * 384)[f].
         Frames 4r .. 4r+3 belong to token row r. Row 0 can be before 0 ms and
         the last chunk runs past the song, so frames outside the audio hold the
-        silence value. About 3 MB per chart, ~55 GB for the whole set.
+        silence value. About 3 MB per chart, ~55 GB for the whole set; charts
+        with a non-empty manifest `drop` are never read and can be skipped.
 """
 
 from __future__ import annotations

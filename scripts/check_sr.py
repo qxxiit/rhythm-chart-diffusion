@@ -37,7 +37,8 @@ COLUMNS = ["key", "path", "sr_api", "sr_local", "sr_parsed", "sr_roundtrip", "er
 
 def one(job: tuple) -> dict:
     row, root = job
-    out = {"key": row["key"], "path": row["path"], "sr_api": row["sr"], "sr_local": "",
+    out = {"key": row["key"], "path": row["path"], "sr_api": row.get("sr_api", row["sr"]),
+           "sr_local": "",
            "sr_parsed": "", "sr_roundtrip": "", "error": ""}
     path = root / row["path"]
     try:

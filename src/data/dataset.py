@@ -14,7 +14,9 @@ from src.data.cache import FRAMES_PER_CHUNK, N_MELS, read_manifest
 
 
 class ChunkDataset(Dataset):
-    """Every chunk of every chart in the given splits that has an SR, tokens and mel.
+    """Every chunk of every kept chart (manifest drop == "") in the given splits
+    that has an SR label, tokens and mel. s comes from the manifest, so a new
+    label only needs a new manifest, not a new token cache.
 
     item: {"x0": long [384, 4], "mel": float [1536, 80], "s": float [], "b": float []}
     Each chunk appears once per epoch. Mel files are memory-mapped, not loaded.
@@ -22,7 +24,8 @@ class ChunkDataset(Dataset):
 
     def __init__(self, manifest: Path, cache: Path, splits=("train",), *,
                  keys: list[str] | None = None, max_charts: int | None = None):
-        rows = [r for r in read_manifest(manifest) if r["split"] in splits and r["sr"] != ""]
+        rows = [r for r in read_manifest(manifest) if r["split"] in splits and r["sr"] != ""
+                and r.get("drop", "") == ""]
         if keys is not None:
             wanted = set(keys)
             rows = [r for r in rows if r["key"] in wanted]
@@ -42,7 +45,7 @@ class ChunkDataset(Dataset):
                                  f"({len(tokens) * FRAMES_PER_CHUNK}, {N_MELS})")
             ci = len(self.charts)
             self.charts.append({"key": r["key"], "tokens": tokens,
-                                "b": z["beat_len_ms"], "s": float(z["sr"])})
+                                "b": z["beat_len_ms"], "s": float(r["sr"])})
             self.index += [(ci, c) for c in range(len(tokens))]
         self._mel: dict[int, np.ndarray] = {}
 

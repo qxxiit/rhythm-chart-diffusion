@@ -72,7 +72,9 @@ AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUD
 ### `src/evaluation/`
 - ✅ **`metrics.py`**: onset F1 at ±20/±50 ms with lanes on or off (greedy one-to-one matching, closest pairs first) and the grammar violation rate.
 - ✅ **`sr.py`**: local star rating with rosu-pp (pinned in `requirements.txt`); `scripts/check_sr.py` measures how closely it tracks the API's SR.
-- ⚪ rho (audio/chart self-similarity correlation) and pattern clarity: waiting on the exact definitions in design doc §4.11.
+- ✅ **`structure.py`**: rho over bar pairs (all / in / cross / far) from bar self-similarity of standardized log-Mel and of the note grid (§4.11-2).
+- 🚧 **`patterns.py`**: pattern-clarity tagger (jack, trill, stairs, jumptrill) and its three numbers (§4.11-2b). Draft rules, to be frozen before model output is scored.
+- `scripts/human_baselines.py`: human-chart levels of pattern clarity by grade, chart similarity by bar distance (for rho_far's k), human rho.
 - ⚪ long-note mAP@tIoU: deferred.
 
 > Evaluation is shared by both models and should be written once, before either is trained, so baseline and diffusion numbers are directly comparable.
@@ -120,7 +122,8 @@ python scripts/build_manifest.py       # ✅ data/manifest.csv: key, split (by a
 python scripts/preprocess_data.py      # ✅ token cache (mel: 🚧 mel pipeline)
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
 python scripts/sample.py --ckpt ... --key ...   # ✅ generate one song -> playable .osu
-python scripts/evaluate.py --ckpt ...  # ✅ F1, violation rate, SR error, density (rho: ⚪)
+python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity
+python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves
 python scripts/tempo_density.py        # ✅ tempo vs notes per beat inside each SR grade
 ```

@@ -40,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--key", required=True, help="manifest key of the song")
-    ap.add_argument("--sr", type=float, default=None, help="target SR (default: the real chart's)")
+    ap.add_argument("--sr", type=float, default=None,
+                    help="target SR (default: the chart's label in the manifest)")
     ap.add_argument("--steps", type=int, default=32)
     ap.add_argument("--order", choices=["random", "confidence"], default="random")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
@@ -60,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     mel = np.load(a.cache / "mel" / f"{a.key}.npy").astype(np.float32)
     tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
     cell_offset, n_cells = int(z["cell_offset"]), int(z["n_cells"])
-    sr = a.sr if a.sr is not None else float(z["sr"])
+    sr = a.sr if a.sr is not None else float(row["sr"] or z["sr"])
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
