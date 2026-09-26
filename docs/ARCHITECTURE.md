@@ -73,7 +73,7 @@ AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUD
 - ✅ **`metrics.py`**: onset F1 at ±20/±50 ms with lanes on or off (greedy one-to-one matching, closest pairs first) and the grammar violation rate.
 - ✅ **`sr.py`**: local star rating with rosu-pp (pinned in `requirements.txt`); `scripts/check_sr.py` measures how closely it tracks the API's SR.
 - ✅ **`structure.py`**: rho over bar pairs (all / in / cross / far) from bar self-similarity of standardized log-Mel and of the note grid (§4.11-2).
-- 🚧 **`patterns.py`**: pattern-clarity tagger (jack, trill, stairs, jumptrill) and its three numbers (§4.11-2b). Draft rules, to be frozen before model output is scored.
+- ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored.
 - `scripts/human_baselines.py`: human-chart levels of pattern clarity by grade, chart similarity by bar distance (for rho_far's k), human rho.
 - ⚪ long-note mAP@tIoU: deferred.
 

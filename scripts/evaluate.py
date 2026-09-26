@@ -43,7 +43,7 @@ from src.models.sampler import generate_song
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
-PATTERN_KEYS = ("coverage", "run_length", "breaks_per_100")
+PATTERN_KEYS = ("coverage", "coverage_chance", "run_length", "breaks_per_100")
 
 
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int) -> dict:
@@ -52,7 +52,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         flat = tokens.reshape(-1, tokens.shape[-1])[:n_cells]
         s = structure_scores(flat, mel, n_cells, far_k=far_k)
         row.update({f"{who}rho_{k}": s[f"rho_{k}"] for k in ("all", "in", "cross", "far")})
-        p = summarize(flat)
+        p = summarize(flat, chance_seeds=3)
         row.update({f"{who}{k}": p[k] for k in PATTERN_KEYS})
     return row
 

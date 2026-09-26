@@ -6,7 +6,7 @@
 
 Pattern clarity by SR grade: the level the generated charts should match
 (§4.11-2b: "같은 등급 사람 채보와 비슷한 수준"). Read it before freezing the
-tagger rules; never tune the rules on model output.
+pattern parameters (patterns.py); never tune them on model output.
 
 Chart self-similarity by bar distance, averaged over charts: where the
 adjacency effect fades is k for rho_far (§4.11: 사람 채보에서 인접 효과가
@@ -46,7 +46,7 @@ def one(job: tuple) -> dict | None:
     z = np.load(path)
     n_cells = int(z["n_cells"])
     tokens = z["tokens"].reshape(-1, z["tokens"].shape[-1])[:n_cells]
-    out = {"key": row["key"], "sr": float(row["sr"]), **summarize(tokens)}
+    out = {"key": row["key"], "sr": float(row["sr"]), **summarize(tokens, chance_seeds=3)}
     n_bars = n_whole_bars(n_cells)
     if n_bars >= 2:
         out["lag"] = lag_profile(ssm_chart(tokens, n_bars), MAX_LAG)
@@ -87,8 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     df = pd.DataFrame([{k: v for k, v in r.items() if k != "lag"} for r in recs])
     df["grade"] = df["sr"].map(grade_of)
 
-    cols = ["coverage", "coverage_jack", "coverage_trill", "coverage_stairs",
-            "coverage_jumptrill", "run_length", "breaks_per_100"]
+    cols = ["coverage", "coverage_chance", "coverage_p1", "coverage_p2", "coverage_p3plus",
+            "run_length", "breaks_per_100"]
     table = df.groupby("grade", sort=False)[cols].median().reindex([g for g, *_ in GRADES])
     table.insert(0, "charts", df.groupby("grade").size().reindex(table.index))
     a.stats.mkdir(parents=True, exist_ok=True)

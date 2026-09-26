@@ -70,7 +70,7 @@ def test_holds_count_in_the_chart_vector() -> None:
     assert lag_profile(s, 3)[0] == pytest.approx(s[0, 1]) and np.isnan(lag_profile(s, 3)[2])
 
 
-# --- patterns ----------------------------------------------------------------
+# --- patterns (periodic motifs) ------------------------------------------------
 
 def grid(seq, gap: int = 3) -> np.ndarray:
     x = np.full((len(seq) * gap + 12, 4), EMPTY)
@@ -80,41 +80,85 @@ def grid(seq, gap: int = 3) -> np.ndarray:
     return x
 
 
-@pytest.mark.parametrize("seq, rule, length", [
-    ([(k,) for k in [0, 1, 2, 3, 2, 1, 0, 1, 2, 3]], "stairs", 10),
-    ([(k,) for k in [0, 2] * 4], "trill", 8),
-    ([(1,)] * 5, "jack", 5),
-    ([(0, 1), (2, 3)] * 3, "jumptrill", 6),
+@pytest.mark.parametrize("seq, period, length", [
+    ([(1,)] * 5, 1, 5),                                          # jack
+    ([(k,) for k in [0, 2] * 5], 2, 10),                         # trill
+    ([(0, 1), (2, 3)] * 4, 2, 8),                                # jumptrill
+    ([(k,) for k in [0, 1, 2, 3] * 3], 4, 12),                   # roll
+    ([(k,) for k in [0, 1, 2, 3, 2, 1] * 2 + [0]], 6, 13),       # stairs back and forth
+    ([(k,) for k in [0, 2, 1, 3] * 3], 4, 12),                   # an unnamed motif
 ])
-def test_each_rule(seq, rule, length) -> None:
+def test_periodic_runs(seq, period, length) -> None:
+    rows, masks = events(grid(seq))
+    runs = find_runs(rows, masks)
+    assert [(s, e, p) for s, e, p, _, _ in runs] == [(0, length - 1, period)]
     r = summarize(grid(seq))
-    assert r["coverage"] == 1.0 and r[f"coverage_{rule}"] == 1.0
-    assert r["runs"] == 1 and r["run_length"] == length and r["breaks_per_100"] == 0.0
+    assert r["coverage"] == 1.0 and r["run_length"] == length and r["breaks_per_100"] == 0.0
 
 
-def test_turning_away_from_an_edge_is_not_stairs() -> None:
-    rows, masks = events(grid([(k,) for k in [0, 1, 2, 1, 2, 1]]))
-    assert find_runs(rows, masks, "stairs") == []             # turns at lanes 2 and 1
-    assert find_runs(rows, masks, "trill") == [(1, 5, 0b0110)]  # 1 2 1 2 1 is a trill
-    rows, masks = events(grid([(k,) for k in [2, 1, 0, 1, 2]]))
-    assert find_runs(rows, masks, "stairs") == [(0, 4, "stairs")]  # turning at the edge is fine
+def test_a_shorter_period_wins() -> None:
+    rows, masks = events(grid([(k,) for k in [0, 1] * 6]))       # also 4- and 6-periodic
+    assert [p for _, _, p, _, _ in find_runs(rows, masks)] == [2]
+
+
+def test_too_short_to_be_a_pattern() -> None:
+    assert summarize(grid([(k,) for k in [0, 1, 2, 3]]))["coverage"] == 0.0   # shown once
+    assert summarize(grid([(1,)] * 4))["coverage"] == 0.0                      # 4-note jack
+    assert summarize(grid([(k,) for k in [0, 1] * 2 + [0]]))["coverage"] == 0.0  # 5-note trill
 
 
 def test_a_one_note_slip_is_a_break() -> None:
-    r = summarize(grid([(k,) for k in [0, 1, 0, 1, 0, 2, 0, 1, 0, 1]]))
-    assert r["runs"] == 2 and r["coverage"] == pytest.approx(0.9)
-    assert r["breaks_per_100"] == pytest.approx(100 / 9)
+    r = summarize(grid([(k,) for k in [0, 1, 0, 1, 0, 1, 0, 2, 0, 1, 0, 1, 0, 1, 0]]))
+    assert r["runs"] == 2 and r["coverage"] == pytest.approx(14 / 15)
+    assert r["breaks_per_100"] == pytest.approx(100 / 14)
+
+
+def test_a_one_note_timing_slip_is_a_break_too() -> None:
+    x = np.full((48, 4), EMPTY)
+    rows = [3 * i for i in range(15)]
+    rows[7] += 1                                                 # the 8th note is a cell late
+    for i, row in enumerate(rows):
+        x[row, i % 2] = TAP
+    r = summarize(x)
+    assert r["runs"] == 2 and r["breaks_per_100"] == pytest.approx(100 / 14)
+
+
+def test_a_new_motif_is_not_a_break() -> None:
+    r = summarize(grid([(k,) for k in [0, 1] * 3 + [2, 3] * 3]))
+    assert r["runs"] == 2 and r["breaks_per_100"] == 0.0
 
 
 def test_a_change_of_snap_ends_a_run() -> None:
     x = np.full((48, 4), EMPTY)
-    for row, k in zip([0, 3, 6, 9, 15, 21, 27, 33], [0, 1, 0, 1, 0, 1, 0, 1], strict=True):
-        x[row, k] = TAP                                      # gap 3, then gap 6
+    for i, row in enumerate([0, 3, 6, 9, 12, 15, 21, 27, 33, 39, 45]):   # gap 3, then gap 6
+        x[row, i % 2] = TAP
     rows, masks = events(x)
-    assert find_runs(rows, masks, "trill") == [(0, 3, 0b11), (3, 7, 0b11)]
+    assert [(s, e, gap) for s, e, _, _, gap in find_runs(rows, masks)] == [(0, 5, 3), (5, 10, 6)]
 
 
-def test_random_charts_have_little_pattern() -> None:
+def test_random_lanes_are_rarely_patterns() -> None:
     rng = np.random.default_rng(0)
-    x = np.where(rng.random((2000, 4)) < 0.08, TAP, EMPTY)
-    assert summarize(x)["coverage"] < 0.35
+    x = np.full((3 * 4000, 4), EMPTY)
+    x[np.arange(0, 3 * 4000, 3), rng.integers(0, 4, 4000)] = TAP   # a random 1/4 stream
+    r = summarize(x, chance_seeds=2)
+    assert r["coverage"] < 0.15 and abs(r["coverage"] - r["coverage_chance"]) < 0.03
+
+
+def test_chance_keeps_rhythm_and_chord_sizes() -> None:
+    from src.evaluation.patterns import _POP, _redraw_lanes
+    masks = np.array([1, 3, 7, 15, 2, 12] * 50)
+    redrawn = _redraw_lanes(masks, np.random.default_rng(0))
+    assert np.array_equal(_POP[redrawn], _POP[masks]) and not np.array_equal(redrawn, masks)
+    trill = grid([(k,) for k in [0, 2] * 20])
+    r = summarize(trill, chance_seeds=3)
+    assert r["coverage"] == 1.0 and r["coverage_chance"] < 0.5
+
+
+def test_type_vectors_count_onsets_by_period() -> None:
+    from src.evaluation.patterns import TYPES, bar_type_vectors
+    x = np.full((96, 4), EMPTY)
+    for i, k in enumerate([0, 2] * 4):                           # a trill in bar 0
+        x[3 * i, k] = TAP
+    x[60, 1] = TAP                                               # a lone note in bar 1
+    v = bar_type_vectors(x, 2)
+    assert v[0, TYPES.index("p2")] == 8 and v[1, TYPES.index("single")] == 1
