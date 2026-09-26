@@ -10,6 +10,9 @@ soundfile>=0.12
 requests>=2.31
 python-dotenv>=1.0
 
+# Evaluation: local star rating. Pinned: SR moves whenever osu! reworks difficulty.
+rosu-pp-py==4.0.2
+
 # Analysis & visualization
 pandas>=2.0
 matplotlib>=3.7

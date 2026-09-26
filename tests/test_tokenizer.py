@@ -48,14 +48,15 @@ def test_encode_uses_reoriginated_cells_and_preserves_negative_cells() -> None:
     tokens, metas, stats = encode(chart, sr=4.5)
     full = tokens.reshape(-1, K)
 
+    # cell -6 is the earliest; row 0 goes back to the bar line at cell -48
     assert tokens.shape == (1, L, K)
-    assert metas[0].cell_offset == 6
-    assert metas[0].start_cell == -6
+    assert metas[0].cell_offset == 48
+    assert metas[0].start_cell == -48
     assert metas[0].sr == 4.5
-    assert full[0, 0] == TAP                   # -250 ms, before the first red line
-    assert full[18, 1] == TAP                  # a 10 ms hold rounds to one cell -> tap
-    assert (full[130, 2], full[131, 2], full[132, 2]) == (HOLD_START, HOLD_BODY, HOLD_END)
-    assert np.all(full[133:] == PAD)
+    assert full[42, 0] == TAP                  # -250 ms, before the first red line
+    assert full[60, 1] == TAP                  # a 10 ms hold rounds to one cell -> tap
+    assert (full[172, 2], full[173, 2], full[174, 2]) == (HOLD_START, HOLD_BODY, HOLD_END)
+    assert np.all(full[:42] == EMPTY) and np.all(full[175:] == PAD)
     assert (stats.n_notes, stats.n_onsets, stats.n_dropped, stats.n_demoted) == (3, 3, 0, 1)
     assert stats.balanced
     np.testing.assert_array_equal(stats.lane_onsets, [1, 1, 1, 0])
@@ -234,10 +235,11 @@ def test_audio_range_covers_intro_and_outro() -> None:
 
     assert m1[0].cell_offset == 0 and m1[0].start_cell == 0
     assert np.all(by_notes.reshape(-1, K)[37:] == PAD)          # PAD right after the last note
-    assert m2[0].cell_offset == 36 and m2[0].start_cell == -36   # row 0 is audio time 0
-    assert s2.n_cells == 36 + 203 + 1                            # cell 203 is the last inside
+    # audio time 0 is cell -36; row 0 goes back to the bar line at cell -48
+    assert m2[0].cell_offset == 48 and m2[0].start_cell == -48
+    assert s2.n_cells == 48 + 203 + 1                            # cell 203 is the last inside
     full = by_audio.reshape(-1, K)
-    assert full[36 + 12, 0] == TAP and full[36 + 36, 1] == TAP
+    assert full[48 + 12, 0] == TAP and full[48 + 36, 1] == TAP
     assert np.all(full[: s2.n_cells] != PAD) and np.all(full[s2.n_cells:] == PAD)
     assert len(grammar_violations(by_audio)) == 0
 
@@ -247,3 +249,10 @@ def test_extreme_bpm_section_hits_the_guard() -> None:
 
     with pytest.raises(ChartTooLong):
         encode(chart)
+
+
+def test_row_0_is_always_a_bar_line() -> None:
+    rng = np.random.default_rng(1)
+    for _ in range(100):
+        _, metas, _ = encode(random_chart(rng))
+        assert metas[0].cell_offset % 48 == 0 and metas[0].start_cell % 48 == 0

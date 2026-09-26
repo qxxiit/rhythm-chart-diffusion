@@ -114,7 +114,7 @@ $$c(t) = \sigma_i + \operatorname{round}(d\ell_i(t)), \qquad t(c) = g_i + \frac{
 
 8마디를 택한 이유는 리듬게임 채보의 패턴 반복 주기가 통상 4~8마디이므로, 청크 내부에 최소 한 번의 반복 단위가 포함되도록 하기 위함이다. 청크 경계에서의 문맥 단절은 §5에서 다루며, 경계 중첩(overlap) 여부는 §8 실험 항목으로 둔다.
 
-**첫 red line 이전 노트.** `BeatGrid.cell_index`는 osu!의 외삽 규칙을 따라 음수 셀을 낼 수 있다. 전수에서 3,928개 차트의 16,782개 노트가 이에 해당하므로 버리지 않는다. 인코딩 전에 차트별 $c_{\text{off}}=\max(0,-\min_n c(t_n))$를 계산해 모든 셀에 더하고, `ChunkMeta.cell_offset`$=c_{\text{off}}$로 저장한다. decode에서는 청크를 이어 붙인 뒤 $c_{\text{off}}$를 빼서 `BeatGrid.time_from_cell`에 전달한다. ($b$는 템포 조건이라 쓰지 않는다.)
+**첫 red line 이전 노트.** `BeatGrid.cell_index`는 osu!의 외삽 규칙을 따라 음수 셀을 낼 수 있다. 전수에서 3,928개 차트의 16,782개 노트가 이에 해당하므로 버리지 않는다. 인코딩 전에 차트별 $c_{\text{off}}=48\,\lceil \max(0,-\min_n c(t_n))/48 \rceil$를 계산해 모든 셀에 더하고(48의 배수로 올려서 row 0이 늘 마디 첫 박에 오게 한다. osu!는 red line마다 마디를 새로 시작하며, 4/4를 가정한다), `ChunkMeta.cell_offset`$=c_{\text{off}}$로 저장한다. decode에서는 청크를 이어 붙인 뒤 $c_{\text{off}}$를 빼서 `BeatGrid.time_from_cell`에 전달한다. ($b$는 템포 조건이라 쓰지 않는다.)
 
 **토큰 범위 (미결).** 기본값은 노트가 정하는 범위이고, PAD는 마지막 노트 다음 칸부터다. 이 경우 아웃트로와, 노트가 없는 첫 red line 이전 인트로는 학습에 들어가지 않는데 추론은 오디오 전체를 생성해야 한다. `encode(..., audio_ms=...)`를 주면 범위가 오디오 0ms부터 끝까지로 넓어지고 PAD는 오디오가 끝난 뒤에만 온다. 청크 경계가 바뀌므로 mel 캐싱 전에 어느 쪽을 쓸지 정한다.
 

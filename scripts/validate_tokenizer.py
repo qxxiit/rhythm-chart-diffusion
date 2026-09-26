@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.data import chart_writer
 from src.data.beat_grid import from_chart, grid_index, snap_error_ms
 from src.data.chart_parser import Chart, Note, parse_osu
 from src.data.tokenizer import (
@@ -365,19 +366,9 @@ def write_outputs(rows: list[dict], metrics, summary_path: Path, charts_path: Pa
 # self-test on synthetic .osu files
 # ---------------------------------------------------------------------------
 
-def write_osu(path: Path, key_count: int, tps, notes, mode: int = 3) -> None:
-    lines = ["osu file format v14", "", "[General]", "AudioFilename: audio.mp3", f"Mode: {mode}",
-             "", "[Difficulty]", f"CircleSize:{key_count}", "", "[TimingPoints]"]
-    lines += [f"{t},{bl!r},4,1,0,100,1,0" for t, bl in tps]
-    lines += ["", "[HitObjects]"]
-    for n in notes:
-        x = int((n.lane + 0.5) * 512 / key_count)
-        if n.end_ms is None:
-            lines.append(f"{x},192,{n.time_ms},1,0,0:0:0:0:")
-        else:
-            lines.append(f"{x},192,{n.time_ms},128,0,{n.end_ms}:0:0:0:0:")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def write_osu(path: Path, key_count: int, tps, notes, mode: int = 3, **metadata) -> None:
+    chart = Chart(key_count, "audio.mp3", [tuple(tp) for tp in tps], list(notes))
+    chart_writer.write_osu(path, chart, mode=mode, **metadata)
 
 
 def synthetic_charts(seed: int = 0, n: int = 60):

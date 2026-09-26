@@ -22,12 +22,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install lightweight dependencies
+      - name: Install dependencies (CPU-only torch)
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pytest-cov numpy
-          # Don't install heavy deps (torch, librosa) in CI to keep it fast
-          # Tests should mock or skip GPU/audio tests
+          pip install ruff pytest pytest-cov numpy pandas rosu-pp-py==4.0.2
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # no librosa/audio: the mel pipeline is tested separately
 
       - name: Lint with ruff
         run: |

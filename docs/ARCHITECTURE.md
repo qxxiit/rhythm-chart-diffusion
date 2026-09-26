@@ -1,7 +1,7 @@
 # Code Architecture
 
 > Map of the `src/` modules and how they fit together.
-> Status: ✅ implemented · 🚧 in design · ⚪ not started. Last updated 2026-08-11.
+> Status: ✅ implemented · 🚧 in design · ⚪ not started. Last updated 2026-09-26.
 
 ## Overview
 
@@ -54,24 +54,26 @@ audio (.mp3)                      chart (.osu)
 - ✅ **`osu_api.py`**: osu! API v2 client (client-credentials auth, beatmapset search with cursor pagination, 429 handling).
 - ✅ **`chart_parser.py`**: Parses `.osu` text into `Chart` / `Note` objects — hit objects, timing points, key count, lane derivation, hold notes. See [`DATA_FORMAT.md`](DATA_FORMAT.md).
 - ✅ **`tokenizer.py`**: `encode` / `decode` between charts and the `[n_chunks, 384, 4]` token grid (1/12-beat cells re-originated at each red line, vocabulary of 7), `grammar_violations`, and the onset-first collision rule. Full-dataset check: `scripts/validate_tokenizer.py`. See design doc §2.
-- 🚧 **`preprocess.py`**: fixed-hop log-Mel, resampled at `BeatGrid.frame_times` (4 frames per token cell, 1/48 beat inside a timing section).
-- ⚪ **`dataset.py`**: PyTorch `Dataset` returning (spectrogram, chart tokens) pairs. Song-level train/val/test split.
+- ✅ **`chart_writer.py`**: `Chart` → `.osu` that osu! opens as a local mania difficulty.
+- ✅ **`cache.py`**: the `data/cache` file layout that the token stage, the mel stage and the Dataset share (no torch).
+- ✅ **`dataset.py`**: `ChunkDataset` of (x0, mel, s, b) chunks read from `data/cache`.
+- 🚧 **mel pipeline**: fixed-hop log-Mel resampled at `BeatGrid.frame_times` (4 frames per token cell, 1/48 beat inside a timing section), written to `data/cache/mel/{key}.npy` in the layout above.
 
 > Data acquisition currently lives in `scripts/` rather than `src/data/`, since each stage is a standalone batch job with its own resume state. Reusable pieces (API client, parser) are in `src/data/`.
 
-### `src/models/` ⚪
-- **`encoders.py`**: Audio encoders. Default: small 1D CNN. Pluggable: MERT / AST (Phase 3 ablation).
-- **`transformer.py`**: Autoregressive Transformer encoder–decoder (Yi et al. 2023 baseline).
-- **`diffusion.py`**: Discrete diffusion — forward (absorbing/mask) process, audio-conditioned denoiser, reverse sampling.
+### `src/models/`
+- ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
+- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random or confidence order) and song generation by continuation or independent chunks (§4.8).
+- ⚪ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting), W5.
 
-### `src/training/` ⚪
-- **`trainer.py`**: Training loop. Optimizer, scheduler, checkpointing, logging. Low-budget options (AMP, gradient accumulation) belong here.
-- **`losses.py`**: Cross-entropy for AR; masked CE for diffusion.
+### Training (`scripts/train.py`) ✅
+AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. Plain `argparse`; the Hydra configs are not used.
 
-### `src/evaluation/` ⚪
-- **`f1_metric.py`**: Donahue 2017 F1 protocol with ±30 ms tolerance.
-- **`tiou_map.py`**: Temporal IoU mean Average Precision (TAL style).
-- **`diversity.py`**: n-gram diversity, lane balance entropy.
+### `src/evaluation/`
+- ✅ **`metrics.py`**: onset F1 at ±20/±50 ms with lanes on or off (greedy one-to-one matching, closest pairs first) and the grammar violation rate.
+- ✅ **`sr.py`**: local star rating with rosu-pp (pinned in `requirements.txt`); `scripts/check_sr.py` measures how closely it tracks the API's SR.
+- ⚪ rho (audio/chart self-similarity correlation) and pattern clarity: waiting on the exact definitions in design doc §4.11.
+- ⚪ long-note mAP@tIoU: deferred.
 
 > Evaluation is shared by both models and should be written once, before either is trained, so baseline and diffusion numbers are directly comparable.
 
@@ -112,11 +114,15 @@ python scripts/extract_osz.py          # ✅ keep 4K .osu + audio, discard the a
 python scripts/build_catalog.py        # ✅ catalog.csv reference table
 python scripts/check_osz.py            # ✅ integrity check on downloaded archives
 
-# Model pipeline — stubs
-python scripts/preprocess_data.py      # 🚧 raw → tensors
-python scripts/train.py                # ⚪
-python scripts/evaluate.py             # ⚪
-python scripts/inference.py            # ⚪
+# Model pipeline
+python scripts/validate_tokenizer.py   # ✅ tokenizer invariants on every chart
+python scripts/build_manifest.py       # ✅ data/manifest.csv: key, split (by audio_key), SR
+python scripts/preprocess_data.py      # ✅ token cache (mel: 🚧 mel pipeline)
+python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
+python scripts/sample.py --ckpt ... --key ...   # ✅ generate one song -> playable .osu
+python scripts/evaluate.py --ckpt ...  # ✅ F1, violation rate, SR error, density (rho: ⚪)
+python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves
+python scripts/tempo_density.py        # ✅ tempo vs notes per beat inside each SR grade
 ```
 
 ## Known issues

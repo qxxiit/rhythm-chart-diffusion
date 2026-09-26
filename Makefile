@@ -1,7 +1,7 @@
 # ===== Makefile for common project tasks =====
 # Usage: `make <target>`
 
-.PHONY: help install install-dev lint format test test-fast clean download validate-tokenizer preprocess train-baseline train-diffusion
+.PHONY: help install install-dev lint format test test-fast clean download validate-tokenizer manifest preprocess overfit train-baseline train-diffusion
 
 help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -44,12 +44,18 @@ download:  ## Download osu!mania 4K data (requires OSU_API_KEY)
 validate-tokenizer:  ## Check tokenizer invariants on every chart in data/raw
 	python scripts/validate_tokenizer.py --root data/raw
 
-preprocess:  ## Preprocess raw data into training-ready format
-	python scripts/preprocess_data.py --input data/raw --output data/processed
+manifest:  ## One row per chart with split and SR -> data/manifest.csv
+	python scripts/build_manifest.py
+
+preprocess:  ## Token cache for every chart in the manifest -> data/cache/tokens
+	python scripts/preprocess_data.py
+
+overfit:  ## Milestone check: overfit 10 charts, then rebuild one from all-MASK
+	python scripts/train.py --overfit 10
 
 # ===== Training =====
-train-baseline:  ## Train autoregressive Transformer baseline
-	python scripts/train.py model=transformer_baseline data=osu_mania_4k
+train-baseline:  ## AR baseline (Yi et al. setting): not implemented yet (W5)
+	@echo "AR-4 / AR-32 baseline is not implemented yet (design doc, W5)"; exit 1
 
-train-diffusion:  ## Train discrete diffusion model
-	python scripts/train.py model=diffusion data=osu_mania_4k
+train-diffusion:  ## Train the D-32 denoiser on the train split
+	python scripts/train.py --steps 50000

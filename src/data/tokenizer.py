@@ -7,6 +7,8 @@
 Time axis: BeatGrid.cell_index / time_from_cell with D = 12 cells per beat,
 re-originated at every red line (§2.3). Audio frames for a chunk come from
 BeatGrid.frame_times(meta.start_cell, L) on the same cells, 4 per cell.
+Row 0 of a chart is always a bar line of the first red line's metronome
+(cell_offset is a multiple of BAR), so chunks start on a downbeat.
 
 Collision policy (§2.7): onsets win, releases give way. Per lane, in time order:
   - an onset that lands on the previous hold's end cell shortens that hold by
@@ -34,6 +36,7 @@ from src.data.chart_parser import Chart, Note, parse_osu
 
 D, L, K = 12, 384, 4                 # cells per beat, cells per chunk (32 beats), lanes
 BEATS_PER_CHUNK = L // D             # 32
+BAR = 4 * D                          # 48 cells: row 0 of every chart sits on a bar line (4/4)
 EMPTY, TAP, HOLD_START, HOLD_BODY, HOLD_END, MASK, PAD = range(7)
 X0_VALUES = (EMPTY, TAP, HOLD_START, HOLD_BODY, HOLD_END)
 MAX_CELLS = 100_000                  # ~8,300 beats. Real charts: p95 10,498 cells.
@@ -48,7 +51,7 @@ class ChartTooLong(ValueError):
 class ChunkMeta:
     chunk_idx: int
     start_cell: int            # BeatGrid cell of this chunk's row 0 (may be negative)
-    cell_offset: int           # token index = grid cell + cell_offset, same for every chunk
+    cell_offset: int           # token index = grid cell + cell_offset; a multiple of BAR, >= 0
     beat_len_ms: float         # b: mean beat length over the chunk's 32 beats
     sr: float                  # s: the chart's SR, same for every chunk
     timing_points: list[tuple[int, float]]
@@ -186,7 +189,10 @@ def encode(chart: Chart, sr: float = math.nan, *, audio_ms: float | None = None,
         ranges.append((int(grid.cell_index(0.0, D)), a_hi))
     lo = min(r[0] for r in ranges)
     hi = max(r[1] for r in ranges)
-    cell_offset = max(0, -lo)                              # tokens start at grid cell 0 or earlier
+    # tokens start at grid cell 0, or at the bar line before the earliest cell.
+    # osu! opens a measure at every red line, so a multiple of BAR is a downbeat
+    # (4/4 assumed: the parser does not read the meter).
+    cell_offset = -(-max(0, -lo) // BAR) * BAR
     n_cells = hi + cell_offset + 1
     if n_cells > max_cells:
         raise ChartTooLong(f"{n_cells:,} cells > max_cells {max_cells:,}")
@@ -223,14 +229,22 @@ def encode(chart: Chart, sr: float = math.nan, *, audio_ms: float | None = None,
         lane_dropped=np.bincount(lanes[~keep], minlength=K),
     )
 
-    tps = list(chart.timing_points)
+    metas = make_metas(chart.timing_points, cell_offset, total // L, sr)
+    return full.reshape(-1, L, K), metas, stats
+
+
+def make_metas(timing_points, cell_offset: int, n_chunks: int, sr: float) -> list[ChunkMeta]:
+    """ChunkMeta for n_chunks chunks on a timing grid. encode uses it, and so
+    does generation, where there is audio and timing but no chart yet."""
+    grid = from_timing_points(timing_points)
+    tps = [tuple(tp) for tp in timing_points]
     metas = []
-    for c in range(total // L):
+    for c in range(n_chunks):
         start_cell = c * L - cell_offset
         span = grid.time_from_cell(start_cell + L, D) - grid.time_from_cell(start_cell, D)
         metas.append(ChunkMeta(c, start_cell, cell_offset, float(span / BEATS_PER_CHUNK),
                                float(sr), tps))
-    return full.reshape(-1, L, K), metas, stats
+    return metas
 
 
 # ---------------------------------------------------------------------------
