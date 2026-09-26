@@ -89,12 +89,42 @@ def test_token_cache_and_dataset(data: Path) -> None:
     assert (last == PAD).any()                                         # the final chunk pads
 
 
+def test_bar_windows_stay_aligned(data: Path) -> None:
+    chunk = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"))
+    bar = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"),
+                       window="bar")
+    level = np.array([0.0, 6.0, 6.0, 2.0, 4.0, 0.0, 0.0])        # cache.oracle_mel
+    torch.manual_seed(0)
+    shifted = 0
+    for i in range(len(bar)):
+        ci, c = bar.index[i]
+        chart = bar.charts[ci]
+        for _ in range(3):
+            item = bar[i]
+            start = int(item["start"])
+            assert start % 48 == 0 and c * L <= start < min((c + 1) * L, chart["n_cells"])
+            shifted += start != c * L
+            x0 = item["x0"].numpy()
+            want = chart["rows"][start:start + L]
+            assert np.array_equal(x0[:len(want)], want) and np.all(x0[len(want):] == PAD)
+            cells = item["mel"].numpy().reshape(L, 4, 80).mean(axis=1)   # [384, 80]
+            for k in range(4):
+                band = cells[:, 8 + 16 * k:20 + 16 * k].mean(axis=1)
+                real = x0[:, k] != PAD
+                assert np.abs(band[real] - (-8 + level[x0[real, k]])).max() < 0.5
+            z = np.load(data / "cache" / "tokens" / f"{chart['key']}.npz")
+            assert float(item["b"]) == pytest.approx(float(z["beat_len_ms"][0]), rel=1e-6)
+        if start == c * L:
+            assert torch.equal(item["x0"], chunk[i]["x0"])
+    assert shifted > 0
+
+
 def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     args = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
             "--out", str(tmp_path), "--run", "t", "--overfit", "2", "--steps", "150",
             "--batch-size", "4", "--lr", "2e-3", "--warmup", "10", "--d-model", "64",
             "--layers", "2", "--heads", "2", "--d-ff", "128", "--log-every", "10",
-            "--val-every", "150", "--sample-steps", "8", "--device", "cpu"]
+            "--val-every", "150", "--sample-steps", "8", "--window", "bar", "--device", "cpu"]
     assert train.main(args) == 0
     with open(tmp_path / "t" / "log.csv", newline="") as f:
         losses = [float(r["loss"]) for r in csv.DictReader(f)]

@@ -47,7 +47,12 @@ def _cosine(v: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(v, axis=1)
     empty = norm == 0
     u = v / np.where(empty, 1.0, norm)[:, None]
-    s = u @ u.T
+    # numpy's Accelerate BLAS on Apple Silicon raises bogus divide/overflow/invalid
+    # flags in matmul; silence them, but check the result for real.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        s = u @ u.T
+    if not np.isfinite(s).all():
+        raise FloatingPointError("non-finite similarity")
     s[np.ix_(empty, empty)] = 1.0          # empty vs empty: same
     return s                               # empty vs non-empty: 0 already (zero row)
 

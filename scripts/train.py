@@ -54,6 +54,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--run", default=None, help="run name (default: time stamp)")
     ap.add_argument("--overfit", type=int, default=0, help="train and validate on N charts")
     ap.add_argument("--max-charts", type=int, default=None, help="subset of the train split")
+    ap.add_argument("--window", choices=["chunk", "bar"], default="chunk",
+                    help="training windows: the fixed chunks, or a random bar line inside each")
     ap.add_argument("--steps", type=int, default=None, help="optimizer steps (3000 with --overfit)")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--grad-accum", type=int, default=1)
@@ -137,7 +139,7 @@ def overfit_check(model, ds: ChunkDataset, device, steps: int) -> dict:
     item = ds[0]
     x0 = item["x0"].numpy()
     x = np.where(x0 == PAD, PAD, MASK)
-    more = len(ds.charts[0]["tokens"]) > 1
+    more = ds.charts[0]["n_cells"] > len(x0)                  # the song goes on past chunk 0
     out = sample_window(model, x, item["mel"].to(device), float(item["s"]), float(item["b"]),
                         steps=steps, order="confidence", rng=np.random.default_rng(0),
                         left_closed=True, right_closed=not more)
@@ -184,10 +186,12 @@ def main(argv=None) -> int:
     if a.overfit:
         first = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.overfit)
         keys = [c["key"] for c in first.charts]
-        train_ds = val_ds = first
+        val_ds = first
+        train_ds = ChunkDataset(a.manifest, a.cache, ("train",), keys=keys, window=a.window)
     else:
-        train_ds = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.max_charts)
-        val_ds = ChunkDataset(a.manifest, a.cache, ("val",))
+        train_ds = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.max_charts,
+                                window=a.window)
+        val_ds = ChunkDataset(a.manifest, a.cache, ("val",))           # always the fixed chunks
         keys = None
     if len(train_ds) == 0:
         print("no training chunks: run scripts/build_manifest.py and scripts/preprocess_data.py, "
