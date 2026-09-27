@@ -30,11 +30,13 @@ We ask whether **discrete diffusion** — generating the entire note sequence at
 |---|---|
 | Data pipeline | ✅ Complete — 18,452 4K charts from 5,882 beatmapsets, 0 parse failures |
 | Chart parser | ✅ Complete with tests and piano-roll visualization |
-| Tokenization | 🟡 In design (Week of Aug 12) |
-| Problem formulation & math | 🟡 In progress — design document due Aug 29 |
-| Baseline model | ⚪ Not started |
-| Diffusion model | ⚪ Not started |
-| Compute | ⚪ Lab GPU expected ~October; small budget until then |
+| Tokenization | ✅ 1/12-beat grid re-originated at red lines, validated on every chart (Sep 26) |
+| Problem formulation & math | ✅ Design doc §1–3 and derivations (Sep 24) |
+| Split, SR labels, filter | ✅ Split by song, local SR labels, 18,191 charts kept (Sep 26) |
+| Audio pipeline | ✅ Decoded at osu!'s 0 ms, log-Mel per audio file, alignment checked (Sep 27) |
+| Baseline model | ⚪ Not started (AR-4 / AR-32) |
+| Diffusion model | 🟡 D-32 trained on a 600-song subset (val CE 0.087), evaluated on 240 val songs (Sep 27) |
+| Compute | 🟡 MacBook (MPS, ~91 chunks/s, 1 h per 20k steps on the subset); lab GPU expected ~October |
 
 ---
 
