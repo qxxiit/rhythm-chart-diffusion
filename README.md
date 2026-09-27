@@ -105,7 +105,8 @@ chart.notes       # [Note(time_ms, lane, end_ms), ...]  end_ms set for hold note
 
 ```bash
 python scripts/build_manifest.py        # data/manifest.csv: cache key, split by song, SR
-python scripts/preprocess_data.py       # token cache (the mel cache comes from the mel pipeline)
+python scripts/preprocess_data.py       # token cache
+python scripts/preprocess_data.py --mel # log-Mel per audio file (see docs/ARCHITECTURE.md)
 python scripts/train.py --overfit 10    # milestone check; drop --overfit for a full run
 python scripts/sample.py --ckpt outputs/<run>/best.pt --key <key>   # one song -> playable .osu
 python scripts/evaluate.py --ckpt outputs/<run>/best.pt --split val  # F1, violations, SR error

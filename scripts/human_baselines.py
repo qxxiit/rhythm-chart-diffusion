@@ -12,9 +12,10 @@ Chart self-similarity by bar distance, averaged over charts: where the
 adjacency effect fades is k for rho_far (§4.11: 사람 채보에서 인접 효과가
 사라지는 거리로 미리 고정). The suggestion printed is only a starting point.
 
-Charts with mel in the cache also get human rho (all / in / cross / far): the
-upper reference line of §4.11. Uses only the train split, so nothing here
-peeks at validation or test.
+Charts with log-Mel in the cache (preprocess_data.py --mel) also get human rho
+(all / in / cross / far): the upper reference line of §4.11. Uses only the train
+split, so nothing here peeks at validation or test. --fake-mel reads the
+plumbing-only mel instead, which is made from the chart: its rho means nothing.
 """
 
 from __future__ import annotations
@@ -30,12 +31,19 @@ import numpy as np
 import pandas as pd
 
 from src.data.cache import read_manifest
+from src.data.mel import open_mel
 from src.evaluation.patterns import summarize
 from src.evaluation.structure import lag_profile, n_whole_bars, ssm_chart, structure_scores
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, np.inf)]
 MAX_LAG = 32
+_STORE = None
+
+
+def _open_store(cache: Path, fake: bool) -> None:
+    global _STORE
+    _STORE = open_mel(cache, fake=fake)
 
 
 def one(job: tuple) -> dict | None:
@@ -50,9 +58,10 @@ def one(job: tuple) -> dict | None:
     n_bars = n_whole_bars(n_cells)
     if n_bars >= 2:
         out["lag"] = lag_profile(ssm_chart(tokens, n_bars), MAX_LAG)
-    mel_path = cache / "mel" / f"{row['key']}.npy"
-    if mel_path.exists():
-        out.update(structure_scores(tokens, np.load(mel_path), n_cells, far_k=far_k))
+    if _STORE is not None and _STORE.has(row["key"]):
+        mel = _STORE.chart(row["key"], [tuple(tp) for tp in z["timing_points"]],
+                           int(z["cell_offset"]), z["tokens"].shape[0] * z["tokens"].shape[1])
+        out.update(structure_scores(tokens, mel, n_cells, far_k=far_k))
     return out
 
 
@@ -67,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--split", default="train")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--far-k", type=int, default=8)
+    ap.add_argument("--fake-mel", action="store_true", help="plumbing-only mel: rho is meaningless")
     ap.add_argument("--stats", type=Path, default=Path("docs/_stats"))
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     a = ap.parse_args(argv)
@@ -77,9 +87,10 @@ def main(argv: list[str] | None = None) -> int:
         rows = rows[:a.limit]
     jobs = [(r, a.cache, a.far_k) for r in rows]
     if a.workers > 1:
-        with Pool(a.workers) as pool:
+        with Pool(a.workers, initializer=_open_store, initargs=(a.cache, a.fake_mel)) as pool:
             recs = [x for x in pool.imap(one, jobs, chunksize=16) if x]
     else:
+        _open_store(a.cache, a.fake_mel)
         recs = [x for x in map(one, jobs) if x]
     if not recs:
         print("no token cache for this split: run scripts/preprocess_data.py", file=sys.stderr)
@@ -112,7 +123,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if "rho_all" in df:
         have = df.dropna(subset=["rho_all"])
-        print(f"\nHuman rho over {len(have)} charts with mel (far k = {a.far_k}): " + "  ".join(
+        what = "FAKE mel, meaningless" if a.fake_mel else "log-Mel"
+        print(f"\nHuman rho over {len(have)} charts with {what} (far k = {a.far_k}): " + "  ".join(
             f"{c} {have[c].mean():.3f}" for c in ("rho_all", "rho_in", "rho_cross", "rho_far")))
     return 0
 

@@ -121,7 +121,7 @@ Difficulty distribution, note density, and beat-grid alignment statistics are pe
 ## 5. Downstream formats (not yet fixed)
 
 ### Audio features
-Planned per Yi et al. (ISMIR 2023): log-Mel spectrogram, 80 mel bins, FFT window 512, hop = **1/48 beat**. The beat-relative hop means one frame always spans the same musical duration regardless of tempo, so identical rhythms look identical to the model across songs at different BPMs.
+As in Yi et al. (ISMIR 2023): log-Mel spectrogram, 80 mel bins, FFT window 512, frames every **1/48 beat**. The beat-relative frames mean one frame always spans the same musical duration regardless of tempo, so identical rhythms look identical to the model across songs at different BPMs. Implemented as a fixed-hop log-Mel (128 samples at 22,050 Hz) per audio file, interpolated at the token grid's frame times when read; decoding puts sample 0 where osu! puts 0 ms. See `src/data/audio.py`, `src/data/mel.py` and design doc §3.3.
 
 ### Chart tokens
 Under design. Candidate schemes and the rationale for the final choice will be documented here once fixed (target: mid-August). The leading candidate is a fixed-length beat grid where each position holds the per-lane on/off state, since discrete diffusion assumes a fixed-length sequence and this makes position equivalent to time.

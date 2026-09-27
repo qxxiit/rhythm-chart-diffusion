@@ -23,7 +23,8 @@ import numpy as np
 from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections, parse_osu
 from src.data.chart_writer import write_osu
-from src.data.tokenizer import HOLD_START, PAD, TAP, decode, grammar_violations, make_metas
+from src.data.mel import open_mel
+from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import generate_song
 
@@ -49,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
+    ap.add_argument("--fake-mel", action="store_true", help="the plumbing-only mel (train.py --fake-mel)")
     ap.add_argument("--out", type=Path, default=None, help="default: <ckpt dir>/samples")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
@@ -58,9 +60,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{a.key} is not in {a.manifest}", file=sys.stderr)
         return 2
     z = np.load(a.cache / "tokens" / f"{a.key}.npz")
-    mel = np.load(a.cache / "mel" / f"{a.key}.npy").astype(np.float32)
     tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
     cell_offset, n_cells = int(z["cell_offset"]), int(z["n_cells"])
+    store = open_mel(a.cache, fake=a.fake_mel)
+    if not store.has(a.key):
+        print(f"no mel for {a.key}: run scripts/preprocess_data.py --mel", file=sys.stderr)
+        return 2
+    mel = store.chart(a.key, tps, cell_offset, (len(z["tokens"]) + 1) * L)   # + overhang
     sr = a.sr if a.sr is not None else float(row["sr"] or z["sr"])
 
     model = load_denoiser(a.ckpt, pick_device(a.device))

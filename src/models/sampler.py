@@ -112,7 +112,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
-                  (frame 4r + j belongs to token row r), as in data/cache/mel
+                  (frame 4r + j belongs to token row r): mel.MelStore.chart(...)
     s             target SR, the same for every window
     timing_points, cell_offset
                   the song's timing and token origin; b is computed per window from them

@@ -4,7 +4,8 @@
     python scripts/train.py --steps 50000 --batch-size 32     # full run on the train split
     python scripts/train.py --resume outputs/<run>/last.pt    # continue after an interruption
 
-Reads data/manifest.csv and data/cache (tokens + mel, layout in src/data/cache.py).
+Reads data/manifest.csv and data/cache (tokens + log-Mel, layout in src/data/cache.py).
+--fake-mel reads the plumbing-only mel that encodes the answer instead (never report it).
 Writes outputs/<run>/: config.json, log.csv (every --log-every steps), val.csv,
 last.pt and best.pt. Before a run, write the prediction (final loss, when it
 converges, how it could fail) in docs/EXPERIMENTS.md (design doc §6, 예측 기록).
@@ -54,6 +55,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--run", default=None, help="run name (default: time stamp)")
     ap.add_argument("--overfit", type=int, default=0, help="train and validate on N charts")
     ap.add_argument("--max-charts", type=int, default=None, help="subset of the train split")
+    ap.add_argument("--fake-mel", action="store_true",
+                    help="data/cache/fake_mel (encodes the answer): plumbing tests only")
     ap.add_argument("--window", choices=["chunk", "bar"], default="chunk",
                     help="training windows: the fixed chunks, or a random bar line inside each")
     ap.add_argument("--steps", type=int, default=None, help="optimizer steps (3000 with --overfit)")
@@ -184,18 +187,22 @@ def main(argv=None) -> int:
 
     # --- data ---
     if a.overfit:
-        first = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.overfit)
+        first = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.overfit,
+                             fake_mel=a.fake_mel)
         keys = [c["key"] for c in first.charts]
         val_ds = first
-        train_ds = ChunkDataset(a.manifest, a.cache, ("train",), keys=keys, window=a.window)
+        train_ds = ChunkDataset(a.manifest, a.cache, ("train",), keys=keys, window=a.window,
+                                fake_mel=a.fake_mel)
     else:
         train_ds = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.max_charts,
-                                window=a.window)
-        val_ds = ChunkDataset(a.manifest, a.cache, ("val",))           # always the fixed chunks
+                                window=a.window, fake_mel=a.fake_mel)
+        val_ds = ChunkDataset(a.manifest, a.cache, ("val",),           # always the fixed chunks
+                              fake_mel=a.fake_mel)
         keys = None
     if len(train_ds) == 0:
+        where = "data/cache/fake_mel" if a.fake_mel else "data/cache/logmel (preprocess_data.py --mel)"
         print("no training chunks: run scripts/build_manifest.py and scripts/preprocess_data.py, "
-              "and check that data/cache/mel exists", file=sys.stderr)
+              f"and check {where}", file=sys.stderr)
         return 2
     loader = DataLoader(train_ds, batch_size=a.batch_size, shuffle=True,
                         drop_last=len(train_ds) >= a.batch_size, num_workers=a.num_workers,

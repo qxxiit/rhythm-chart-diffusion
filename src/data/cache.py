@@ -1,9 +1,10 @@
 """Cache file layout shared by the token stage, the mel stage and the Dataset.
 No torch here, so preprocessing runs without it.
 
-One pair of files per chart, named by the manifest key (scripts/build_manifest.py):
+Charts are named by the manifest key (scripts/build_manifest.py), audio files by
+the same md5 of their path under data/raw (scripts/preprocess_data.py audio_id).
 
-    data/cache/tokens/{key}.npz     written by scripts/preprocess_data.py
+    data/cache/tokens/{key}.npz        one per chart, scripts/preprocess_data.py
         tokens        int8    [n_chunks, 384, 4]
         start_cell    int64   [n_chunks]      BeatGrid cell of each chunk's row 0
         beat_len_ms   float32 [n_chunks]      b
@@ -13,13 +14,21 @@ One pair of files per chart, named by the manifest key (scripts/build_manifest.p
         n_cells       int64   []              rows before PAD
         timing_points float64 [n_tp, 2]       (time_ms, ms_per_beat)
 
-    data/cache/mel/{key}.npy        written by the mel pipeline (design doc §3)
-        float16 [n_chunks * 1536, 80]: log-Mel of the whole chart, frame f at
-        from_timing_points(timing_points).frame_times(start_cell[0], n_chunks * 384)[f].
-        Frames 4r .. 4r+3 belong to token row r. Row 0 can be before 0 ms and
-        the last chunk runs past the song, so frames outside the audio hold the
-        silence value. About 3 MB per chart, ~55 GB for the whole set; charts
-        with a non-empty manifest `drop` are never read and can be skipped.
+    data/cache/logmel/                 scripts/preprocess_data.py --mel (design doc §4.5)
+        {audio_id}.npy   float16 [n_frames, 80]: log-Mel of the whole audio file at a
+                         fixed hop (src/data/mel.py): frame k is centred on
+                         k * 128 / 22,050 s after the chart's 0 ms (src/data/audio.py).
+                         One per audio file, shared by every chart of the set.
+        {audio_id}.json  decoder, codec, mp3 tag and trim, per-band mean / std
+        index.csv        key, audio_id, audio: which charts have log-Mel
+      Token row r reads frames 4r .. 4r+3 at
+      BeatGrid.frame_times(r - cell_offset, ...), interpolated when read
+      (mel.MelStore). Before 0 ms and after the audio: log(1e-6), silence.
+      About 4 MB per 2.5 minutes of audio; roughly 20-25 GB for the whole set.
+
+    data/cache/fake_mel/{key}.npy      scripts/preprocess_data.py --fake-mel
+        float16 [n_chunks * 1536, 80] already on the token grid: cache.oracle_mel,
+        which ENCODES THE ANSWER. Read only with --fake-mel (mel.FakeMelStore).
 """
 
 from __future__ import annotations

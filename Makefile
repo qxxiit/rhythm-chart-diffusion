@@ -1,7 +1,7 @@
 # ===== Makefile for common project tasks =====
 # Usage: `make <target>`
 
-.PHONY: help install install-dev lint format test test-fast clean download validate-tokenizer manifest preprocess overfit train-baseline train-diffusion
+.PHONY: help install install-dev lint format test test-fast clean download validate-tokenizer manifest preprocess mel check-audio overfit train-baseline train-diffusion
 
 help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -49,6 +49,13 @@ manifest:  ## One row per chart with split and SR -> data/manifest.csv
 
 preprocess:  ## Token cache for every chart in the manifest -> data/cache/tokens
 	python scripts/preprocess_data.py
+
+mel:  ## Log-Mel of every kept chart's audio -> data/cache/logmel
+	python scripts/preprocess_data.py --mel
+
+check-audio:  ## Audio census (mp3 tags) and note/onset alignment
+	python scripts/check_decoder.py
+	python scripts/check_alignment.py
 
 overfit:  ## Milestone check: overfit 10 charts, then rebuild one from all-MASK
 	python scripts/train.py --overfit 10

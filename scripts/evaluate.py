@@ -33,7 +33,8 @@ import numpy as np
 
 from src.data.cache import read_manifest
 from src.data.chart_parser import parse_osu
-from src.data.tokenizer import HOLD_START, TAP, K, decode, make_metas
+from src.data.mel import open_mel
+from src.data.tokenizer import HOLD_START, TAP, K, L, decode, make_metas
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
@@ -85,15 +86,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
+    ap.add_argument("--fake-mel", action="store_true", help="the plumbing-only mel (train.py --fake-mel)")
     ap.add_argument("--far-k", type=int, default=8,
                     help="bar distance for rho_far; fix it from scripts/human_baselines.py")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
 
+    store = open_mel(a.cache, fake=a.fake_mel)
     rows = [r for r in read_manifest(a.manifest) if r["split"] == a.split and r["sr"]
             and r.get("drop", "") == ""
             and (a.cache / "tokens" / f"{r['key']}.npz").exists()
-            and (a.cache / "mel" / f"{r['key']}.npy").exists()][:a.n]
+            and store.has(r["key"])][:a.n]
     if not rows:
         print(f"no {a.split} songs with SR, tokens and mel", file=sys.stderr)
         return 2
@@ -104,9 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     results = []
     for i, r in enumerate(rows):
         z = np.load(a.cache / "tokens" / f"{r['key']}.npz")
-        mel = np.load(a.cache / "mel" / f"{r['key']}.npy").astype(np.float32)
         tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(r["sr"])
+        mel = store.chart(r["key"], tps, offset, (len(z["tokens"]) + 1) * L)   # + overhang
         tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
                                order=a.order, mode=a.mode, seed=a.seed + i)
         metas = make_metas(tps, offset, len(tokens), sr)

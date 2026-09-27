@@ -1,4 +1,8 @@
-"""manifest -> token cache -> ChunkDataset -> train.py, on synthetic .osu files."""
+"""manifest -> token cache -> ChunkDataset -> train.py, on synthetic .osu files.
+
+Every set also gets an audio.mp3 with a click at each note of its first chart, so
+the real log-Mel path (decode as osu! does, fixed hop, token grid) is checked for
+alignment end to end. Without PyAV's mp3 encoder those tests are skipped."""
 
 import csv
 import json
@@ -13,7 +17,11 @@ from scripts import build_manifest, preprocess_data, sample, tempo_density, trai
 from src.data.chart_parser import Chart, Note, parse_osu  # noqa: E402
 from src.data.chart_writer import write_osu  # noqa: E402
 from src.data.dataset import ChunkDataset  # noqa: E402
-from src.data.tokenizer import PAD, L  # noqa: E402
+from src.data.mel import MelStore, on_grid  # noqa: E402
+from src.data.tokenizer import HOLD_START, PAD, TAP, L  # noqa: E402
+from tests.synth_audio import can_write_mp3, clicks, write_mp3  # noqa: E402
+
+requires_mp3 = pytest.mark.skipif(not can_write_mp3(), reason="PyAV without libmp3lame")
 
 
 def synthetic_song(rng: np.random.Generator, seconds: float = 40.0) -> tuple[list, list]:
@@ -43,10 +51,14 @@ def data(tmp_path_factory) -> Path:
             tps, notes = synthetic_song(rng)
             bid = 1000 + 10 * s + v
             chart = Chart(4, "audio.mp3", tps, notes)
-            write_osu(raw / f"{100 + s} {artist} - {title}" / f"v{v}.osu", chart, title=title,
+            folder = raw / f"{100 + s} {artist} - {title}"
+            write_osu(folder / f"v{v}.osu", chart, title=title,
                       artist=artist if s != 7 else "Artist 0", version=f"v{v}",
                       beatmap_id=bid if (s, v) != (3, 1) else 0, set_id=100 + s)
             beatmaps.append({"id": bid, "difficulty_rating": 2.0 + s * 0.3 + v})
+            if v == 0 and can_write_mp3():            # the set's audio follows chart v0
+                onsets = sorted({n.time_ms for n in notes})
+                write_mp3(folder / "audio.mp3", clicks(onsets, 44100, 42.0, seed=s), 44100)
         sets.append({"id": 100 + s, "beatmaps": beatmaps})
     meta = base / "metadata" / "beatmapsets.jsonl"
     meta.parent.mkdir(parents=True)
@@ -57,6 +69,9 @@ def data(tmp_path_factory) -> Path:
     assert preprocess_data.main(["--manifest", str(base / "manifest.csv"), "--root", str(raw),
                                  "--cache", str(base / "cache"), "--fake-mel", "--limit", "100",
                                  "--workers", "1"]) == 0
+    if can_write_mp3():
+        assert preprocess_data.main(["--manifest", str(base / "manifest.csv"), "--root", str(raw),
+                                     "--cache", str(base / "cache"), "--mel", "--workers", "1"]) == 0
     return base
 
 
@@ -77,7 +92,8 @@ def test_manifest(data: Path) -> None:
 
 
 def test_token_cache_and_dataset(data: Path) -> None:
-    ds = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"))
+    ds = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"),
+                      fake_mel=True)
     assert len(ds.charts) == 16                                        # local SR labels all
     item = ds[0]
     assert item["x0"].shape == (L, 4) and item["x0"].dtype == torch.long
@@ -90,9 +106,10 @@ def test_token_cache_and_dataset(data: Path) -> None:
 
 
 def test_bar_windows_stay_aligned(data: Path) -> None:
-    chunk = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"))
+    chunk = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"),
+                         fake_mel=True)
     bar = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"),
-                       window="bar")
+                       window="bar", fake_mel=True)
     level = np.array([0.0, 6.0, 6.0, 2.0, 4.0, 0.0, 0.0])        # cache.oracle_mel
     torch.manual_seed(0)
     shifted = 0
@@ -124,7 +141,8 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
             "--out", str(tmp_path), "--run", "t", "--overfit", "2", "--steps", "150",
             "--batch-size", "4", "--lr", "2e-3", "--warmup", "10", "--d-model", "64",
             "--layers", "2", "--heads", "2", "--d-ff", "128", "--log-every", "10",
-            "--val-every", "150", "--sample-steps", "8", "--window", "bar", "--device", "cpu"]
+            "--val-every", "150", "--sample-steps", "8", "--window", "bar", "--fake-mel",
+            "--device", "cpu"]
     assert train.main(args) == 0
     with open(tmp_path / "t" / "log.csv", newline="") as f:
         losses = [float(r["loss"]) for r in csv.DictReader(f)]
@@ -140,7 +158,8 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     key = json.loads((tmp_path / "t" / "config.json").read_text())["overfit_keys"][0]
     assert sample.main(["--ckpt", str(tmp_path / "t" / "best.pt"), "--key", key,
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
-                        "--cache", str(data / "cache"), "--steps", "8", "--device", "cpu"]) == 0
+                        "--cache", str(data / "cache"), "--steps", "8", "--fake-mel",
+                        "--device", "cpu"]) == 0
     written = list((tmp_path / "t" / "samples").glob("*.osu"))
     assert len(written) == 1
     chart = parse_osu(written[0])                                     # osu! format round trip
@@ -151,7 +170,7 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     assert evaluate.main(["--ckpt", str(tmp_path / "t" / "best.pt"), "--split", "train",
                           "--n", "2", "--steps", "4", "--manifest", str(data / "manifest.csv"),
                           "--root", str(data / "raw"), "--cache", str(data / "cache"),
-                          "--device", "cpu"]) == 0
+                          "--fake-mel", "--device", "cpu"]) == 0
     summary = json.loads(next((tmp_path / "t").glob("eval_*/summary.json")).read_text())
     assert summary["songs"] == 2 and summary["mean_violation_rate"] == 0.0
     assert summary["mean_ceiling_f1@20"] > 0.99                        # tokenizer round trip
@@ -185,3 +204,67 @@ def test_sr_check_and_tempo_density(data: Path, tmp_path: Path) -> None:
                                "--longest", "3"]) == 0
     with open(tmp_path / "td.csv", newline="") as f:
         assert sum(int(r["charts"]) for r in csv.DictReader(f)) == 16
+
+
+def onset_flux_profile(mel: np.ndarray, x0: np.ndarray, reach: int = 6) -> np.ndarray:
+    """Mean spectral flux at frames 4r + d (d = -reach..reach) around every onset row r."""
+    flux = np.concatenate([[0.0], np.maximum(np.diff(mel, axis=0), 0).sum(axis=1)])
+    rows = np.flatnonzero(np.isin(x0, (TAP, HOLD_START)).any(axis=1))
+    rows = rows[(4 * rows - reach >= 1) & (4 * rows + reach < len(mel))]
+    return np.mean([flux[4 * r - reach:4 * r + reach + 1] for r in rows], axis=0)
+
+
+@requires_mp3
+def test_real_mel_is_aligned_with_the_notes(data: Path) -> None:
+    with open(data / "cache" / "logmel" / "index.csv", newline="") as f:
+        index = list(csv.DictReader(f))
+    assert len(index) == 16 and len({r["audio_id"] for r in index}) == 8
+    info = json.loads((data / "cache" / "logmel" / f"{index[0]['audio_id']}.json").read_text())
+    assert info["mp3_tag"] == "lame" and info["mp3_trim"] == 1105 and len(info["mean"]) == 80
+
+    with open(data / "manifest.csv", newline="") as f:
+        first = [r["key"] for r in csv.DictReader(f) if r["path"].endswith("v0.osu")]
+    ds = ChunkDataset(data / "manifest.csv", data / "cache", ("train", "val", "test"),
+                      keys=first)
+    assert len(ds.charts) == 8
+    profiles = [onset_flux_profile(item["mel"].numpy(), item["x0"].numpy())
+                for item in (ds[i] for i in range(len(ds)))]
+    peak = int(np.argmax(np.mean(profiles, axis=0))) - 6
+    assert peak in (-1, 0)                    # the click's rise lands on the onset frame
+
+    store, chart, grid = MelStore(data / "cache", norm="none"), ds.charts[0], ds._grid(0)
+    late = []                                 # control: the same audio read 25 ms late
+    for c in range(len(chart["rows"]) // L):
+        times = grid.frame_times(c * L - chart["cell_offset"], L) - 25.0
+        mel = on_grid(store.audio(chart["key"])[0], times)
+        late.append(onset_flux_profile(mel, chart["rows"][c * L:(c + 1) * L]))
+    assert int(np.argmax(np.mean(late, axis=0))) - 6 >= peak + 2
+
+
+@requires_mp3
+def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
+    args = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--out", str(tmp_path), "--run", "r", "--overfit", "2", "--steps", "20",
+            "--batch-size", "4", "--warmup", "5", "--d-model", "64", "--layers", "2",
+            "--heads", "2", "--d-ff", "128", "--log-every", "10", "--val-every", "20",
+            "--sample-steps", "4", "--device", "cpu"]
+    assert train.main(args) == 0
+    key = json.loads((tmp_path / "r" / "config.json").read_text())["overfit_keys"][0]
+    assert sample.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--key", key,
+                        "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+                        "--cache", str(data / "cache"), "--steps", "4", "--device", "cpu"]) == 0
+
+
+def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:
+    folder = tmp_path / "1 A - B"
+    write_osu(folder / "x.osu", Chart(4, "Audio.MP3", [(0, 500.0)], [Note(0, 0)]),
+              title="B", artist="A", version="x")
+    row = {"key": "k", "path": "1 A - B/x.osu"}
+    assert preprocess_data.find_audio((row, tmp_path)) == ("k", None)
+    (folder / "audio.mp3").write_bytes(b"")
+    preprocess_data._files.cache_clear()
+    assert preprocess_data.find_audio((row, tmp_path)) == ("k", "1 A - B/audio.mp3")
+    if not (folder / "Audio.MP3").exists():                    # case-sensitive file system
+        (folder / "Audio.MP3").write_bytes(b"")
+        preprocess_data._files.cache_clear()
+        assert preprocess_data.find_audio((row, tmp_path)) == ("k", "1 A - B/Audio.MP3")

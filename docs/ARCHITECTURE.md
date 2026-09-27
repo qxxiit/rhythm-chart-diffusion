@@ -57,7 +57,8 @@ audio (.mp3)                      chart (.osu)
 - ✅ **`chart_writer.py`**: `Chart` → `.osu` that osu! opens as a local mania difficulty.
 - ✅ **`cache.py`**: the `data/cache` file layout that the token stage, the mel stage and the Dataset share (no torch).
 - ✅ **`dataset.py`**: `ChunkDataset` of (x0, mel, s, b) chunks read from `data/cache`.
-- 🚧 **mel pipeline**: fixed-hop log-Mel resampled at `BeatGrid.frame_times` (4 frames per token cell, 1/48 beat inside a timing section), written to `data/cache/mel/{key}.npy` in the layout above.
+- ✅ **`audio.py`**: decodes audio so that sample 0 is where osu! puts 0 ms. mp3 files are decoded without the decoder's own gapless trim and then trimmed by the rule osu!'s BASS follows (read from the LAME / Xing / VBRI tag); checked sample-exact against BASS 2.4.17 on synthetic files, and on real files with `scripts/check_decoder.py --bass`.
+- ✅ **`mel.py`**: fixed-hop log-Mel (22,050 Hz, n_fft 512, hop 128, 80 Slaney bands, log(x + 1e-6), frame k centred on sample 128k), one file per audio file in `data/cache/logmel/`, read on each chart's grid at `BeatGrid.frame_times` (4 frames per token cell) and standardized per song and band. `FakeMelStore` serves the plumbing-only mel with `--fake-mel`.
 
 > Data acquisition currently lives in `scripts/` rather than `src/data/`, since each stage is a standalone batch job with its own resume state. Reusable pieces (API client, parser) are in `src/data/`.
 
@@ -119,7 +120,11 @@ python scripts/check_osz.py            # ✅ integrity check on downloaded archi
 # Model pipeline
 python scripts/validate_tokenizer.py   # ✅ tokenizer invariants on every chart
 python scripts/build_manifest.py       # ✅ data/manifest.csv: key, split (by audio_key), SR
-python scripts/preprocess_data.py      # ✅ token cache (mel: 🚧 mel pipeline)
+python scripts/preprocess_data.py      # ✅ token cache
+python scripts/preprocess_data.py --mel --splits train val --train-groups 600
+                                       # ✅ log-Mel of a 600-song subset + val (drop the flags: all)
+python scripts/check_decoder.py        # ✅ audio census (mp3 tags); --bass PATH: compare with osu!'s decoder
+python scripts/check_alignment.py      # ✅ notes vs audio onsets, by mp3 tag and on the token grid
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
 python scripts/sample.py --ckpt ... --key ...   # ✅ generate one song -> playable .osu
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity
