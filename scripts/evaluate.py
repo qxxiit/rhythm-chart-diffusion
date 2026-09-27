@@ -2,8 +2,15 @@
 
     python scripts/evaluate.py --ckpt outputs/<run>/best.pt --split val --n 50
     python scripts/evaluate.py --ckpt ... --mode independent --order confidence --steps 64
+    python scripts/evaluate.py --ckpt ... --per-song --n 0 --order noisy --temperature 2
 
-For each song (the first N of the split with SR, tokens and mel), generate at the
+--per-song takes one chart per song (audio_key, a seeded random difficulty), so the
+N rows are N different songs; without it the first N charts of the split are
+scored, which are a handful of songs at several difficulties. --n 0 = all.
+summary.json also holds 95% bootstrap intervals over the rows (ci95_*) for the
+main numbers.
+
+For each chart (see --per-song) with SR, tokens and mel, generate at the
 human chart's SR with the song's real timing, then score:
     f1@20 / f1@50         onsets, same lane, greedy matching (metrics.onset_f1)
     f1@50_any_lane        lanes ignored
@@ -40,7 +47,7 @@ from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
 from src.evaluation.structure import structure_scores
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import generate_song
+from src.models.sampler import ORDERS, generate_song
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
@@ -74,13 +81,37 @@ def score(gen, ref, back, tokens, sr: float, sr_gen: float, sr_human: float) -> 
     return row
 
 
+CI_KEYS = ("f1@20", "f1@50", "f1@50_any_lane", "precision@50", "recall@50", "density_ratio",
+           "sr_error", "rho_all", "rho_in", "coverage")
+
+
+def pick_per_song(rows: list[dict], seed: int) -> list[dict]:
+    """One chart per audio_key, a seeded random difficulty, in manifest order of songs."""
+    by_song: dict[str, list[dict]] = {}
+    for r in rows:
+        by_song.setdefault(r["audio_key"], []).append(r)
+    rng = np.random.default_rng(seed)
+    return [charts[int(rng.integers(len(charts)))] for charts in by_song.values()]
+
+
+def bootstrap_ci(values, n: int = 2000, seed: int = 0) -> list[float]:
+    """95% percentile interval of the mean, resampling rows (NaN rows left out)."""
+    v = np.asarray([x for x in values if x == x], dtype=np.float64)
+    if len(v) < 2:
+        return [float("nan"), float("nan")]
+    means = np.random.default_rng(seed).choice(v, size=(n, len(v))).mean(axis=1)
+    return [round(float(q), 4) for q in np.percentile(means, [2.5, 97.5])]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--split", default="val")
-    ap.add_argument("--n", type=int, default=50, help="songs to evaluate")
+    ap.add_argument("--n", type=int, default=50, help="charts (songs with --per-song); 0 = all")
+    ap.add_argument("--per-song", action="store_true", help="one chart per song")
     ap.add_argument("--steps", type=int, default=32)
-    ap.add_argument("--order", choices=["random", "confidence"], default="random")
+    ap.add_argument("--order", choices=list(ORDERS), default="random")
+    ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
@@ -96,12 +127,18 @@ def main(argv: list[str] | None = None) -> int:
     rows = [r for r in read_manifest(a.manifest) if r["split"] == a.split and r["sr"]
             and r.get("drop", "") == ""
             and (a.cache / "tokens" / f"{r['key']}.npz").exists()
-            and store.has(r["key"])][:a.n]
+            and store.has(r["key"])]
+    if a.per_song:
+        rows = pick_per_song(rows, a.seed)
+    if a.n:
+        rows = rows[:a.n]
     if not rows:
         print(f"no {a.split} songs with SR, tokens and mel", file=sys.stderr)
         return 2
     model = load_denoiser(a.ckpt, pick_device(a.device))
-    out_dir = a.ckpt.parent / f"eval_{a.split}_{a.mode}_{a.order}_T{a.steps}"
+    order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
+    tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{a.steps}"
+    out_dir = a.ckpt.parent / f"eval_{tag}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -111,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(r["sr"])
         mel = store.chart(r["key"], tps, offset, (len(z["tokens"]) + 1) * L)   # + overhang
         tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
-                               order=a.order, mode=a.mode, seed=a.seed + i)
+                               order=a.order, mode=a.mode, seed=a.seed + i,
+                               temperature=a.temperature)
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
         back = decode(z["tokens"], metas)
@@ -137,11 +175,15 @@ def main(argv: list[str] | None = None) -> int:
         w.writeheader()
         w.writerows(results)
     numeric = [k for k in results[0] if k not in ("key", "path", "grade")]
-    summary = {"songs": len(results), "split": a.split, "mode": a.mode, "order": a.order,
+    summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
+               "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
+               "temperature": a.temperature if a.order == "noisy" else None,
                "steps": a.steps, "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,
                **{f"mean_{k}": round(float(np.nanmean([x[k] for x in results])), 4)
-                  for k in numeric}}
+                  for k in numeric},
+               **{f"ci95_{k}": bootstrap_ci([x[k] for x in results], seed=a.seed)
+                  for k in CI_KEYS if k in results[0]}}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     return 0

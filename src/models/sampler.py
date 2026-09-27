@@ -66,19 +66,26 @@ def denoiser_probs(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float) 
     return torch.softmax(logits.float(), dim=-1)[0].cpu().numpy().astype(np.float64)
 
 
+ORDERS = ("random", "confidence", "noisy")
+
+
 def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *,
                   steps: int = 32, order: str = "random", rng: np.random.Generator | None = None,
-                  left_closed: bool = True, right_closed: bool = True) -> np.ndarray:
+                  left_closed: bool = True, right_closed: bool = True,
+                  temperature: float = 1.0) -> np.ndarray:
     """Fill the MASK cells of one window. Cells that are not MASK are kept as they are.
 
     x      [L, K] tokens: MASK where to generate, PAD past the end of the song
     mel    [L * 4, n_mels] tensor on the model's device
     order  "random": each MASK cell opens with probability 1/t at step t (§4.8)
            "confidence": the round(n / t) most confident MASK cells open (MaskGIT, 큐 9)
+           "noisy": the same count, ranked by log confidence + temperature * (t / steps) *
+                    Gumbel noise (MaskGIT's choice temperature): close to random early,
+                    close to confidence late. temperature 0 = "confidence"
     left_closed / right_closed: whether the window edge is a song edge, where a
            hold cannot come in or stay open.
     """
-    if order not in ("random", "confidence"):
+    if order not in ORDERS:
         raise ValueError(f"unknown order {order!r}")
     x = np.array(x, dtype=np.int64)
     rng = rng or np.random.default_rng()
@@ -92,8 +99,10 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
         elif order == "random":
             pick = todo[rng.random(len(todo)) < 1.0 / t]
         else:
-            confidence = probs[todo[:, 0], todo[:, 1]].max(axis=-1)
-            pick = todo[np.argsort(-confidence, kind="stable")[:max(1, round(len(todo) / t))]]
+            score = np.log(probs[todo[:, 0], todo[:, 1]].max(axis=-1) + 1e-12)
+            if order == "noisy" and temperature > 0:
+                score = score + temperature * (t / steps) * rng.gumbel(size=len(todo))
+            pick = todo[np.argsort(-score, kind="stable")[:max(1, round(len(todo) / t))]]
 
         for c, k in pick[np.lexsort((pick[:, 0], pick[:, 1]))]:     # lane by lane, left to right
             left = _neighbour(x[c - 1, k]) if c > 0 else (EMPTY if left_closed else None)
@@ -108,7 +117,7 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
 def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: int,
                   n_cells: int, *, steps: int = 32, order: str = "random",
                   mode: str = "continue", prefix_cells: int = 2 * BAR,
-                  seed: int = 0) -> np.ndarray:
+                  seed: int = 0, temperature: float = 1.0) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -145,7 +154,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(
             model, song[row0:row0 + L], frames[row0 * r:(row0 + L) * r], s, beat_len(row0),
-            steps=steps, order=order, rng=rng, left_closed=left_closed, right_closed=right_closed)
+            steps=steps, order=order, rng=rng, left_closed=left_closed, right_closed=right_closed,
+            temperature=temperature)
 
     if mode == "independent":
         for c in range(n_chunks):

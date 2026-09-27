@@ -138,7 +138,7 @@ def song_fixture():
     return chart, tokens, metas, stats, mel
 
 
-@pytest.mark.parametrize("order", ["random", "confidence"])
+@pytest.mark.parametrize("order", ["random", "confidence", "noisy"])
 def test_continuation_with_an_oracle_rebuilds_the_song(order: str) -> None:
     chart, tokens, metas, stats, mel = song_fixture()
     out = generate_song(Oracle(tokens), mel, 3.0, chart.timing_points, metas[0].cell_offset,
@@ -147,7 +147,7 @@ def test_continuation_with_an_oracle_rebuilds_the_song(order: str) -> None:
 
 
 @pytest.mark.parametrize("mode", ["continue", "independent"])
-@pytest.mark.parametrize("order", ["random", "confidence"])
+@pytest.mark.parametrize("order", ["random", "confidence", "noisy"])
 def test_untrained_model_still_writes_grammatical_charts(mode: str, order: str) -> None:
     chart, tokens, metas, stats, _ = song_fixture()
     torch.manual_seed(0)
@@ -178,3 +178,19 @@ def test_sample_window_keeps_fixed_cells() -> None:
 def test_the_grammar_never_leaves_a_cell_without_a_choice() -> None:
     values = [None, 0, 1, 2, 3, 4]
     assert all(allowed(left, right).any() for left in values for right in values)
+
+
+def test_noisy_order_spans_confidence_and_random() -> None:
+    """temperature 0 is the confidence order exactly; a high one opens cells in an
+    order unrelated to confidence, the way the random order does."""
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    x = np.full((L, K), MASK, dtype=np.int64)
+    mel = torch.randn(L * 4, 80)
+    run = {o: sample_window(model, x, mel, 3.0, 400.0, steps=8, order=o, temperature=tau,
+                            rng=np.random.default_rng(5))
+           for o, tau in (("confidence", 1.0), ("noisy", 0.0))}
+    assert np.array_equal(run["confidence"], run["noisy"])
+    hot = sample_window(model, x, mel, 3.0, 400.0, steps=8, order="noisy", temperature=50.0,
+                        rng=np.random.default_rng(5))
+    assert not np.array_equal(hot, run["confidence"]) and not np.any(hot == MASK)

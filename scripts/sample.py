@@ -26,7 +26,7 @@ from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import generate_song
+from src.models.sampler import ORDERS, generate_song
 
 
 def onset_match(pred: np.ndarray, real: np.ndarray) -> tuple[float, float]:
@@ -44,7 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sr", type=float, default=None,
                     help="target SR (default: the chart's label in the manifest)")
     ap.add_argument("--steps", type=int, default=32)
-    ap.add_argument("--order", choices=["random", "confidence"], default="random")
+    ap.add_argument("--order", choices=list(ORDERS), default="random")
+    ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
-                           order=a.order, mode=a.mode, seed=a.seed)
+                           order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -80,9 +81,10 @@ def main(argv: list[str] | None = None) -> int:
                .get("Metadata", []))
     chart.audio_filename = parse_osu(src).audio_filename
     out_dir = a.out or a.ckpt.parent / "samples"
-    out = out_dir / f"{a.key}_{a.mode}_{a.order}_T{a.steps}_s{sr:.2f}.osu"
+    order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
+    out = out_dir / f"{a.key}_{a.mode}_{order}_T{a.steps}_s{sr:.2f}.osu"
     write_osu(out, chart, title=meta.get("Title", ""), artist=meta.get("Artist", ""),
-              version=f"diffusion s={sr:.2f} {a.mode}/{a.order}/T{a.steps}")
+              version=f"diffusion s={sr:.2f} {a.mode}/{order}/T{a.steps}")
 
     real = z["tokens"]
     same = real.shape == tokens.shape

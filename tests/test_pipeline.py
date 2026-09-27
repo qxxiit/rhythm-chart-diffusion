@@ -252,7 +252,29 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     key = json.loads((tmp_path / "r" / "config.json").read_text())["overfit_keys"][0]
     assert sample.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--key", key,
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
-                        "--cache", str(data / "cache"), "--steps", "4", "--device", "cpu"]) == 0
+                        "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
+                        "--temperature", "2", "--device", "cpu"]) == 0
+    assert list((tmp_path / "r" / "samples").glob("*_noisy2_T4_*.osu"))
+
+    from scripts import audio_ablation
+    assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                                "--manifest", str(data / "manifest.csv"),
+                                "--cache", str(data / "cache"), "--batches", "2",
+                                "--batch-size", "4", "--device", "cpu"]) == 0
+    res = json.loads((tmp_path / "r" / "audio_ablation_train.json").read_text())
+    assert len(res) == 4 * 5 * 2 and all(v >= 0 for v in res.values())
+
+    pytest.importorskip("rosu_pp_py")
+    from scripts import evaluate
+    assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                          "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
+                          "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+                          "--cache", str(data / "cache"), "--device", "cpu"]) == 0
+    summary = json.loads((tmp_path / "r" / "eval_train_songs_continue_noisy1_T4"
+                          / "summary.json").read_text())
+    assert summary["songs"] == summary["distinct_songs"] == 6          # 14 train charts, 6 songs
+    lo, hi = summary["ci95_f1@50"]
+    assert lo <= summary["mean_f1@50"] <= hi
 
 
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:

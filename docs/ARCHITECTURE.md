@@ -64,7 +64,7 @@ audio (.mp3)                      chart (.osu)
 
 ### `src/models/`
 - ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
-- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random or confidence order) and song generation by continuation or independent chunks (§4.8).
+- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8).
 - ⚪ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting), W5.
 
 ### Training (`scripts/train.py`) ✅
@@ -128,6 +128,8 @@ python scripts/check_alignment.py      # ✅ notes vs audio onsets, by mp3 tag a
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
 python scripts/sample.py --ckpt ... --key ...   # ✅ generate one song -> playable .osu
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity
+                                       #    --per-song: one chart per song; ci95_* bootstrap intervals
+python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
 python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves
 python scripts/tempo_density.py        # ✅ tempo vs notes per beat inside each SR grade

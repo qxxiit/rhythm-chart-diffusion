@@ -54,13 +54,18 @@ first-order setting, not an ablation: fix it before the main comparison
 (queue 9), and read SR error together with precision and density. Decide on
 real mel, where confidence order may under-generate instead.
 
+### 2026-09-27 · Training (Try #1)
+
+Prediction: Final validation CE expected to be around 0.2, since there are no deterministic answer to the given audio. Loss at @0.1 is expected to be quite lower than @0.9. Train loss and val CE will start going different ways around 2000 steps. Failure if val CE > 0.55.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
 
 ## Phase 3 Ablation B: Conditioning
 
-_TBD — target Oct 28, 2026._
+audio_ablation: onset CE가 other와 flat에서 얼마나 오를까? shift2는 other보다 더 나쁠까? shift2가 더 나쁘다면 모델이 소리의 종류보다 위치를 보고 있다는 뜻.
+샘플링: 밀도비가 1에 가장 가까운 설정은 어느 쪽일까? random에서 T를 128로 늘리면 여분 노트가 줄어들까?
 
 ## Phase 3 Ablation C + Multi-key
 
