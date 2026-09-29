@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--split", default="val")
     ap.add_argument("--n", type=int, default=50, help="charts (songs with --per-song); 0 = all")
     ap.add_argument("--per-song", action="store_true", help="one chart per song")
-    ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")

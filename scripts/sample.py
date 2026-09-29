@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--key", required=True, help="manifest key of the song")
     ap.add_argument("--sr", type=float, default=None,
                     help="target SR (default: the chart's label in the manifest)")
-    ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")

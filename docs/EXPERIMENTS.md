@@ -5,6 +5,7 @@
 
 | Date | Run ID | Phase | Model | Key Config | Val F1 | Test F1 | wandb | Notes |
 |------|--------|-------|-------|------------|--------|---------|-------|-------|
+| 2026-09-29 | full-v1 | 2 | D-32, 6.87M, audio_add | all train songs (16,410 charts, 218,142 chunks), 60k steps (4.4 epochs), batch 16, MPS, ~3 h | F1@50 0.373 (240 val songs, random T128) | - | - | val CE 0.072; vs subset: F1 same, SR error 0.375→0.236, rho at the human level, pattern coverage still 2x chance; sampler fixed to random T128 |
 | 2026-09-27 | subset600-v1 | 2 | D-32, 6.87M, audio_add | 600 train songs (2,110 charts, 28,004 chunks), 20k steps, batch 16, MPS, 1 h | F1@50 0.37 (240 val songs, every sampler) | - | - | val CE 0.087, no overfitting; sampler moves density 0.81-1.16; without audio onset CE +79% |
 | 2026-09-26 | 20260926-060904 | 2 | D-32, 6.87M, audio_add | `--overfit 10`, fake mel, 3000 steps, batch 16, MPS | - | - | - | Plumbing check; sampler order matters (see Phase 2) |
 | TBD  | -      | 1     | -     | -          | -      | -       | -     | First baseline run |
@@ -125,6 +126,92 @@ extra notes from 16% to 9%, as the independent-sampling explanation predicts.
 
 Next: noisy with tau 0.3-0.5 and random with T = 256, to bracket density 1.
 
+### 2026-09-28 · Training on the full set (full-v1)
+
+No prediction was written before this run.
+
+Run `full-v1`: `preprocess_data.py --mel` (all splits: 5,693 audio files,
+18,143 charts indexed, 48 charts without audio, 27.8 GB), then `train.py
+--steps 60000 --val-every 2000 --run full-v1`, defaults otherwise. 218,142 train
+chunks from 16,410 charts (7.8x the subset), 10,664 val chunks. MPS at 86-89
+chunks/s, about 3 h, 4.4 epochs.
+
+| step | val CE | @0.1 | @0.3 | @0.5 | @0.7 | @0.9 | subset600-v1 |
+|---|---|---|---|---|---|---|---|
+| 2,000 | 0.231 | 0.157 | 0.192 | 0.224 | 0.262 | 0.322 | - |
+| 10,000 | 0.100 | 0.040 | 0.057 | 0.077 | 0.113 | 0.215 | 0.100 |
+| 20,000 | 0.086 | 0.030 | 0.046 | 0.065 | 0.097 | 0.193 | 0.087 |
+| 40,000 | 0.076 | 0.023 | 0.038 | 0.056 | 0.087 | 0.174 | - |
+| 60,000 | 0.072 | 0.020 | 0.035 | 0.052 | 0.083 | 0.168 | - |
+
+Reading: at the same step the full run and the subset run have the same val
+CE (0.100 / 0.086 vs 0.100 / 0.087), though the subset had seen each chunk
+about six times by 20k and the full set less than twice. The gain after 20k
+comes from 40k more steps without overfitting. This run alone cannot separate
+"more data" from "more steps"; a subset run to 60k would (three hours on the
+MacBook). Val CE was still falling slowly at the end (0.0722 → 0.0717 over the
+last 6k steps, with the learning rate near zero).
+
+### 2026-09-29 · Audio alignment on the full cache
+
+`check_alignment.py --cached-only --n 2000`, train. Peak lag of onset strength
+after the note times, median over songs (IQR):
+
+| group | songs | median ms | IQR | >10 ms from the median |
+|---|---|---|---|---|
+| mp3 lame | 1,240 | 18.95 | 15.2-22.0 | 10.1% |
+| vorbis | 494 | 19.13 | 15.6-21.8 | 8.9% |
+| mp3 none | 242 | 18.72 | 15.0-22.6 | 12.0% |
+| mp3 xing | 24 | 16.33 | 11.7-22.2 | 20.8% |
+| all | 2,000 | 18.98 | 15.2-22.0 | 10.2% |
+
+Token grid: +2.94 frames (+21.9 ms). Chunks faster than 215 BPM: 10.2%.
+
+Answer to the open question: untagged mp3s do not split. Their distribution
+has one mode and matches LAME files (median difference -0.2 ms, 95% interval
+-1.3 to +0.8; KS p = 0.56); a group decoded 529 samples differently would sit
+~12 ms away. Rule and no-shift decision stand (DECISIONS 2026-09-29).
+
+### 2026-09-29 · Sampling settings (second pass, full-v1)
+
+`evaluate.py --per-song --n 0` on `full-v1/best.pt`, the same 240 val songs
+and difficulties as the first pass. Brackets: 95% bootstrap intervals.
+
+| order, steps | F1@50 | F1@50 any lane | precision / recall | density | SR error | rho_all / rho_in | pattern coverage (chance) | run length |
+|---|---|---|---|---|---|---|---|---|
+| noisy tau 0.3, 32 | 0.364 [0.353, 0.375] | 0.727 | 0.366 / 0.367 | 1.030 [1.007, 1.054] | 0.276 [0.245, 0.309] | 0.207 / 0.205 | 0.0060 (0.0019) | 3.60 |
+| noisy tau 0.5, 32 | 0.368 [0.356, 0.379] | 0.734 | 0.364 / 0.376 | 1.061 [1.036, 1.088] | 0.291 [0.260, 0.321] | 0.198 / 0.199 | 0.0056 (0.0017) | 3.53 |
+| random, 128 | 0.373 [0.362, 0.384] | 0.761 | 0.367 / 0.382 | 1.065 [1.042, 1.090] | 0.236 [0.205, 0.269] | 0.207 / 0.215 | 0.0093 (0.0046) | 4.76 |
+| subset600-v1, random, 128 | 0.369 [0.357, 0.381] | 0.732 | 0.361 / 0.381 | 1.088 [1.059, 1.121] | 0.375 [0.340, 0.411] | 0.166 / 0.162 | 0.0047 (0.0023) | 2.96 |
+| human charts | - | - | - | 1 | - | 0.234 / 0.228 | 0.0422 (0.0063) | 7.49 |
+
+Paired over songs (same charts): random 128 minus noisy 0.3: F1 +0.009
+[+0.005, +0.012], |SR error| -0.040 [-0.069, -0.008]; minus noisy 0.5: F1
++0.005 [+0.001, +0.010], |SR error| -0.055 [-0.082, -0.028].
+
+SR bias (generated minus target) by grade:
+
+| setting | Easy (47) | Normal (31) | Hard (73) | Insane (66) | Expert (18) | Expert+ (5) | slope |
+|---|---|---|---|---|---|---|---|
+| noisy tau 0.3 | +0.22 | +0.16 | +0.12 | +0.01 | -0.28 | -1.07 | 0.87 |
+| noisy tau 0.5 | +0.23 | +0.19 | +0.20 | +0.08 | -0.19 | -0.74 | 0.90 |
+| random, 128 | +0.10 | +0.09 | +0.16 | +0.07 | -0.15 | -0.49 | 0.94 |
+| subset, random, 128 | +0.33 | +0.27 | +0.33 | +0.24 | +0.20 | +0.19 | 0.97 |
+
+Decision: random order, T = 128 is the default (DECISIONS 2026-09-29). Noisy
+tau 0.3 is closest to density 1, but it gets there by adding notes to easy
+charts and removing them from hard ones (the confidence order's compression,
+weaker), so its SR error is higher. Random 128 still adds 6.5% [4.2, 9.0]
+notes; T = 256 was not run.
+
+Full set vs subset (random 128, paired): F1 +0.004 [+0.001, +0.008], the same
+by grade; |SR error| -0.139 [-0.171, -0.108], the bias left the easy grades;
+rho_in 0.162 → 0.215 (human 0.228); runs 2.96 → 4.76 events (human 7.49).
+Pattern coverage doubled, but so did its chance level: 2.0x chance in both,
+against 6.7x in human charts. More data and steps fixed difficulty control and
+repetition structure, not pattern clarity. F1@50 any lane (0.76) against F1@50
+(0.37): the timing is mostly right and the lane choice is where charts differ.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
@@ -153,6 +240,27 @@ sound is, not only what it is. Another song beats no audio because the input is
 beat-aligned, so any song puts its energy on strong beats. Empty and hold-body
 cells come mostly from the grammar and the unmasked neighbours (all-cell CE
 +0.04 only).
+
+### 2026-09-29 · Audio ablation (full-v1)
+
+Same script, chunks and masks as the subset entry.
+
+| mel | masked CE | onset CE | onset CE at 0.9 |
+|---|---|---|---|
+| real | 0.090 | 0.571 | 1.097 |
+| other song | 0.133 (+0.043) | 0.906 (+0.335, +59%) | 1.578 |
+| flat (zeros) | 0.125 (+0.035) | 0.975 (+0.404, +71%) | 1.767 |
+| shifted 2 cells | 0.112 (+0.022) | 0.828 (+0.257, +45%) | 1.642 |
+
+Against the subset model: onset CE with real audio fell 18% (0.693 → 0.571)
+and with no audio 21% (1.238 → 0.975), so the prior from the grammar and the
+neighbours improved as much as the use of audio. Another song's audio now
+costs more than no audio on all masked cells (0.133 vs 0.125; the subset had
+0.149 vs 0.151): the full model trusts the audio more, and misleading audio
+misleads it. The 2-cell shift still costs about 77% of a song swap (subset
+79%), and at mask 0.9 it is worse than a song swap in both models (1.642 vs
+1.578; subset 1.644 vs 1.611): with little of the chart left, sound in the
+wrong place is worse than the wrong sound.
 
 ## Phase 3 Ablation C + Multi-key
 

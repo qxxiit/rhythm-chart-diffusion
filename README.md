@@ -29,8 +29,8 @@ See [`MASTERPLAN.md`](MASTERPLAN.md) for the full project plan.
 |---|---|
 | Phase 0 — Setup & data pipeline | ✅ **Complete** (Aug 2026) |
 | Phase 1 — Problem formulation & baseline | 🟡 Formulation, tokenizer, split, audio pipeline and evaluation done; AR baseline not started |
-| Phase 2 — Discrete diffusion | 🟡 D-32 trained on a 600-song subset and evaluated on 240 val songs (Sep 2026) |
-| Phase 3 — Ablation & multi-key | ⚪ Not started (an audio ablation of the subset model is in `docs/EXPERIMENTS.md`) |
+| Phase 2 — Discrete diffusion | 🟡 D-32 trained on the full training set (val CE 0.072) and evaluated on 240 val songs; sampler fixed (Sep 2026) |
+| Phase 3 — Ablation & multi-key | ⚪ Not started (audio ablations of the subset and full models are in `docs/EXPERIMENTS.md`) |
 | Phase 4 — Unity integration & user study | ⚪ Not started |
 | Phase 5 — Paper | ⚪ Not started |
 

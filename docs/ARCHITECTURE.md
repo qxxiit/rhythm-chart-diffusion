@@ -64,7 +64,7 @@ audio (.mp3)                      chart (.osu)
 
 ### `src/models/`
 - ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
-- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8).
+- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29).
 - ⚪ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting), W5.
 
 ### Training (`scripts/train.py`) ✅

@@ -24,7 +24,7 @@ the same md5 of their path under data/raw (scripts/preprocess_data.py audio_id).
       Token row r reads frames 4r .. 4r+3 at
       BeatGrid.frame_times(r - cell_offset, ...), interpolated when read
       (mel.MelStore). Before 0 ms and after the audio: log(1e-6), silence.
-      About 4 MB per 2.5 minutes of audio; roughly 20-25 GB for the whole set.
+      About 4 MB per 2.5 minutes of audio; 27.8 GB for the whole set (5,693 files).
 
     data/cache/fake_mel/{key}.npy      scripts/preprocess_data.py --fake-mel
         float16 [n_chunks * 1536, 80] already on the token grid: cache.oracle_mel,
