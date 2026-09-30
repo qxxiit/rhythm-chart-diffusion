@@ -274,8 +274,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert generate.main(common + ["--timing", str(folder / "v0.osu"),
-                                   "--out", str(tmp_path / "gen2")]) == 0
+    assert generate.main(common + ["--timing", str(folder / "v0.osu"), "--mode", "independent",
+                                   "--order", "confidence", "--out", str(tmp_path / "gen2")]) == 0
+    assert len(list((tmp_path / "gen2").glob("*independent-confidence*.osu"))) == 1
     # the model input from the audio file equals the one training read from the cache
     with open(data / "manifest.csv", newline="") as f:
         key = next(r["key"] for r in csv.DictReader(f)
