@@ -65,7 +65,7 @@ audio (.mp3)                      chart (.osu)
 ### `src/models/`
 - ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
 - ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29).
-- ⚪ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting), W5.
+- ⏸ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting): on hold, generator first (DECISIONS 2026-09-30).
 
 ### Training (`scripts/train.py`) ✅
 AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. Plain `argparse`; the Hydra configs are not used.
@@ -126,9 +126,14 @@ python scripts/preprocess_data.py --mel --splits train val --train-groups 600
 python scripts/check_decoder.py        # ✅ audio census (mp3 tags); --bass PATH: compare with osu!'s decoder
 python scripts/check_alignment.py      # ✅ notes vs audio onsets, by mp3 tag and on the token grid
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
-python scripts/sample.py --ckpt ... --key ...   # ✅ generate one song -> playable .osu
+python scripts/sample.py --ckpt ... --key ...   # ✅ a dataset song -> .osu, and an .osz with the beatmap's files
+python scripts/generate.py --audio X.mp3 --sr 3.5   # ✅ any audio file -> .osz (--bpm/--offset,
+                                       #    --timing X.osu, or a constant tempo estimated from the audio)
+python scripts/playtest_pack.py --ckpt ...      # ✅ blind packs: human (tokenized) and AI charts as A/B/C;
+                                       #    --score answers.csv ratings_*.csv summarizes the ratings
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals
+                                       #    --sample-seed N: same charts, other sampler draws (replicate)
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
 python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves

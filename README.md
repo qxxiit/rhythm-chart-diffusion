@@ -28,8 +28,8 @@ See [`MASTERPLAN.md`](MASTERPLAN.md) for the full project plan.
 | Phase | Status |
 |---|---|
 | Phase 0 — Setup & data pipeline | ✅ **Complete** (Aug 2026) |
-| Phase 1 — Problem formulation & baseline | 🟡 Formulation, tokenizer, split, audio pipeline and evaluation done; AR baseline not started |
-| Phase 2 — Discrete diffusion | 🟡 D-32 trained on the full training set (val CE 0.072) and evaluated on 240 val songs; sampler fixed (Sep 2026) |
+| Phase 1 — Problem formulation & baseline | 🟡 Formulation, tokenizer, split, audio pipeline and evaluation done; AR baseline on hold (generator first, Sep 30) |
+| Phase 2 — Discrete diffusion | 🟡 D-32 trained on the full training set (val CE 0.072) and evaluated on 240 val songs; sampler fixed; charts for any audio file (Sep 2026) |
 | Phase 3 — Ablation & multi-key | ⚪ Not started (audio ablations of the subset and full models are in `docs/EXPERIMENTS.md`) |
 | Phase 4 — Unity integration & user study | ⚪ Not started |
 | Phase 5 — Paper | ⚪ Not started |
@@ -108,11 +108,21 @@ python scripts/build_manifest.py        # data/manifest.csv: cache key, split by
 python scripts/preprocess_data.py       # token cache
 python scripts/preprocess_data.py --mel # log-Mel per audio file (see docs/ARCHITECTURE.md)
 python scripts/train.py --overfit 10    # milestone check; drop --overfit for a full run
-python scripts/sample.py --ckpt outputs/<run>/best.pt --key <key>   # one song -> playable .osu
-python scripts/evaluate.py --ckpt outputs/<run>/best.pt --split val  # F1, violations, SR error
+python scripts/sample.py --ckpt outputs/<run>/best.pt --key <key>   # a dataset song -> .osu + .osz
+python scripts/evaluate.py --ckpt outputs/<run>/best.pt --per-song --n 0   # F1, SR error, rho, patterns
 ```
 
-The cache layout is in `src/data/cache.py`. Not implemented yet: the structure metric rho, pattern clarity, and the AR baselines.
+The cache layout is in `src/data/cache.py`. Not implemented: the AR baselines (on hold).
+
+### Make a chart for your own song
+
+```bash
+python scripts/generate.py --audio "song.mp3" --sr 2 3.5 5          # tempo and offset estimated
+python scripts/generate.py --audio "song.mp3" --bpm 174 --offset 1234 --sr 3.5
+python scripts/generate.py --audio "song.mp3" --timing timed.osu --sr 3.5   # red lines of an .osu
+```
+
+Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.
 
 ## Repository Structure
 

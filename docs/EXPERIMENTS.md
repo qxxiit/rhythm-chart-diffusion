@@ -212,6 +212,42 @@ against 6.7x in human charts. More data and steps fixed difficulty control and
 repetition structure, not pattern clarity. F1@50 any lane (0.76) against F1@50
 (0.37): the timing is mostly right and the lane choice is where charts differ.
 
+### 2026-09-30 · Sampling settings (third pass: T = 256)
+
+Questions written before the run: does opening half as many cells per step
+bring the density ratio closer to 1, and what happens to SR error and pattern
+clarity?
+
+`evaluate.py --per-song --n 0 --order random --steps 256` on `full-v1/best.pt`,
+the same 240 songs and charts as the T = 128 row of the second pass.
+
+| steps | F1@50 | density | SR error | rho_in | pattern coverage (chance) | coverage / chance | run length |
+|---|---|---|---|---|---|---|---|
+| 128 | 0.373 [0.362, 0.384] | 1.065 [1.042, 1.090] | 0.236 [0.205, 0.269] | 0.215 | 0.0093 (0.0046) | 2.0 | 4.76 |
+| 256 | 0.372 [0.361, 0.383] | 1.051 [1.028, 1.076] | 0.257 [0.225, 0.291] | 0.211 | 0.0117 (0.0042) | 2.8 | 5.14 |
+| human | - | 1 | - | 0.228 | 0.0422 (0.0063) | 6.7 | 7.49 |
+
+Paired over songs (256 minus 128): F1 -0.001 [-0.005, +0.003]; |SR error|
++0.021 [-0.007, +0.048]; density -0.014 [-0.030, +0.001]; rho_in -0.003
+[-0.021, +0.015]; run length +0.39 [-0.20, +0.98]; pattern coverage +0.0023
+[+0.0004, +0.0043] with its chance level unchanged (-0.0004 [-0.0011,
++0.0004]); coverage over chance 1.35x [1.09, 1.70]. SR bias by grade moved
+down (Easy +0.10 → +0.07, Expert -0.15 → -0.23, Expert+ -0.49 → -0.65).
+
+Answers: the density hardly moves. From T = 32 to 128 more steps removed
+extra notes (subset: 16% → 9%), but past 128 the remaining ~5% do not come
+from opening many cells at once, so they are more likely the model's own.
+SR error does not improve.
+Pattern coverage rose, the first setting that moved it, but the gain is
+uneven: 43% of songs rose and 42% fell, the top 10% of songs carry more than
+the whole net gain, and it came from Easy and Hard (Insane and above flat).
+One sampled chart per song cannot tell that from sampling noise.
+
+Decision: the default stays T = 128 (no gain in density or SR, twice the
+cost). Next: a replicate of T = 128 with other sampler draws
+(`--sample-seed 1`) gives the noise level; if T = 256's gain is well outside
+it, T = 512 shows the trend.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

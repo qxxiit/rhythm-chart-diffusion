@@ -3,7 +3,7 @@
 **Project**: Audio-Conditioned Discrete Diffusion for Rhythm Game Chart Generation
 **Program**: POSTECH UGRP 2026 (research track)
 **Team**: 문정현 (lead), 지현우, 표영복 · **Mentor**: 김원화 교수님 (POSTECH CSE)
-**Last updated**: 2026-08-11 (after 1st mentor meeting)
+**Last updated**: 2026-10-01 (priority after the Sep 30 team meeting; §1–2)
 
 ---
 
@@ -22,6 +22,12 @@ We ask whether **discrete diffusion** — generating the entire note sequence at
 3. A measurable definition of "structural consistency" for generated charts
 4. Multi-key (4–8K) generalization within a single model
 
+**Priority (team meeting, Sep 30).** The first goal is now a generator whose charts people want to play; the paper-style comparison comes second. In practice:
+- Work that makes the generated charts better goes first: pattern clarity (2x its chance level against 6.7x in human charts), song-level repetition (e.g. inpainting a repeated section from its first occurrence), the ~5% extra notes, playability checks.
+- The AR baselines (AR-4, AR-32) are on hold. AR-32 may come back as a check that diffusion is worth it.
+- Ablations are run when they show how to make charts better, not to fill a table.
+- What a good chart is gets settled by playing: blind playtests (`scripts/playtest_pack.py`) and the criteria each member brings to the Oct 7 meeting.
+
 ---
 
 ## 2. Current status
@@ -34,8 +40,9 @@ We ask whether **discrete diffusion** — generating the entire note sequence at
 | Problem formulation & math | ✅ Design doc §1–3 and derivations (Sep 24) |
 | Split, SR labels, filter | ✅ Split by song, local SR labels, 18,191 charts kept (Sep 26) |
 | Audio pipeline | ✅ Decoded at osu!'s 0 ms, log-Mel per audio file, alignment checked on 2,000 songs (Sep 29) |
-| Baseline model | ⚪ Not started (AR-4 / AR-32) |
+| Baseline model | ⏸ On hold (AR-4 / AR-32), generator first (Sep 30) |
 | Diffusion model | 🟡 D-32 on the full training set (full-v1, val CE 0.072, Sep 29) after a 600-song subset (0.087); sampler random T = 128 |
+| Generator | 🟡 Any audio file → playable .osz (`scripts/generate.py`, timing given or estimated); blind playtest packs (`scripts/playtest_pack.py`) |
 | Compute | 🟡 MacBook (MPS, ~86-91 chunks/s; full-v1 60k steps in ~3 h, 27.8 GB log-Mel cache); lab GPU expected ~October |
 
 ---
