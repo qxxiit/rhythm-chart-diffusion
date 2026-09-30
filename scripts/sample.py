@@ -5,8 +5,10 @@
 
 Uses the song's cached mel and its real timing (BPM and offset are given,
 design doc §4.4) and writes <ckpt dir>/samples/<key>_....osu that refers to the
-original audio file. Copy it into that beatmap's folder under osu!/Songs and
-press F5 in song select. Also prints a quick comparison with the real chart
+original audio file, and next to it an .osz with the beatmap's own files (audio,
+background, the human charts) plus the generated chart: open it with osu!
+(lazer: double-click or drag onto the window) to play both side by side. For
+osu! stable, the .osu alone can go into the beatmap's folder under Songs (F5). Also prints a quick comparison with the real chart
 (onsets in the same cell and lane); proper F1 at ±20/50 ms is for the
 evaluation code (§4.11).
 """
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -93,7 +96,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(chart.notes)} notes (real chart {int(np.isin(real, (TAP, HOLD_START)).sum())}), "
           f"grammar violations {bad}, same-cell onset precision {precision:.3f} "
           f"recall {recall:.3f}")
-    print("  copy the .osu into this beatmap's folder under osu!/Songs, then F5 in song select")
+    osz = out.with_suffix(".osz")
+    with zipfile.ZipFile(osz, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(src.parent.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(src.parent).as_posix())
+        zf.write(out, out.name)
+    print(f"  {osz.name}: the beatmap with the generated chart added; open it with osu!")
     return 0 if bad == 0 else 1
 
 

@@ -7,6 +7,9 @@
 --per-song takes one chart per song (audio_key, a seeded random difficulty), so the
 N rows are N different songs; without it the first N charts of the split are
 scored, which are a handful of songs at several difficulties. --n 0 = all.
+--seed picks the charts and seeds the sampler; --sample-seed reseeds only the
+sampler, so the same charts are generated again with other random draws (a
+replicate: how far two runs of one setting differ by chance).
 summary.json also holds 95% bootstrap intervals over the rows (ci95_*) for the
 main numbers.
 
@@ -114,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--sample-seed", type=int, default=None,
+                    help="sampler seed only (default: --seed); the charts stay those of --seed")
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
@@ -138,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     model = load_denoiser(a.ckpt, pick_device(a.device))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
     tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{a.steps}"
+    sample_seed = a.seed if a.sample_seed is None else a.sample_seed
+    if a.sample_seed is not None:
+        tag += f"_s{a.sample_seed}"
     out_dir = a.ckpt.parent / f"eval_{tag}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -148,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(r["sr"])
         mel = store.chart(r["key"], tps, offset, (len(z["tokens"]) + 1) * L)   # + overhang
         tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
-                               order=a.order, mode=a.mode, seed=a.seed + i,
+                               order=a.order, mode=a.mode, seed=sample_seed + i,
                                temperature=a.temperature)
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
@@ -178,7 +186,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
-               "steps": a.steps, "far_k": a.far_k, "ckpt": str(a.ckpt),
+               "steps": a.steps, "seed": a.seed, "sample_seed": sample_seed,
+               "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,
                **{f"mean_{k}": round(float(np.nanmean([x[k] for x in results])), 4)
                   for k in numeric},

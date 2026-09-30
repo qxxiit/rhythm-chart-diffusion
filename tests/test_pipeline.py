@@ -255,6 +255,38 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
     assert list((tmp_path / "r" / "samples").glob("*_noisy2_T4_*.osu"))
+    import zipfile
+    osz = next((tmp_path / "r" / "samples").glob("*_noisy2_T4_*.osz"))
+    names = zipfile.ZipFile(osz).namelist()
+    assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
+
+    from scripts import generate                        # a "new" mp3: only audio + timing
+    folder = next((data / "raw").glob("100 *"))
+    v0 = parse_osu(folder / "v0.osu")
+    t0, bl = v0.timing_points[0]
+    out = tmp_path / "gen"
+    common = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--audio", str(folder / "audio.mp3"),
+              "--steps", "4", "--device", "cpu"]
+    assert generate.main(common + ["--bpm", str(60000 / bl), "--offset", str(t0),
+                                   "--sr", "2", "4", "--out", str(out)]) == 0
+    charts = sorted(out.glob("*.osu"))
+    assert len(charts) == 2 and (out / "audio.osz").exists()
+    for p in charts:
+        c = parse_osu(p)
+        assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
+    assert generate.main(common + ["--timing", str(folder / "v0.osu"),
+                                   "--out", str(tmp_path / "gen2")]) == 0
+    # the model input from the audio file equals the one training read from the cache
+    with open(data / "manifest.csv", newline="") as f:
+        key = next(r["key"] for r in csv.DictReader(f)
+                   if r["path"] == f"{folder.name}/v0.osu")
+    from src.data.audio import load_osu
+    from src.data.beat_grid import from_timing_points
+    samples, _ = load_osu(folder / "audio.mp3")
+    co, n = generate.song_range([(t0, bl)], 1000 * len(samples) / 22050)
+    fresh = generate.model_input(samples, [(t0, bl)], co, 2 * L)
+    cached = MelStore(data / "cache").frames(key, from_timing_points([(t0, bl)]), co, 0, 2 * L)
+    np.testing.assert_allclose(fresh, cached, atol=1e-3)
 
     from scripts import audio_ablation
     assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
@@ -275,6 +307,15 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert summary["songs"] == summary["distinct_songs"] == 6          # 14 train charts, 6 songs
     lo, hi = summary["ci95_f1@50"]
     assert lo <= summary["mean_f1@50"] <= hi
+    assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                          "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
+                          "--sample-seed", "1",
+                          "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+                          "--cache", str(data / "cache"), "--device", "cpu"]) == 0
+    base = tmp_path / "r" / "eval_train_songs_continue_noisy1_T4"
+    again = tmp_path / "r" / "eval_train_songs_continue_noisy1_T4_s1"
+    keys = [line.split(",")[0] for line in (base / "per_song.csv").read_text().splitlines()]
+    assert keys == [line.split(",")[0] for line in (again / "per_song.csv").read_text().splitlines()]
 
 
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:
