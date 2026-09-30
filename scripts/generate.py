@@ -114,15 +114,19 @@ def estimate_timing(samples: np.ndarray, lo: float = 70.0, hi: float = 250.0
     a = np.where(ok, acf, -np.inf)
     peaks = np.flatnonzero((a[1:-1] > a[:-2]) & (a[1:-1] >= a[2:])) + 1
     cands = [refine(float(b)) for b in bpms[peaks[np.argsort(-a[peaks])][:6]]]
-    pri = lambda b: float(np.exp(-0.5 * (np.log2(b / 160.0) / 0.6) ** 2))
-    bpm0 = max(cands, key=lambda b: strength(b) * pri(b))
+    def prior(bpm: float) -> float:
+        return float(np.exp(-0.5 * (np.log2(bpm / 160.0) / 0.6) ** 2))
+
+    bpm0 = max(cands, key=lambda b: strength(b) * prior(b))
     beat = 60000.0 / bpm0
     bins = max(int(beat / step), 8)
     fold = _fold(env, step, beat, bins)
     k = int(np.argmax(np.convolve(np.r_[fold[-1], fold, fold[0]], [0.25, 0.5, 0.25], "valid")))
     offset = (k + 0.5) * beat / bins - ONSET_LAG_MS
     bar = _fold(env, step, 4 * beat, 4 * bins)                  # which beat of the bar is loudest
-    around = lambda c: sum(bar[(c + d) % (4 * bins)] for d in range(-2, 3))
+    def around(c: int) -> float:
+        return float(sum(bar[(c + d) % (4 * bins)] for d in range(-2, 3)))
+
     offset += beat * int(np.argmax([around(k + i * bins) for i in range(4)]))
     offset %= 4 * beat
     return bpm0, offset, float(fold.max() / (fold.mean() + 1e-9))

@@ -3,7 +3,6 @@ hats, an accented downbeat. Clicks in silence make flux peak ~10 ms before the
 click, and the estimate subtracts the ~19 ms lag of real songs, so the offset
 comes out ~29 ms early here."""
 
-import numpy as np
 import pytest
 
 from scripts.generate import estimate_timing

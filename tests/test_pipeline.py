@@ -289,6 +289,46 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     cached = MelStore(data / "cache").frames(key, from_timing_points([(t0, bl)]), co, 0, 2 * L)
     np.testing.assert_allclose(fresh, cached, atol=1e-3)
 
+    import zipfile
+
+    from scripts import playtest_pack             # blind pack: labels hide who made what
+    pt = tmp_path / "pt"
+    assert playtest_pack.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                               "--songs", "2", "--sr-range", "0", "10",
+                               "--settings", "random:4", "confidence:4:independent",
+                               "--manifest", str(data / "manifest.csv"),
+                               "--root", str(data / "raw"), "--cache", str(data / "cache"),
+                               "--out", str(pt), "--device", "cpu"]) == 0
+    answers = list(csv.DictReader(open(pt / "answers.csv", encoding="utf-8-sig")))
+    assert len(answers) == 6
+    assert {r["source"] for r in answers} == {"human", "ai random T4 continue",
+                                             "ai confidence T4 independent"}
+    packs = sorted((pt / "pack").glob("*.osz"))
+    assert len(packs) == 2 and (pt / "playtest_pack.zip").exists()
+    for osz in packs:
+        with zipfile.ZipFile(osz) as zf:
+            names = zf.namelist()
+            charts = [n for n in names if n.endswith(".osu")]
+            assert "audio.mp3" in names and len(charts) == 3
+            texts = [zf.read(n).decode() for n in charts]
+        versions = sorted(line for t in texts for line in t.splitlines()
+                          if line.startswith("Version:"))
+        assert versions == ["Version:A", "Version:B", "Version:C"]
+        assert all("Creator:playtest" in t for t in texts)
+        assert len({t.split("[TimingPoints]")[1].split("[HitObjects]")[0] for t in texts}) == 1
+    song = answers[0]["song"]
+    human = next(r["label"] for r in answers if r["song"] == song and r["source"] == "human")
+    filled = tmp_path / "ratings_me.csv"
+    with open(filled, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=playtest_pack.RATING_FIELDS)
+        w.writeheader()
+        for r in answers:
+            if r["song"] == song:
+                is_h = r["label"] == human
+                w.writerow({"song": song, "label": r["label"], "rank": 1 if is_h else 2,
+                            "human?": "y" if is_h else "n"})
+    assert playtest_pack.main(["--score", str(pt / "answers.csv"), str(filled)]) == 0
+
     from scripts import audio_ablation
     assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                                 "--manifest", str(data / "manifest.csv"),
