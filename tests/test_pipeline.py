@@ -260,22 +260,23 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
-    from scripts import generate                        # a "new" mp3: only audio + timing
+    # a "new" mp3: only audio + timing
+    from scripts import generate
     folder = next((data / "raw").glob("100 *"))
     v0 = parse_osu(folder / "v0.osu")
     t0, bl = v0.timing_points[0]
     out = tmp_path / "gen"
     common = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--audio", str(folder / "audio.mp3"),
               "--steps", "4", "--device", "cpu"]
-    assert generate.main(common + ["--bpm", str(60000 / bl), "--offset", str(t0),
-                                   "--sr", "2", "4", "--out", str(out)]) == 0
+    assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0),
+                          "--sr", "2", "4", "--out", str(out)]) == 0
     charts = sorted(out.glob("*.osu"))
     assert len(charts) == 2 and (out / "audio.osz").exists()
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert generate.main(common + ["--timing", str(folder / "v0.osu"), "--mode", "independent",
-                                   "--order", "confidence", "--out", str(tmp_path / "gen2")]) == 0
+    assert generate.main([*common, "--timing", str(folder / "v0.osu"), "--mode", "independent",
+                          "--order", "confidence", "--out", str(tmp_path / "gen2")]) == 0
     assert len(list((tmp_path / "gen2").glob("*independent-confidence*.osu"))) == 1
     # the model input from the audio file equals the one training read from the cache
     with open(data / "manifest.csv", newline="") as f:
@@ -284,14 +285,13 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     from src.data.audio import load_osu
     from src.data.beat_grid import from_timing_points
     samples, _ = load_osu(folder / "audio.mp3")
-    co, n = generate.song_range([(t0, bl)], 1000 * len(samples) / 22050)
+    co, _ = generate.song_range([(t0, bl)], 1000 * len(samples) / 22050)
     fresh = generate.model_input(samples, [(t0, bl)], co, 2 * L)
     cached = MelStore(data / "cache").frames(key, from_timing_points([(t0, bl)]), co, 0, 2 * L)
     np.testing.assert_allclose(fresh, cached, atol=1e-3)
 
-    import zipfile
-
-    from scripts import playtest_pack             # blind pack: labels hide who made what
+    # blind pack: labels hide who made what
+    from scripts import playtest_pack
     pt = tmp_path / "pt"
     assert playtest_pack.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                                "--songs", "2", "--sr-range", "0", "10",
@@ -299,7 +299,8 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                                "--manifest", str(data / "manifest.csv"),
                                "--root", str(data / "raw"), "--cache", str(data / "cache"),
                                "--out", str(pt), "--device", "cpu"]) == 0
-    answers = list(csv.DictReader(open(pt / "answers.csv", encoding="utf-8-sig")))
+    with open(pt / "answers.csv", encoding="utf-8-sig") as f:
+        answers = list(csv.DictReader(f))
     assert len(answers) == 6
     assert {r["source"] for r in answers} == {"human", "ai random T4 continue",
                                              "ai confidence T4 independent"}
@@ -337,6 +338,23 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     res = json.loads((tmp_path / "r" / "audio_ablation_train.json").read_text())
     assert len(res) == 4 * 5 * 2 and all(v >= 0 for v in res.values())
 
+    from scripts import pattern_probe
+    assert pattern_probe.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                               "--manifest", str(data / "manifest.csv"),
+                               "--cache", str(data / "cache"), "--batches", "2",
+                               "--batch-size", "4", "--device", "cpu"]) == 0
+    probe = json.loads((tmp_path / "r" / "pattern_probe_train.json").read_text())
+    assert set(probe) == {"full", "thin50", "thin90", "chance", "previous", "best of 8"}
+    assert probe["full"]["rows"] == probe["chance"]["rows"] > 0
+    assert all(0 <= v <= 1 for d in probe.values() for k, v in d.items() if k != "rows")
+
+    from scripts import hold_stats
+    assert hold_stats.main(["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+                            "--split", "train", "--out", str(tmp_path / "holds.csv")]) == 0
+    with open(tmp_path / "holds.csv") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[-1]["grade"] == "all" and int(rows[-1]["long_notes"]) > 0
+
     pytest.importorskip("rosu_pp_py")
     from scripts import evaluate
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
@@ -348,6 +366,17 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert summary["songs"] == summary["distinct_songs"] == 6          # 14 train charts, 6 songs
     lo, hi = summary["ci95_f1@50"]
     assert lo <= summary["mean_f1@50"] <= hi
+    assert "mean_motion_pred" in summary and "mean_human_motion_pred" in summary
+    assert summary["min_hold"] == 3 and summary["release_gap"] == 2
+    assert summary["mean_short_holds"] == 0 and 0 < summary["mean_human_hold_share"] < 1
+    assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                          "--per-song", "--n", "2", "--steps", "4", "--refine", "1",
+                          "--lane-temp", "0", "--manifest", str(data / "manifest.csv"),
+                          "--root", str(data / "raw"), "--cache", str(data / "cache"),
+                          "--device", "cpu"]) == 0
+    refined = json.loads((tmp_path / "r" / "eval_train_songs_continue_random_T4_ref1t0"
+                          / "summary.json").read_text())
+    assert refined["refine"] == 1 and refined["lane_temp"] == 0
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
                           "--sample-seed", "1",

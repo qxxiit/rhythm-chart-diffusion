@@ -34,6 +34,15 @@ Per chart (summarize):
                       same period, the same motif (up to rotation) and the same
                       gap, with exactly one event between them: one note off the
                       motif, or one note off the snap, and then the pattern goes on.
+    motion_pred       (with chance_seeds) how predictable the lane motion is, with no
+                      pattern names: every event is written as its move from the
+                      event before (the lane step -3..3 between single notes, else
+                      the lane set), an online context model of orders 0-4 predicts
+                      each from the ones before it, and motion_pred is the share of
+                      bits it saves over the same chart with lanes redrawn at random
+                      (same rhythm, same chord sizes). 0 = no more structure than
+                      chance; stairs, trills and unnamed motifs that come back all
+                      count, also when moved to other lanes.
 The target is the level of human charts of the same grade, not the maximum
 (§4.11): scripts/human_baselines.py measures it.
 Fix MAX_GAP, P_MAX and the minimum length before any model output is scored.
@@ -116,14 +125,61 @@ def find_runs(rows: np.ndarray, masks: np.ndarray) -> list[tuple[int, int, int, 
 
 def summarize(tokens: np.ndarray, chance_seeds: int = 0) -> dict:
     """Pattern clarity numbers for one chart (see module docstring). With
-    chance_seeds > 0, also coverage_chance over that many lane-redrawn copies."""
+    chance_seeds > 0, also coverage_chance and motion_pred over that many
+    lane-redrawn copies."""
     rows, masks = events(tokens)
     out = _stats(rows, masks)
     if chance_seeds:
-        out["coverage_chance"] = float(np.mean([
-            _stats(rows, _redraw_lanes(masks, np.random.default_rng(seed)))["coverage"]
-            for seed in range(chance_seeds)]))
+        redrawn = [_redraw_lanes(masks, np.random.default_rng(seed)) for seed in range(chance_seeds)]
+        out["coverage_chance"] = float(np.mean([_stats(rows, m)["coverage"] for m in redrawn]))
+        out["motion_pred"] = motion_predictability(masks, redrawn)
     return out
+
+
+MOTION_ORDER = 4
+_N_MOTION = 15 + 7                # lane sets 1..15, steps -3..3
+
+
+def motion_symbols(masks: np.ndarray) -> list[int]:
+    """Each event as its move: single note after single note -> 15 + 3 + lane step
+    (15..21), anything else -> the lane set - 1 (0..14)."""
+    out, prev = [], 0
+    for m in masks.tolist():
+        if _POP[m] == 1 and _POP[prev] == 1:
+            out.append(15 + 3 + (m.bit_length() - prev.bit_length()))
+        else:
+            out.append(m - 1)
+        prev = m
+    return out
+
+
+def motion_bits(symbols: list[int], order: int = MOTION_ORDER, alpha: float = 0.5) -> float:
+    """Mean bits per event under an online mixture of order-0..order context models
+    (each with add-alpha counts of what followed that context so far in this chart)."""
+    counts: list[dict] = [{} for _ in range(order + 1)]
+    total = 0.0
+    for i, sym in enumerate(symbols):
+        ps = []
+        for k in range(min(order, i) + 1):
+            seen = counts[k].get(tuple(symbols[i - k:i]))
+            n = seen["n"] if seen else 0
+            c = seen.get(sym, 0) if seen else 0
+            ps.append((c + alpha) / (n + _N_MOTION * alpha))
+        total -= np.log2(sum(ps) / len(ps))
+        for k in range(min(order, i) + 1):
+            seen = counts[k].setdefault(tuple(symbols[i - k:i]), {"n": 0})
+            seen["n"] += 1
+            seen[sym] = seen.get(sym, 0) + 1
+    return total / max(len(symbols), 1)
+
+
+def motion_predictability(masks: np.ndarray, redrawn: list[np.ndarray],
+                          min_events: int = 32) -> float:
+    """1 - bits(chart) / mean bits(lane-redrawn copies); nan for very short charts."""
+    if len(masks) < min_events:
+        return float("nan")
+    base = float(np.mean([motion_bits(motion_symbols(m)) for m in redrawn]))
+    return float(1.0 - motion_bits(motion_symbols(masks)) / base) if base > 0 else float("nan")
 
 
 def _redraw_lanes(masks: np.ndarray, rng: np.random.Generator, n_lanes: int = 4) -> np.ndarray:

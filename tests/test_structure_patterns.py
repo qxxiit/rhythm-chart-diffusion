@@ -162,3 +162,19 @@ def test_type_vectors_count_onsets_by_period() -> None:
     x[60, 1] = TAP                                               # a lone note in bar 1
     v = bar_type_vectors(x, 2)
     assert v[0, TYPES.index("p2")] == 8 and v[1, TYPES.index("single")] == 1
+
+
+def test_motion_predictability_sees_moved_and_unnamed_motifs() -> None:
+    """Stairs that move to other lanes and motifs that come back irregularly are
+    predictable motion; random lanes are not."""
+    rng = np.random.default_rng(0)
+    seq = []
+    for _ in range(60):                                    # bursts of 4-note stairs, up or down,
+        start = int(rng.integers(0, 4))                    # each starting anywhere: not one
+        step = 1 if start < 2 else -1                      # repeating lane set, so few runs
+        seq += [(start + step * i,) for i in range(3)] + [(int(rng.integers(0, 4)),)]
+    r = summarize(grid(seq), chance_seeds=3)
+    assert r["motion_pred"] > 0.1
+    noise = [(int(k),) for k in rng.integers(0, 4, 240)]
+    assert abs(summarize(grid(noise), chance_seeds=3)["motion_pred"]) < 0.05
+    assert np.isnan(summarize(grid([(0,), (1,)] * 5), chance_seeds=2)["motion_pred"])

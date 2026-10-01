@@ -22,6 +22,12 @@ independent (no context across chunks: the ablation of queue 3c). Writes to --ou
 outputs/generated/<audio stem>/): the audio, one .osu per SR, and <stem>.osz.
 Open the .osz with osu! (lazer: double-click or drag onto the window; stable:
 put it in Songs/ and press F5).
+
+Long notes: the model cannot tell from the audio whether a song should be a tap
+chart or a long-note chart, so --hold-bias sets how readily long notes start
+(-1: about a third as often, -inf: none). Holds shorter than --min-hold cells
+become taps and releases keep --release-gap empty cells before the next press
+in their lane (sampler.clean_holds).
 """
 
 from __future__ import annotations
@@ -168,6 +174,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
+    ap.add_argument("--refine", type=int, default=0,
+                    help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
+    ap.add_argument("--lane-temp", type=float, default=0.5,
+                    help="--refine: temperature of the lane choice (0 = most likely lanes)")
+    ap.add_argument("--hold-bias", type=float, default=0.0,
+                    help="log-scale bias on starting long notes; -1 roughly a third as many "
+                         "start, -inf none (sampler.sample_window)")
+    ap.add_argument("--min-hold", type=int, default=3,
+                    help="long notes shorter than this many cells (1/12 beat) "
+                         "become taps; 0 = keep")
+    ap.add_argument("--release-gap", type=int, default=2,
+                    help="empty cells required between a release and the next onset in its lane; "
+                         "0 = keep")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--title", default=None, help="default: the audio file name")
@@ -212,11 +231,16 @@ def main(argv: list[str] | None = None) -> int:
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
+    if a.refine:
+        order += f"-ref{a.refine}t{a.lane_temp:g}"
     written = []
     for sr in a.sr:
         tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                                order=a.order, mode=a.mode, seed=a.seed,
-                               temperature=a.temperature)
+                               temperature=a.temperature, refine=a.refine,
+                               lane_temperature=a.lane_temp,
+                               hold_bias=a.hold_bias, min_hold=a.min_hold,
+                               release_gap=a.release_gap)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name
@@ -225,8 +249,9 @@ def main(argv: list[str] | None = None) -> int:
                   version=f"AI s={sr:g} ({a.mode}/{order} T{a.steps})")
         written.append(path)
         nps = len(chart.notes) / max(audio_ms / 1000, 1e-9)
-        print(f"  s={sr:g}: {len(chart.notes):,} notes ({nps:.1f}/s), "
-              f"grammar violations {bad} -> {path.name}")
+        lns = sum(n.end_ms is not None for n in chart.notes)
+        print(f"  s={sr:g}: {len(chart.notes):,} notes ({nps:.1f}/s, long notes "
+              f"{lns / max(len(chart.notes), 1):.0%}), grammar violations {bad} -> {path.name}")
     osz = out / f"{stem}.osz"
     with zipfile.ZipFile(osz, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(out / audio_name, audio_name)

@@ -64,17 +64,18 @@ audio (.mp3)                      chart (.osu)
 
 ### `src/models/`
 - ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
-- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29).
+- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29). `refine_lanes` (generate_song `refine=`) re-chooses the lanes of tap rows afterwards with the whole rest of the chart visible, rhythm, chord sizes and holds kept. `clean_holds` (on by default) turns holds shorter than 1/4 beat into taps and moves releases back so that two empty cells come before the next press in their lane; `hold_bias` sets how readily holds start (-inf: none).
 - ⏸ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting): on hold, generator first (DECISIONS 2026-09-30).
 
 ### Training (`scripts/train.py`) ✅
-AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. Plain `argparse`; the Hydra configs are not used.
+AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. `--row-mask p`: a share p of chunks is masked by whole rows (all lanes) instead of cell by cell. Plain `argparse`; the Hydra configs are not used.
 
 ### `src/evaluation/`
 - ✅ **`metrics.py`**: onset F1 at ±20/±50 ms with lanes on or off (greedy one-to-one matching, closest pairs first) and the grammar violation rate.
 - ✅ **`sr.py`**: local star rating with rosu-pp (pinned in `requirements.txt`); `scripts/check_sr.py` measures how closely it tracks the API's SR.
+- ✅ **`holds.py`**: long-note share of onsets, mean length, share shorter than 1/4 beat, and re-presses within 2 cells of a release, per chart; `scripts/hold_stats.py` gives the human levels by grade.
 - ✅ **`structure.py`**: rho over bar pairs (all / in / cross / far) from bar self-similarity of standardized log-Mel and of the note grid (§4.11-2).
-- ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored.
+- ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored. `motion_pred`: how predictable the lane motion is with no pattern names (share of bits an online context model saves over the same chart with lanes redrawn).
 - `scripts/human_baselines.py`: human-chart levels of pattern clarity by grade, chart similarity by bar distance (for rho_far's k), human rho.
 - ⚪ long-note mAP@tIoU: deferred.
 
@@ -135,6 +136,8 @@ python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, patt
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals
                                        #    --sample-seed N: same charts, other sampler draws (replicate)
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
+python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows, full vs thinned context
+python scripts/hold_stats.py           # ✅ long notes in human charts by grade (share, length, release gaps)
 python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves
 python scripts/tempo_density.py        # ✅ tempo vs notes per beat inside each SR grade

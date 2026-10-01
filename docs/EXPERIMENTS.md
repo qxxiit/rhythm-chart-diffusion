@@ -248,6 +248,40 @@ cost). Next: a replicate of T = 128 with other sampler draws
 (`--sample-seed 1`) gives the noise level; if T = 256's gain is well outside
 it, T = 512 shows the trend.
 
+### 2026-10-01 · Patterns in a playtest song (PT08, xi - Rebellion Trigger)
+
+One val song from the first playtest pack: A, B, C are the human chart (put
+through the tokenizer), random T = 128 and confidence T = 128, labels hidden
+when played (which is which inferred from the numbers; answers.csv has it).
+
+| chart | notes | coverage (chance) | run length | motion_pred |
+|---|---|---|---|---|
+| A (human) | 2,130 | 0.098 (0.011) | 10.4 | 0.138 |
+| C (random, 128) | 1,924 | 0.017 (0.001) | 6.3 | 0.072 |
+| B (confidence, 128) | 1,187 | 0.021 (0.006) | 8.0 | 0.066 |
+
+- The human chart runs triplet stairs (1-2-3-4) and alternates mirrored
+  chords (1+4 / 2+3); the random-order chart moves to a neighbouring lane a
+  little less often (48% of single-note moves against 57%) and does not keep a
+  direction or come back to a motif.
+- B leaves bars 14-48 empty (35 bars, 1 note) while the audio is as loud as
+  elsewhere and A and C fill them: the confidence order fixes EMPTY first, and
+  continuation hands the empty bars on as context; a loud section after the
+  bar-48 break ends it.
+- Players read the AI charts as having almost no patterns, more than the
+  strict coverage shows; motion_pred (DECISIONS 2026-10-01) halves for the AI
+  charts.
+- Long notes: the human chart has none; C has 202 (10.5% of onsets), mostly 2,
+  3 or 6 cells long (21, 49 and 39 of them), B has 10. The model does not know
+  a tap chart from a long-note chart and spreads holds over every song; short
+  holds come from the sampler closing holds cell by cell (DECISIONS 2026-10-01,
+  long notes).
+
+Next: `pattern_probe.py` (does the model know the lanes when the rest of the
+chart is visible?) and `evaluate.py --refine 2` at lane temperatures 0.5 and 1
+against T = 128 alone, with the replicate (`--sample-seed 1`) for the noise;
+`hold_stats.py` for the human long-note levels behind the clean-up defaults.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

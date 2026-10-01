@@ -23,8 +23,10 @@ human chart's SR with the song's real timing, then score:
                           both sides, in case rosu-pp and the API disagree (check_sr.py)
     density_ratio         generated onsets / human onsets
     rho_all/in/cross/far  structure (structure.py), human_rho_* for the human chart
-    coverage, run_length, breaks_per_100
-                          pattern clarity (patterns.py, draft rules), human_* likewise
+    coverage, run_length, breaks_per_100, motion_pred
+                          pattern clarity (patterns.py), human_* likewise
+    hold_share, hold_beats, short_holds, quick_regrab
+                          long notes (holds.py), human_* likewise
     grade, bpm            for splitting results by SR grade and tempo (§4.11-4)
 and the tokenizer's own ceiling: the same F1 for decode(encode(human)).
 Writes <ckpt dir>/eval_<split>_<mode>_<order>_T<steps>/per_song.csv and summary.json.
@@ -45,6 +47,7 @@ from src.data.cache import read_manifest
 from src.data.chart_parser import parse_osu
 from src.data.mel import open_mel
 from src.data.tokenizer import HOLD_START, TAP, K, L, decode, make_metas
+from src.evaluation.holds import hold_stats
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
@@ -54,7 +57,7 @@ from src.models.sampler import ORDERS, generate_song
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
-PATTERN_KEYS = ("coverage", "coverage_chance", "run_length", "breaks_per_100")
+PATTERN_KEYS = ("coverage", "coverage_chance", "run_length", "breaks_per_100", "motion_pred")
 
 
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int) -> dict:
@@ -65,6 +68,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}rho_{k}": s[f"rho_{k}"] for k in ("all", "in", "cross", "far")})
         p = summarize(flat, chance_seeds=3)
         row.update({f"{who}{k}": p[k] for k in PATTERN_KEYS})
+        row.update({f"{who}{k}": v for k, v in hold_stats(flat).items()})
     return row
 
 
@@ -85,6 +89,7 @@ def score(gen, ref, back, tokens, sr: float, sr_gen: float, sr_human: float) -> 
 
 
 CI_KEYS = ("f1@20", "f1@50", "f1@50_any_lane", "precision@50", "recall@50", "density_ratio",
+           "motion_pred", "hold_share",
            "sr_error", "rho_all", "rho_in", "coverage")
 
 
@@ -115,6 +120,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
+    ap.add_argument("--refine", type=int, default=0,
+                    help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
+    ap.add_argument("--lane-temp", type=float, default=0.5,
+                    help="--refine: temperature of the lane choice (0 = most likely lanes)")
+    ap.add_argument("--hold-bias", type=float, default=0.0,
+                    help="log-scale bias on starting long notes; -1 roughly a third as many "
+                         "start, -inf none (sampler.sample_window)")
+    ap.add_argument("--min-hold", type=int, default=3,
+                    help="long notes shorter than this many cells (1/12 beat) "
+                         "become taps; 0 = keep")
+    ap.add_argument("--release-gap", type=int, default=2,
+                    help="empty cells required between a release and the next onset in its lane; "
+                         "0 = keep")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sample-seed", type=int, default=None,
@@ -143,6 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     model = load_denoiser(a.ckpt, pick_device(a.device))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
     tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{a.steps}"
+    if a.refine:
+        tag += f"_ref{a.refine}t{a.lane_temp:g}"
+    if a.hold_bias:
+        tag += f"_hb{a.hold_bias:g}"
+    if (a.min_hold, a.release_gap) != (3, 2):
+        tag += f"_mh{a.min_hold}rg{a.release_gap}"
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
     if a.sample_seed is not None:
         tag += f"_s{a.sample_seed}"
@@ -157,7 +181,10 @@ def main(argv: list[str] | None = None) -> int:
         mel = store.chart(r["key"], tps, offset, (len(z["tokens"]) + 1) * L)   # + overhang
         tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
                                order=a.order, mode=a.mode, seed=sample_seed + i,
-                               temperature=a.temperature)
+                               temperature=a.temperature, refine=a.refine,
+                               lane_temperature=a.lane_temp,
+                               hold_bias=a.hold_bias, min_hold=a.min_hold,
+                               release_gap=a.release_gap)
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
         back = decode(z["tokens"], metas)
@@ -186,7 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
-               "steps": a.steps, "seed": a.seed, "sample_seed": sample_seed,
+               "steps": a.steps, "refine": a.refine, "hold_bias": a.hold_bias,
+               "min_hold": a.min_hold, "release_gap": a.release_gap,
+               "lane_temp": a.lane_temp if a.refine else None,
+               "seed": a.seed, "sample_seed": sample_seed,
                "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,
                **{f"mean_{k}": round(float(np.nanmean([x[k] for x in results])), 4)

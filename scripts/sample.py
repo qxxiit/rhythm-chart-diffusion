@@ -49,6 +49,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
+    ap.add_argument("--refine", type=int, default=0,
+                    help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
+    ap.add_argument("--lane-temp", type=float, default=0.5,
+                    help="--refine: temperature of the lane choice (0 = most likely lanes)")
+    ap.add_argument("--hold-bias", type=float, default=0.0,
+                    help="log-scale bias on starting long notes; -1 roughly a third as many "
+                         "start, -inf none (sampler.sample_window)")
+    ap.add_argument("--min-hold", type=int, default=3,
+                    help="long notes shorter than this many cells (1/12 beat) "
+                         "become taps; 0 = keep")
+    ap.add_argument("--release-gap", type=int, default=2,
+                    help="empty cells required between a release and the next onset in its lane; "
+                         "0 = keep")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
@@ -75,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
-                           order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature)
+                           order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
+                           refine=a.refine, lane_temperature=a.lane_temp,
+                           hold_bias=a.hold_bias, min_hold=a.min_hold,
+                           release_gap=a.release_gap)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -85,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     chart.audio_filename = parse_osu(src).audio_filename
     out_dir = a.out or a.ckpt.parent / "samples"
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
+    if a.refine:
+        order += f"-ref{a.refine}t{a.lane_temp:g}"
     out = out_dir / f"{a.key}_{a.mode}_{order}_T{a.steps}_s{sr:.2f}.osu"
     write_osu(out, chart, title=meta.get("Title", ""), artist=meta.get("Artist", ""),
               version=f"diffusion s={sr:.2f} {a.mode}/{order}/T{a.steps}")

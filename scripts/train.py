@@ -68,6 +68,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.98))
     ap.add_argument("--clip", type=float, default=1.0)
     ap.add_argument("--dropout", type=float, default=0.0)
+    ap.add_argument("--row-mask", type=float, default=0.0,
+                    help="share of chunks masked by whole rows (all 4 lanes) instead of cell "
+                         "by cell; validation always masks cell by cell")
     ap.add_argument("--no-audio-add", action="store_true",
                     help="cross-attention only, as in the design doc (실험 큐 5)")
     ap.add_argument("--d-model", type=int, default=256)
@@ -256,7 +259,8 @@ def main(argv=None) -> int:
         for batch in loader:
             batch = to_device(batch, device)
             with amp():
-                loss, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"], batch["b"])
+                loss, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"],
+                                            batch["b"], row_mask=a.row_mask)
             (loss / a.grad_accum).backward()
             micro += 1
             seen += batch["x0"].shape[0]

@@ -10,8 +10,10 @@ from torch import nn  # noqa: E402
 
 from src.data.chart_parser import Chart, Note  # noqa: E402
 from src.data.tokenizer import (  # noqa: E402
+    EMPTY,
     MASK,
     PAD,
+    TAP,
     K,
     L,
     decode,
@@ -28,7 +30,7 @@ from src.models.diffusion import (  # noqa: E402
     n_params,
     sample_gamma,
 )
-from src.models.sampler import allowed, generate_song, sample_window  # noqa: E402
+from src.models.sampler import allowed, generate_song, refine_lanes, sample_window  # noqa: E402
 
 TINY = DenoiserConfig(d_model=64, lane_dim=16, n_layers=2, n_heads=2, d_ff=128)
 
@@ -194,3 +196,81 @@ def test_noisy_order_spans_confidence_and_random() -> None:
     hot = sample_window(model, x, mel, 3.0, 400.0, steps=8, order="noisy", temperature=50.0,
                         rng=np.random.default_rng(5))
     assert not np.array_equal(hot, run["confidence"]) and not np.any(hot == MASK)
+
+
+def _shuffle_taps(song: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Same rhythm, chord sizes and holds; the taps of every row moved to random free lanes."""
+    out = song.copy()
+    for row in range(len(out)):
+        free = [k for k in range(K) if out[row, k] in (EMPTY, TAP)]
+        n = int(sum(out[row, k] == TAP for k in free))
+        if 0 < n < len(free):
+            out[row, free] = EMPTY
+            out[row, rng.choice(free, n, replace=False)] = TAP
+    return out
+
+
+def test_refine_lanes_restores_the_lanes_a_model_knows() -> None:
+    """With a model that knows the song, one sweep at temperature 0 moves shuffled taps
+    back; holds, chord sizes and the rhythm never change."""
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    shuffled = _shuffle_taps(song, np.random.default_rng(3))
+    assert not np.array_equal(shuffled, song)
+    oracle = Oracle(tokens)
+    frames = torch.as_tensor(mel[:len(song) * 4])
+    out = refine_lanes(oracle, shuffled.copy(), frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                       sweeps=1, temperature=0.0, rng=np.random.default_rng(0))
+    assert np.array_equal(out, song)
+
+
+def test_refine_keeps_rhythm_holds_and_grammar() -> None:
+    chart, tokens, metas, stats, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, stats.n_cells)
+    plain = generate_song(*args, steps=6, seed=2)
+    refined = generate_song(*args, steps=6, seed=2, refine=2, lane_temperature=0.5)
+    assert len(grammar_violations(refined)) == 0
+    def onsets_per_row(x):                                   # TAP or HOLD_START
+        return np.isin(x.reshape(-1, K), (TAP, 2)).sum(axis=1)
+
+    def holds(x):
+        return np.where(np.isin(x, (2, 3, 4)), x, 0)
+
+    assert np.array_equal(onsets_per_row(plain), onsets_per_row(refined))
+    assert np.array_equal(holds(plain), holds(refined))
+    assert not np.array_equal(plain, refined)
+
+
+def test_row_masking_masks_all_lanes_of_a_row_together() -> None:
+    x0, *_ = batch(n=4, pad_from=300)
+    g = torch.Generator().manual_seed(1)
+    rows = torch.tensor([True, False, True, False])
+    _, masked = mask_tokens(x0, torch.full((4,), 0.5), g, rows)
+    non_pad = (x0 != PAD)
+    for i in (0, 2):                                   # whole rows: all lanes alike
+        m = masked[i][non_pad[i].all(dim=1)]
+        assert torch.all(m.all(dim=1) | ~m.any(dim=1))
+        assert 0.4 < m.all(dim=1).float().mean() < 0.6
+    m = masked[1]
+    assert not torch.all(m.all(dim=1) | ~m.any(dim=1))   # cell by cell: rows get split
+
+
+def test_hold_bias_and_clean_up() -> None:
+    from src.evaluation.holds import hold_stats
+    chart, tokens, metas, stats, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, stats.n_cells)
+    raw = generate_song(*args, steps=6, seed=2, min_hold=0, release_gap=0)
+    clean = generate_song(*args, steps=6, seed=2, refine=1)               # defaults: 3 cells, gap 2
+    none = generate_song(*args, steps=6, seed=2, hold_bias=float("-inf"))
+    assert hold_stats(raw)["short_holds"] > 0                             # an untrained model
+    h = hold_stats(clean)
+    assert h["short_holds"] == 0 and h["quick_regrab"] == 0
+    assert len(grammar_violations(clean)) == 0
+    assert not np.isin(none, (2, 3, 4)).any() and np.isin(none, TAP).any()

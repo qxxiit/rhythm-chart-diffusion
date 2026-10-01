@@ -3,6 +3,7 @@
     Denoiser        f(x_t, mel, s, b) -> logits [B, 384, 4, 5] over the clean state x0
     sample_gamma    mask ratios for a batch, stratified over (0, 1]
     mask_tokens     forward process: each non-PAD position becomes MASK with probability gamma
+                    (or, for chunks picked by row_mask, each whole row of 4 lanes)
     diffusion_loss  continuous-time loss  E_gamma[ (1/gamma) * sum_masked CE ] / N
 
 Deliberate differences from the design doc:
@@ -155,28 +156,42 @@ def sample_gamma(batch: int, device=None, generator: torch.Generator | None = No
 
 
 def mask_tokens(x0: torch.Tensor, gamma: torch.Tensor,
-                generator: torch.Generator | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+                generator: torch.Generator | None = None,
+                rows: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """q(x_t | x0): every non-PAD position independently becomes MASK with probability gamma.
-    Returns (x_t, masked)."""
-    u = torch.rand(x0.shape, generator=generator,
-                   device=generator.device if generator is not None else x0.device)
+    rows: optional bool [B]; in those chunks whole rows (all lanes of a cell) are masked
+    together with probability gamma, so the model also learns to fill a row from the
+    rows around it (which lanes, not only whether). Returns (x_t, masked)."""
+    gen_device = generator.device if generator is not None else x0.device
+    u = torch.rand(x0.shape, generator=generator, device=gen_device)
+    if rows is not None:
+        u_row = torch.rand((*x0.shape[:2], 1), generator=generator, device=gen_device)
+        u = torch.where(rows.to(gen_device).view(-1, 1, 1), u_row.expand_as(u), u)
     masked = (u.to(x0.device) < gamma.view(-1, 1, 1)) & (x0 != PAD)
     return torch.where(masked, torch.full_like(x0, MASK), x0), masked
 
 
 def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
                    b: torch.Tensor, gamma: torch.Tensor | None = None,
-                   generator: torch.Generator | None = None) -> tuple[torch.Tensor, dict]:
+                   generator: torch.Generator | None = None,
+                   row_mask: float = 0.0) -> tuple[torch.Tensor, dict]:
     """L = E_gamma[ (1/gamma) * sum over masked positions of -log p(x0) ] / N   (§4.9).
 
     The 1/gamma weight makes every mask ratio count equally: a chunk masked at
     ratio gamma has about gamma * N masked positions. Divided by N = L * K it is
     an upper bound on the per-position NLL.
+    row_mask: share of chunks masked row by row (mask_tokens rows=); the 1/gamma
+    weight stays right, since every position is still masked with probability gamma.
     Returns (loss, info) where info holds unweighted diagnostics.
     """
     if gamma is None:
         gamma = sample_gamma(x0.shape[0], x0.device, generator)
-    x_t, masked = mask_tokens(x0, gamma, generator)
+    rows = None
+    if row_mask > 0:
+        rows = torch.rand(x0.shape[0], generator=generator,
+                          device=generator.device if generator is not None else x0.device)
+        rows = rows < row_mask
+    x_t, masked = mask_tokens(x0, gamma, generator, rows)
     logits = model(x_t, mel, s, b).float()
     target = torch.where(x0 == PAD, torch.zeros_like(x0), x0)       # PAD is never scored
     ce = F.cross_entropy(logits.reshape(-1, N_CLASSES), target.reshape(-1),
