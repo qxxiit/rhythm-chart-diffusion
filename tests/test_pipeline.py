@@ -367,7 +367,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     lo, hi = summary["ci95_f1@50"]
     assert lo <= summary["mean_f1@50"] <= hi
     assert "mean_motion_pred" in summary and "mean_human_motion_pred" in summary
-    assert summary["min_hold"] == 3 and summary["release_gap"] == 2
+    assert summary["min_hold"] is None and summary["release_gap"] is None   # by SR
     assert summary["mean_short_holds"] == 0 and 0 < summary["mean_human_hold_share"] < 1
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "2", "--steps", "4", "--refine", "1",

@@ -274,3 +274,19 @@ def test_hold_bias_and_clean_up() -> None:
     assert h["short_holds"] == 0 and h["quick_regrab"] == 0
     assert len(grammar_violations(clean)) == 0
     assert not np.isin(none, (2, 3, 4)).any() and np.isin(none, TAP).any()
+
+
+def test_hold_rules_follow_the_target_sr() -> None:
+    from src.evaluation.holds import hold_spans, release_gaps
+    from src.models.sampler import hold_rules
+    assert hold_rules(1.5) == (6, 5) and hold_rules(2.3) == (5, 2) and hold_rules(6.0) == (3, 2)
+    chart, tokens, metas, stats, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    easy = generate_song(model, mel, 1.5, chart.timing_points, metas[0].cell_offset,
+                         stats.n_cells, steps=6, seed=2)
+    spans = hold_spans(easy)
+    assert spans and min(e - s for _, s, e in spans) >= 6
+    gaps = release_gaps(easy, spans)
+    assert np.all((gaps == -1) | (gaps >= 6))

@@ -272,15 +272,44 @@ when played (which is which inferred from the numbers; answers.csv has it).
   strict coverage shows; motion_pred (DECISIONS 2026-10-01) halves for the AI
   charts.
 - Long notes: the human chart has none; C has 202 (10.5% of onsets), mostly 2,
-  3 or 6 cells long (21, 49 and 39 of them), B has 10. The model does not know
-  a tap chart from a long-note chart and spreads holds over every song; short
-  holds come from the sampler closing holds cell by cell (DECISIONS 2026-10-01,
-  long notes).
+  3 or 6 cells long (21, 49 and 39 of them), B has 10. Most human charts do
+  have long notes (next entry: 93% of train charts, median 15% of onsets), and
+  this one is among the 10% of Insane charts without any: the model cannot
+  tell such songs from the rest. Whether it has too many in general is for
+  the per-song comparison (evaluate's hold_share against human_hold_share).
+  The short holds come from the sampler closing holds cell by cell
+  (DECISIONS 2026-10-01, long notes).
 
 Next: `pattern_probe.py` (does the model know the lanes when the rest of the
 chart is visible?) and `evaluate.py --refine 2` at lane temperatures 0.5 and 1
 against T = 128 alone, with the replicate (`--sample-seed 1`) for the noise;
 `hold_stats.py` for the human long-note levels behind the clean-up defaults.
+
+### 2026-10-01 · Long notes in human charts (data check)
+
+`hold_stats.py`, train split, from the token cache (cells of 1/12 beat);
+`docs/_stats/hold_stats.csv`.
+
+| grade | charts | without long notes | long-note share p50 / p90 | length p10 / p50 (cells) | under 3 cells | next press 1 / 2 / 3-5 cells after release |
+|---|---|---|---|---|---|---|
+| Easy | 4,122 | 5.2% | 0.15 / 0.35 | 6 / 12 | 0.3% | 0.01% / 0.13% / 1.1% |
+| Normal | 3,138 | 5.3% | 0.15 / 0.39 | 5 / 6 | 0.6% | 0.03% / 0.35% / 6.1% |
+| Hard | 5,314 | 7.1% | 0.15 / 0.44 | 3 / 6 | 2.0% | 0.08% / 1.0% / 20% |
+| Insane | 3,167 | 10.4% | 0.13 / 0.48 | 3 / 6 | 5.1% | 0.34% / 3.0% / 36% |
+| Expert | 565 | 11.3% | 0.16 / 0.55 | 3 / 4 | 8.2% | 1.0% / 6.4% / 46% |
+| Expert+ | 148 | 10.1% | 0.40 / 0.63 | 3 / 5 | 5.1% | 0.6% / 7.8% / 59% |
+| all | 16,454 | 7.1% | 0.15 / 0.43 | 3 / 6 | 3.5% | 0.28% / 2.4% / 27% |
+
+- Long notes are the rule, not the exception: 93% of charts have some, a
+  median 15% of onsets, and the share spreads widely (p90 0.43).
+- Short long notes and quick re-presses grow with the grade: at Easy almost
+  nothing under half a beat or pressed again within 5 cells; from Hard up a
+  quarter beat (3 cells) is the common short length and a press 3-5 cells after
+  a release is frequent. One or two cells stay rare everywhere (under 3 cells
+  8% at most; next press 1 cell later at most 1%).
+- Clean-up rules by target SR from this table (sampler.HOLD_RULES, DECISIONS
+  2026-10-01): min_hold 6 / 5 / 3 cells and release gap 5 / 2 / 2 for Easy /
+  Normal / Hard and up.
 
 ## Phase 3 Ablation A: Diffusion Design
 

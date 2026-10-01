@@ -56,12 +56,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")
-    ap.add_argument("--min-hold", type=int, default=3,
-                    help="long notes shorter than this many cells (1/12 beat) "
-                         "become taps; 0 = keep")
-    ap.add_argument("--release-gap", type=int, default=2,
+    ap.add_argument("--min-hold", type=int, default=None,
+                    help="long notes shorter than this many cells (1/12 beat) become taps; "
+                         "0 = keep; default by SR (sampler.HOLD_RULES)")
+    ap.add_argument("--release-gap", type=int, default=None,
                     help="empty cells required between a release and the next onset in its lane; "
-                         "0 = keep")
+                         "0 = keep; default by SR (sampler.HOLD_RULES)")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))

@@ -12,8 +12,8 @@ quantities per chart: src/evaluation/holds.py). Per grade:
     short                    share of long notes shorter than 3 cells (1/4 beat)
     gap_1, gap_2, gap_3_5    share of long notes whose lane's next onset comes 1, 2 or
                              3-5 cells after the release (gap_1: the very next cell)
-The sampler's clean_holds defaults (min_hold, release_gap) should sit where these
-put human charts.
+sampler.HOLD_RULES (the clean-up after sampling, by target SR) comes from this
+table on the train split, kept in docs/_stats/hold_stats.csv.
 """
 
 from __future__ import annotations

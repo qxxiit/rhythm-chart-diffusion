@@ -27,7 +27,9 @@ Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart, so --hold-bias sets how readily long notes start
 (-1: about a third as often, -inf: none). Holds shorter than --min-hold cells
 become taps and releases keep --release-gap empty cells before the next press
-in their lane (sampler.clean_holds).
+in their lane (sampler.clean_holds); by default both follow the target SR as in
+human charts (sampler.HOLD_RULES: Easy 6 / 5 cells, Normal 5 / 2, Hard and up
+3 / 2).
 """
 
 from __future__ import annotations
@@ -181,12 +183,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")
-    ap.add_argument("--min-hold", type=int, default=3,
-                    help="long notes shorter than this many cells (1/12 beat) "
-                         "become taps; 0 = keep")
-    ap.add_argument("--release-gap", type=int, default=2,
+    ap.add_argument("--min-hold", type=int, default=None,
+                    help="long notes shorter than this many cells (1/12 beat) become taps; "
+                         "0 = keep; default by SR (sampler.HOLD_RULES)")
+    ap.add_argument("--release-gap", type=int, default=None,
                     help="empty cells required between a release and the next onset in its lane; "
-                         "0 = keep")
+                         "0 = keep; default by SR (sampler.HOLD_RULES)")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--title", default=None, help="default: the audio file name")

@@ -154,6 +154,18 @@ def _lane_sets(free: list[int], n: int, p_tap: np.ndarray, p_empty: np.ndarray,
     return sets[int(rng.choice(len(sets), p=w / w.sum()))]
 
 
+# Long-note rules by target SR, from the human charts (docs/_stats/hold_stats.csv, train):
+# min_hold is about the 10th percentile of long-note length (Easy 6, Normal 5, Hard and
+# up 3 cells), release_gap keeps the next press in a lane at least 6 cells (Easy) or 3
+# cells after a release, as for 99% (Easy) and 97% (all grades) of human long notes.
+HOLD_RULES = ((2.0, 6, 5), (2.7, 5, 2), (float("inf"), 3, 2))   # (SR below, min_hold, gap)
+
+
+def hold_rules(s: float) -> tuple[int, int]:
+    """(min_hold, release_gap) for a target SR."""
+    return next((m, g) for upper, m, g in HOLD_RULES if s < upper)
+
+
 def clean_holds(song: np.ndarray, *, min_hold: int = 3, release_gap: int = 2) -> np.ndarray:
     """Long notes as players expect them; [n_rows, K] tokens, changed in place.
 
@@ -249,8 +261,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   n_cells: int, *, steps: int = 32, order: str = "random",
                   mode: str = "continue", prefix_cells: int = 2 * BAR,
                   seed: int = 0, temperature: float = 1.0, refine: int = 0,
-                  lane_temperature: float = 0.5, hold_bias: float = 0.0, min_hold: int = 3,
-                  release_gap: int = 2) -> np.ndarray:
+                  lane_temperature: float = 0.5, hold_bias: float = 0.0,
+                  min_hold: int | None = None, release_gap: int | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -262,7 +274,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     refine        sweeps of refine_lanes after sampling (0 = none), at lane_temperature
     hold_bias     log-scale bias on starting holds (sample_window); -inf = no holds
     min_hold, release_gap
-                  clean_holds after sampling (0, 0 = keep the holds as sampled)
+                  clean_holds after sampling; None = by the target SR (hold_rules),
+                  0, 0 = keep the holds as sampled
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
@@ -306,6 +319,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
             if last:
                 break
             row0 += stride
+    auto_hold, auto_gap = hold_rules(s)
+    min_hold = auto_hold if min_hold is None else min_hold
+    release_gap = auto_gap if release_gap is None else release_gap
     if min_hold > 0 or release_gap > 0:
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
     if refine:
