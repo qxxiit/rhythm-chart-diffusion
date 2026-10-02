@@ -187,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
                          "rhythm known (sampler.forward_lanes), before --refine")
     ap.add_argument("--spread", action="store_true",
                     help="cells opened together come from different beats (block: rows)")
+    ap.add_argument("--forward-temp", type=float, default=None,
+                    help="--lanes forward: its own lane temperature (default: --lane-temp)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -245,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.spread:
         order += "-spread"
     if a.lanes == "forward":
-        order += "-fwd"
+        order += "-fwd" + (f"t{a.forward_temp:g}" if a.forward_temp is not None else "")
     if a.refine:
         order += f"-ref{a.refine}t{a.lane_temp:g}"
     if a.empty_bias:
@@ -258,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
                                lane_temperature=a.lane_temp,
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
-                               empty_bias=a.empty_bias)
+                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name

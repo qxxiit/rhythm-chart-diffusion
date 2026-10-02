@@ -386,11 +386,16 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
               "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
               "--cache", str(data / "cache"), "--device", "cpu"]
     assert evaluate.main([*common, "--n", "2", "--steps", "4", "--order", "block", "--spread",
-                          "--lanes", "forward", "--refine", "1", "--empty-bias", "0.5"]) == 0
-    fwd = json.loads((tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwd_ref1t0.5_eb0.5"
+                          "--lanes", "forward", "--forward-temp", "1", "--refine", "1",
+                          "--empty-bias", "0.5"]) == 0
+    fwd = json.loads((tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"
                       / "summary.json").read_text())
     assert fwd["lanes"] == "forward" and fwd["spread"] and fwd["empty_bias"] == 0.5
-    assert fwd["lane_temp"] == 0.5 and fwd["mean_violation_rate"] == 0
+    assert fwd["lane_temp"] == 0.5 and fwd["forward_temp"] == 1 and fwd["mean_violation_rate"] == 0
+    assert all(f"mean_{k}" in fwd for k in ("move_stair", "human_move_trill", "chord_share"))
+    saved = np.load(tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"
+                    / "charts.npz")
+    assert len(saved.files) == 2 and saved[saved.files[0]].shape[1:] == (L, 4)
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
                           "--sample-seed", "1",
@@ -402,7 +407,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert keys == [line.split(",")[0] for line in (again / "per_song.csv").read_text().splitlines()]
     from scripts import compare_runs
     assert compare_runs.main([str(base), str(again), str(tmp_path / "r" / "eval_train_songs_"
-                              "continue_block_T4_spread_fwd_ref1t0.5_eb0.5"), "--by-grade"]) == 0
+                              "continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"), "--by-grade"]) == 0
 
 
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:
@@ -418,3 +423,22 @@ def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:
         (folder / "Audio.MP3").write_bytes(b"")
         preprocess_data._files.cache_clear()
         assert preprocess_data.find_audio((row, tmp_path)) == ("k", "1 A - B/Audio.MP3")
+
+
+def test_playtest_settings() -> None:
+    from scripts.playtest_pack import parse_setting
+    plain = parse_setting("random:128")
+    assert plain["lanes"] == "sampled" and plain["refine"] == 0 and plain["name"] == "ai random T128 continue"
+    old = parse_setting("random:128:continue:ref2@0.5")                 # the name earlier packs used
+    assert old["name"] == "ai random T128 continue ref2@0.5" and old["lane_temperature"] == 0.5
+    both = parse_setting("random:128:continue:fwd@1+ref2@0.5")
+    assert (both["lanes"], both["forward_temperature"], both["lane_temperature"]) == ("forward", 1, 0.5)
+    assert both["name"] == "ai random T128 continue fwd@1 ref2@0.5"
+    shared = parse_setting("random:128:continue:fwd+ref2")
+    assert shared["forward_temperature"] is None and shared["name"].endswith("fwd ref2@0.5")
+    alone = parse_setting("random:0:continue:fwd@0.3+spread+eb0.2")
+    assert alone["lane_temperature"] == 0.3 and alone["forward_temperature"] is None
+    assert alone["spread"] and alone["empty_bias"] == 0.2 and alone["steps"] == 0
+    assert alone["name"] == "ai random Tseq continue spread fwd@0.3 eb0.2"
+    with pytest.raises(ValueError):
+        parse_setting("random:128:continue:bogus")

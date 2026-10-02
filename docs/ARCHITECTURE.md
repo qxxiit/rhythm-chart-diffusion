@@ -75,7 +75,7 @@ AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUD
 - ✅ **`sr.py`**: local star rating with rosu-pp (pinned in `requirements.txt`); `scripts/check_sr.py` measures how closely it tracks the API's SR.
 - ✅ **`holds.py`**: long-note share of onsets, mean length, share shorter than 1/4 beat, and re-presses within 2 cells of a release, per chart; `scripts/hold_stats.py` gives the human levels by grade.
 - ✅ **`structure.py`**: rho over bar pairs (all / in / cross / far) from bar self-similarity of standardized log-Mel and of the note grid (§4.11-2).
-- ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored. `motion_pred`: how predictable the lane motion is with no pattern names (share of bits an online context model saves over the same chart with lanes redrawn).
+- ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored. `motion_pred`: how predictable the lane motion is with no pattern names (share of bits an online context model saves over the same chart with lanes redrawn). `move_shares`: the kinds of lane motion (stairs, trills, jacks, 1-4 leaps, chords).
 - `scripts/human_baselines.py`: human-chart levels of pattern clarity by grade, chart similarity by bar distance (for rho_far's k), human rho.
 - ⚪ long-note mAP@tIoU: deferred.
 
@@ -135,8 +135,9 @@ python scripts/playtest_pack.py --ckpt ...      # ✅ blind packs: human (tokeni
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity, cost
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals
                                        #    --sample-seed N: same charts, other sampler draws (replicate)
-                                       #    --lanes forward, --refine N, --order block, --spread,
-                                       #    --steps 0, --empty-bias X: sampler options
+                                       #    --lanes forward [--forward-temp T], --refine N, --order block,
+                                       #    --spread, --steps 0, --empty-bias X: sampler options;
+                                       #    charts.npz keeps the generated tokens
 python scripts/compare_runs.py REF RUN ...    # ✅ evaluate runs paired over their songs, 95% intervals
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
 python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows: full, thinned,

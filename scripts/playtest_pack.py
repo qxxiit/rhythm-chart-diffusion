@@ -74,8 +74,8 @@ README = """블라인드 플레이 테스트 (rhythm-chart-diffusion)
 def parse_setting(text: str) -> dict:
     """order:steps[:mode[:extras]] -> generate_song arguments; noisyT means order noisy at
     temperature T. extras, joined by +: refN or refN@T, N sweeps of lane refinement at lane
-    temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes);
-    spread; ebX, EMPTY bias X."""
+    temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes)
+    at T (default: refinement's); spread; ebX, EMPTY bias X."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -90,28 +90,34 @@ def parse_setting(text: str) -> dict:
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode in {text!r}")
     refine, lane_temp, lanes, spread, empty_bias = 0, 0.5, "sampled", False, 0.0
+    fwd_temp = None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
             lanes = "forward"
+            fwd_temp = float(t) if t else fwd_temp
         elif head.startswith("ref") and head[3:].isdigit():
             refine = int(head[3:])
+            lane_temp = float(t) if t else lane_temp
         elif head == "spread" and not t:
             spread = True
         elif head.startswith("eb") and not t:
             empty_bias = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX")
-        if t:
-            lane_temp = float(t)
-    passes = (["fwd"] if lanes == "forward" else []) + ([f"ref{refine}"] if refine else [])
-    if passes:                                          # the lane temperature on the last pass
+    if lanes == "forward" and not refine and fwd_temp is not None:
+        lane_temp, fwd_temp = fwd_temp, None              # one lane pass: one temperature
+    if fwd_temp == lane_temp:
+        fwd_temp = None
+    passes = ([f"fwd@{fwd_temp:g}" if fwd_temp is not None else "fwd"] if lanes == "forward"
+              else []) + ([f"ref{refine}"] if refine else [])
+    if passes and not passes[-1].startswith("fwd@"):    # the lane temperature on the last pass
         passes[-1] += f"@{lane_temp:g}"
     extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
-            "empty_bias": empty_bias, "name": name_}
+            "empty_bias": empty_bias, "forward_temperature": fwd_temp, "name": name_}
 
 
 def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float) -> list[dict]:
@@ -195,7 +201,8 @@ def build(a) -> int:
                                    lane_temperature=s["lane_temperature"],
                                    hold_bias=a.hold_bias, min_hold=a.min_hold,
                                    release_gap=a.release_gap, lanes=s["lanes"],
-                                   spread=s["spread"], empty_bias=s["empty_bias"])
+                                   spread=s["spread"], empty_bias=s["empty_bias"],
+                                   forward_temperature=s["forward_temperature"])
             charts.append((s["name"], decode(tokens, make_metas(tps, offset, len(tokens), sr))))
 
         order = np.random.default_rng([a.seed, i]).permutation(len(charts))

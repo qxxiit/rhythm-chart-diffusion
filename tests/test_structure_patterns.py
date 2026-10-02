@@ -178,3 +178,22 @@ def test_motion_predictability_sees_moved_and_unnamed_motifs() -> None:
     noise = [(int(k),) for k in rng.integers(0, 4, 240)]
     assert abs(summarize(grid(noise), chance_seeds=3)["motion_pred"]) < 0.05
     assert np.isnan(summarize(grid([(0,), (1,)] * 5), chance_seeds=2)["motion_pred"])
+
+
+@pytest.mark.parametrize("seq, stair, trill, jack, leap", [
+    ([(k,) for k in [0, 1, 2, 3, 2, 1] * 2 + [0]], 8 / 11, 3 / 11, 0.0, 0.0),  # stairs back and forth
+    ([(k,) for k in [0, 2] * 6], 0.0, 1.0, 0.0, 0.0),                           # a trill
+    ([(k,) for k in [0, 3] * 6], 0.0, 1.0, 0.0, 1.0),                           # 1-4 trill: all leaps
+    ([(k,) for k in [0, 1, 3, 2] * 3], 0.0, 0.0, 0.0, 0.0),                     # irregular turns
+    ([(1,)] * 3 + [(2,)] * 3, float("nan"), float("nan"), 0.8, 0.0),            # jacks only
+])
+def test_move_shares(seq, stair, trill, jack, leap) -> None:
+    r = summarize(grid(seq))
+    for key, want in (("move_stair", stair), ("move_trill", trill), ("move_jack", jack),
+                      ("move_leap", leap)):
+        assert (np.isnan(r[key]) and np.isnan(want)) or r[key] == pytest.approx(want), key
+    assert r["chord_share"] == 0.0
+    chords = summarize(grid([(0, 1), (2,), (1, 3), (0,)] * 3))
+    assert chords["chord_share"] == 0.5 and np.isnan(chords["move_stair"])
+    far = summarize(grid([(0,), (1,), (2,), (3,)] * 3, gap=13))        # more than a beat apart
+    assert np.isnan(far["move_jack"])

@@ -392,6 +392,48 @@ Next (0022), questions and decision rules written before the runs:
   longer motifs) against the human charts: a lane pass must not make everything a
   trill. Cost per song is in the new `passes` and `seconds` columns.
 
+### 2026-10-02 · Lane passes on PT08 (playtest check, one song)
+
+`playtest_pack.py --keys 2ba50d694ea9c976 --settings random:128
+random:128:continue:ref2 random:128:continue:fwd+ref2` (xi - Rebellion Trigger,
+Insane 4.47; `outputs/full-v1/playtest_1002`). The three AI charts share one
+sampled rhythm (2,017 notes; human 2,130), so they differ only in lanes. Played
+blind: patterns clearly more distinct with the lane passes, some good stretches
+and some poor ones, and mostly stairs. Measured on the decoded charts
+(`patterns.summarize`, move kinds defined below before tonight's runs):
+
+| chart | stair | trill | irregular | jack | 1-4 leap | chords | motion_pred | coverage (chance) | runs by period |
+|---|---|---|---|---|---|---|---|---|---|
+| human (B) | 0.25 | 0.23 | 0.52 | 1.1% | 5.0% | 35% | 0.138 | 0.098 (0.011) | 2, 3, 4, 6, 8 |
+| T128 (D) | 0.16 | 0.20 | 0.65 | 2.1% | 11.9% | 26% | 0.089 | 0.005 (0.005) | 4 |
+| ref2 (C) | 0.18 | 0.12 | 0.69 | 0.5% | 12.2% | 26% | 0.124 | 0.000 (0.005) | - |
+| fwd + ref2 (A) | 0.20 | 0.09 | 0.70 | 0.5% | 13.3% | 26% | 0.155 | 0.018 (0.005) | 2, 3, 4 |
+
+Stair and trill: among two single-note moves in a row that both change lane, the
+second repeats the first step (stairs, rolls) or goes straight back (trills,
+bounces). Jack and leap: among single-note moves.
+
+- "Mostly stairs" is not more stairs than the human chart (0.20 against 0.25) but
+  stairs left almost alone: trills fell from 0.20 to 0.09 (human 0.23) and jacks
+  from 2.1% to 0.5%, so the stair-to-trill ratio went from 0.8 to 2.2 (human 1.1).
+  Mode-seeking at lane temperature 0.5 is the first suspect: squaring the lane
+  probabilities favours the commonest continuation.
+- Lane motion became more predictable than the human chart's (motion_pred 0.155
+  against 0.138) while exact repetition stayed at a fifth of it: predictable but
+  narrow. The human chart's back-and-forth stairs (period 6) and 8-event motifs
+  are missing.
+- 1-4 leaps stay at 12-13% (human 5%), and the rhythm has fewer chords (26%
+  against 35%), which the lane passes cannot change: patterns built on chords
+  (the mirrored 1+4 / 2+3 alternation) have no room.
+
+One song, one draw: tonight's 240 songs carry the same numbers (`evaluate.py`
+now records move_stair, move_trill, move_jack, move_leap and chord_share, and
+saves the generated tokens as charts.npz). Queue, in order: the probe; T128 and
+ref2 again (for the move kinds); fwd + ref2; fwd at lane temperature 1 + ref2 at
+0.5 (`--forward-temp 1`: motifs chosen at the model's own spread, polished at
+0.5); ref4; fwd alone. Spread, block and the sequential ceiling move to the next
+night.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

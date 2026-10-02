@@ -35,6 +35,9 @@ METRICS = [
     ("coverage_p2", "human_coverage_p2"), ("coverage_p3plus", "human_coverage_p3plus"),
     ("run_length", "human_run_length"),
     ("breaks_per_100", "human_breaks_per_100"), ("motion_pred", "human_motion_pred"),
+    ("move_stair", "human_move_stair"), ("move_trill", "human_move_trill"),
+    ("move_jack", "human_move_jack"),
+    ("move_leap", "human_move_leap"), ("chord_share", "human_chord_share"),
     ("hold_share", "human_hold_share"), ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")

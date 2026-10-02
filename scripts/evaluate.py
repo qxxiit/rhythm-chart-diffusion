@@ -28,13 +28,15 @@ human chart's SR with the song's real timing, then score:
     coverage, run_length, breaks_per_100, motion_pred
                           pattern clarity (patterns.py), human_* likewise; coverage_p1 /
                           _p2 / _p3plus split coverage into jacks, trills and longer motifs
-                          (whether lane passes overdo one kind)
+                          (whether lane passes overdo one kind); move_stair / _trill /
+                          _jack / _leap, chord_share: the kinds of lane motion
     hold_share, hold_beats, short_holds, quick_regrab
                           long notes (holds.py), human_* likewise
     grade, bpm            for splitting results by SR grade and tempo (§4.11-4)
     passes, seconds       forward passes and wall time spent on the song (the cost)
 and the tokenizer's own ceiling: the same F1 for decode(encode(human)).
-Writes <ckpt dir>/eval_<split>_<mode>_<order>_T<steps>/per_song.csv and summary.json.
+Writes <ckpt dir>/eval_<split>_<mode>_<order>_T<steps>/per_song.csv, summary.json and
+charts.npz (the generated tokens by chart key, so new metrics need no new sampling).
 """
 
 from __future__ import annotations
@@ -64,7 +66,8 @@ from src.models.sampler import LANE_PASSES, ORDERS, STATS, generate_song, steps_
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
 PATTERN_KEYS = ("coverage", "coverage_chance", "coverage_p1", "coverage_p2", "coverage_p3plus",
-                "run_length", "breaks_per_100", "motion_pred")
+                "run_length", "breaks_per_100", "motion_pred",
+                "move_stair", "move_trill", "move_jack", "move_leap", "chord_share")
 
 
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int) -> dict:
@@ -142,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")
+    ap.add_argument("--forward-temp", type=float, default=None,
+                    help="--lanes forward: its own lane temperature (default: --lane-temp)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--min-hold", type=int, default=None,
@@ -180,8 +185,9 @@ def main(argv: list[str] | None = None) -> int:
     tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{steps_name(a.steps)}"
     if a.spread:
         tag += "_spread"
+    fwd_temp = a.lane_temp if a.forward_temp is None else a.forward_temp
     if a.lanes == "forward":
-        tag += "_fwd" + ("" if a.refine else f"t{a.lane_temp:g}")
+        tag += "_fwd" + ("" if a.refine and fwd_temp == a.lane_temp else f"t{fwd_temp:g}")
     if a.refine:
         tag += f"_ref{a.refine}t{a.lane_temp:g}"
     if a.hold_bias:
@@ -197,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = a.ckpt.parent / f"eval_{tag}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    results = []
+    results, charts = [], {}
     for i, r in enumerate(rows):
         z = np.load(a.cache / "tokens" / f"{r['key']}.npz")
         tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
@@ -210,9 +216,10 @@ def main(argv: list[str] | None = None) -> int:
                                lane_temperature=a.lane_temp,
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
-                               empty_bias=a.empty_bias)
+                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
+        charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
         back = decode(z["tokens"], metas)
@@ -233,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
               f"(target {sr:.2f})  {cost['seconds']:.0f} s  {r['path']}", flush=True)
 
+    np.savez_compressed(out_dir / "charts.npz", **charts)
     with open(out_dir / "per_song.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0]), lineterminator="\n")
         w.writeheader()
@@ -245,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,
+               "forward_temp": fwd_temp if a.lanes == "forward" else None,
                "seed": a.seed, "sample_seed": sample_seed,
                "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,

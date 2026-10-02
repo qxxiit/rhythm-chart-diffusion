@@ -428,7 +428,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   lane_temperature: float = 0.5, hold_bias: float = 0.0,
                   min_hold: int | None = None, release_gap: int | None = None,
                   lanes: str = "sampled", spread: bool = False,
-                  empty_bias: float = 0.0) -> np.ndarray:
+                  empty_bias: float = 0.0, forward_temperature: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -440,7 +440,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     steps, order, temperature, spread, hold_bias, empty_bias
                   per window, see sample_window (steps 0 = one cell per forward pass)
     lanes         "forward": after sampling, forward_lanes re-chooses every row's lanes
-                  left to right with the rhythm known, at lane_temperature
+                  left to right with the rhythm known, at forward_temperature (None:
+                  lane_temperature)
     refine        sweeps of refine_lanes after that (0 = none), at lane_temperature
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
@@ -497,8 +498,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if min_hold > 0 or release_gap > 0:
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
     if lanes == "forward":
-        forward_lanes(model, song, frames, s, beat_len, n_cells, temperature=lane_temperature,
-                      rng=rng, release_gap=release_gap)
+        forward_lanes(model, song, frames, s, beat_len, n_cells, rng=rng, release_gap=release_gap,
+                      temperature=lane_temperature if forward_temperature is None
+                      else forward_temperature)
     if refine:
         refine_lanes(model, song, frames, s, beat_len, n_cells, sweeps=refine,
                      temperature=lane_temperature, rng=rng, release_gap=release_gap)

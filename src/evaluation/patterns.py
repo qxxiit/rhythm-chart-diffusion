@@ -43,6 +43,15 @@ Per chart (summarize):
                       (same rhythm, same chord sizes). 0 = no more structure than
                       chance; stairs, trills and unnamed motifs that come back all
                       count, also when moved to other lanes.
+    move_stair, move_trill, move_jack, move_leap, chord_share
+                      (always) which kinds of motion make up the chart, so that a
+                      sampler that turns everything into one motif shows. Among two
+                      single-note moves in a row (within a beat each) that both change
+                      lane: move_stair, the second repeats the first step (1-2-3,
+                      4-3-2: stairs, rolls); move_trill, it goes straight back (1-3-1,
+                      2-1-2: trills, bounces); the rest is irregular. Among single-note
+                      moves within a beat: move_jack, the same lane again; move_leap,
+                      1 to 4 or back. chord_share: events with 2+ notes.
 The target is the level of human charts of the same grade, not the maximum
 (§4.11): scripts/human_baselines.py measures it.
 Fix MAX_GAP, P_MAX and the minimum length before any model output is scored.
@@ -128,12 +137,30 @@ def summarize(tokens: np.ndarray, chance_seeds: int = 0) -> dict:
     chance_seeds > 0, also coverage_chance and motion_pred over that many
     lane-redrawn copies."""
     rows, masks = events(tokens)
-    out = _stats(rows, masks)
+    out = _stats(rows, masks) | move_shares(rows, masks)
     if chance_seeds:
         redrawn = [_redraw_lanes(masks, np.random.default_rng(seed)) for seed in range(chance_seeds)]
         out["coverage_chance"] = float(np.mean([_stats(rows, m)["coverage"] for m in redrawn]))
         out["motion_pred"] = motion_predictability(masks, redrawn)
     return out
+
+
+def move_shares(rows: np.ndarray, masks: np.ndarray) -> dict:
+    """move_stair, move_trill, move_jack, move_leap, chord_share (module docstring);
+    nan when a chart has nothing to count."""
+    single = _POP[masks] == 1
+    lane = np.where(single, np.array([int(m).bit_length() - 1 for m in masks.tolist()]), -1)
+    near = np.diff(rows) <= MAX_GAP
+    step = single[1:] & single[:-1] & near                   # single -> single, within a beat
+    delta = np.where(step, np.diff(lane), 0)
+    pair = step[1:] & step[:-1] & (delta[1:] != 0) & (delta[:-1] != 0)
+    n_step, n_pair = int(step.sum()), int(pair.sum())
+    nan = float("nan")
+    return {"move_stair": float((delta[1:] == delta[:-1])[pair].mean()) if n_pair else nan,
+            "move_trill": float((delta[1:] == -delta[:-1])[pair].mean()) if n_pair else nan,
+            "move_jack": float((delta[step] == 0).mean()) if n_step else nan,
+            "move_leap": float((np.abs(delta[step]) == 3).mean()) if n_step else nan,
+            "chord_share": float((_POP[masks] >= 2).mean()) if len(masks) else nan}
 
 
 MOTION_ORDER = 4
