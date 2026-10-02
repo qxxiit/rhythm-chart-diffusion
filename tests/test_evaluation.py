@@ -64,3 +64,43 @@ def test_local_star_rating(tmp_path) -> None:
     assert sr.star_rating(dense) > sr.star_rating(sparse) > 0
     write_osu(tmp_path / "d.osu", dense)
     assert sr.star_rating_file(tmp_path / "d.osu") == sr.star_rating(dense)
+
+
+def test_compare_runs_pairs_songs_by_key(tmp_path, capsys) -> None:
+    import csv
+
+    from scripts import compare_runs
+    fields = ["key", "path", "grade", "f1@50", "sr_target", "sr_gen", "coverage",
+              "coverage_chance", "human_coverage", "human_coverage_chance", "motion_pred",
+              "human_motion_pred", "density_ratio"]
+
+    def write(name: str, shift: float, keys: list[str]):
+        d = tmp_path / name
+        d.mkdir()
+        with open(d / "per_song.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            for k in keys:
+                i = int(k[1:])
+                w.writerow({"key": k, "path": f"{k}.osu", "grade": "Hard" if i % 2 else "Easy",
+                            "f1@50": 0.3 + 0.001 * i + shift, "sr_target": 3.0,
+                            "sr_gen": 3.1 + shift, "coverage": 0.01 + shift / 10,
+                            "coverage_chance": 0.005, "human_coverage": 0.04,
+                            "human_coverage_chance": 0.006,
+                            "motion_pred": "" if i == 0 else 0.05 + shift,
+                            "human_motion_pred": 0.13, "density_ratio": 1.05})
+        return d
+
+    keys = [f"k{i}" for i in range(30)]
+    ref = write("ref", 0.0, keys)
+    run = write("run", 0.02, keys[::-1][:25])            # other order, 25 songs in common
+    assert compare_runs.main([str(ref), str(run), "--by-grade"]) == 0
+    out = capsys.readouterr().out
+    assert "25 songs in common" in out
+    lines = {ln.split()[0]: ln for ln in out.splitlines() if ln.startswith("  ") and ln.split()}
+    assert "+0.0200 [+0.0200, +0.0200]" in lines["f1@50"] and "100%" in lines["f1@50"]
+    assert "+0.0200" in lines["sr_bias"]
+    assert "0.1300" in lines["motion_pred"]                 # the human level
+    assert "x1.20" in lines["coverage/chance"]              # (0.012 / 0.005) / (0.010 / 0.005)
+    assert "Easy" in lines and "Hard" in lines
+    assert compare_runs.main([str(ref)]) == 2

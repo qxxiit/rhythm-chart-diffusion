@@ -344,8 +344,11 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                                "--cache", str(data / "cache"), "--batches", "2",
                                "--batch-size", "4", "--device", "cpu"]) == 0
     probe = json.loads((tmp_path / "r" / "pattern_probe_train.json").read_text())
-    assert set(probe) == {"full", "thin50", "thin90", "chance", "previous", "best of 8"}
+    assert set(probe) == {"full", "thin50", "thin90", "chance", "previous", "best of 8",
+                          "full (1 row)", "past+rhythm", "past", "chance (1 row)"}
     assert probe["full"]["rows"] == probe["chance"]["rows"] > 0
+    assert probe["past"]["rows"] == probe["past+rhythm"]["rows"] == probe["full (1 row)"]["rows"]
+    assert 0 < probe["past"]["rows"] <= probe["full"]["rows"]
     assert all(0 <= v <= 1 for d in probe.values() for k, v in d.items() if k != "rows")
 
     from scripts import hold_stats
@@ -377,6 +380,17 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     refined = json.loads((tmp_path / "r" / "eval_train_songs_continue_random_T4_ref1t0"
                           / "summary.json").read_text())
     assert refined["refine"] == 1 and refined["lane_temp"] == 0
+    assert refined["lanes"] == "sampled" and not refined["spread"] and refined["empty_bias"] == 0
+    assert refined["mean_passes"] > 0 and refined["mean_seconds"] > 0
+    common = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train", "--per-song",
+              "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+              "--cache", str(data / "cache"), "--device", "cpu"]
+    assert evaluate.main([*common, "--n", "2", "--steps", "4", "--order", "block", "--spread",
+                          "--lanes", "forward", "--refine", "1", "--empty-bias", "0.5"]) == 0
+    fwd = json.loads((tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwd_ref1t0.5_eb0.5"
+                      / "summary.json").read_text())
+    assert fwd["lanes"] == "forward" and fwd["spread"] and fwd["empty_bias"] == 0.5
+    assert fwd["lane_temp"] == 0.5 and fwd["mean_violation_rate"] == 0
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
                           "--sample-seed", "1",
@@ -386,6 +400,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     again = tmp_path / "r" / "eval_train_songs_continue_noisy1_T4_s1"
     keys = [line.split(",")[0] for line in (base / "per_song.csv").read_text().splitlines()]
     assert keys == [line.split(",")[0] for line in (again / "per_song.csv").read_text().splitlines()]
+    from scripts import compare_runs
+    assert compare_runs.main([str(base), str(again), str(tmp_path / "r" / "eval_train_songs_"
+                              "continue_block_T4_spread_fwd_ref1t0.5_eb0.5"), "--by-grade"]) == 0
 
 
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:

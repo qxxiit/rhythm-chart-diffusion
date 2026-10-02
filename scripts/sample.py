@@ -29,7 +29,7 @@ from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import ORDERS, generate_song
+from src.models.sampler import LANE_PASSES, ORDERS, generate_song, steps_name
 
 
 def onset_match(pred: np.ndarray, real: np.ndarray) -> tuple[float, float]:
@@ -46,13 +46,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--key", required=True, help="manifest key of the song")
     ap.add_argument("--sr", type=float, default=None,
                     help="target SR (default: the chart's label in the manifest)")
-    ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
+    ap.add_argument("--steps", type=int, default=128,   # DECISIONS 2026-09-29
+                    help="forward passes per window; 0 = one cell per pass")
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--refine", type=int, default=0,
                     help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
     ap.add_argument("--lane-temp", type=float, default=0.5,
-                    help="--refine: temperature of the lane choice (0 = most likely lanes)")
+                    help="--lanes forward / --refine: temperature of the lane choice "
+                         "(0 = most likely lanes)")
+    ap.add_argument("--lanes", choices=list(LANE_PASSES), default="sampled",
+                    help="forward: choose every row's lanes again left to right with the "
+                         "rhythm known (sampler.forward_lanes), before --refine")
+    ap.add_argument("--spread", action="store_true",
+                    help="cells opened together come from different beats (block: rows)")
+    ap.add_argument("--empty-bias", type=float, default=0.0,
+                    help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")
@@ -91,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
                            order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
                            hold_bias=a.hold_bias, min_hold=a.min_hold,
-                           release_gap=a.release_gap)
+                           release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
+                           empty_bias=a.empty_bias)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -101,11 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     chart.audio_filename = parse_osu(src).audio_filename
     out_dir = a.out or a.ckpt.parent / "samples"
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
+    if a.spread:
+        order += "-spread"
+    if a.lanes == "forward":
+        order += "-fwd"
     if a.refine:
         order += f"-ref{a.refine}t{a.lane_temp:g}"
-    out = out_dir / f"{a.key}_{a.mode}_{order}_T{a.steps}_s{sr:.2f}.osu"
+    if a.empty_bias:
+        order += f"-eb{a.empty_bias:g}"
+    steps = steps_name(a.steps)
+    out = out_dir / f"{a.key}_{a.mode}_{order}_T{steps}_s{sr:.2f}.osu"
     write_osu(out, chart, title=meta.get("Title", ""), artist=meta.get("Artist", ""),
-              version=f"diffusion s={sr:.2f} {a.mode}/{order}/T{a.steps}")
+              version=f"diffusion s={sr:.2f} {a.mode}/{order}/T{steps}")
 
     real = z["tokens"]
     same = real.shape == tokens.shape

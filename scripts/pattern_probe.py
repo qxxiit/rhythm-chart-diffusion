@@ -22,6 +22,20 @@ Reading: full context far above the baselines but thin90 near chance means the
 model knows patterns and sampling commits lanes before the context is there
 (refine_lanes is the fix). Full context near chance means the model has not
 learned them (train.py --row-mask, a larger model, or the representation).
+
+One hidden row per chunk at a time (up to 8 rows per chunk, rows with at least
+2 bars of the chunk before them), the views of the sampler's left-to-right passes:
+    full (1 row)  everything else visible (the reference for the two below)
+    past+rhythm   the rows before as the human chart has them; every later row with
+                  a lane choice (some but not all of its tap-or-empty cells are taps)
+                  has those cells hidden, so where later notes are not stays visible:
+                  what sampler.forward_lanes gives the model
+    past          everything after the row hidden: what --order block gives it
+    chance (1 row) 1 / C(4, n) on these rows
+Reading: past+rhythm close to full (1 row) means the lanes can be chosen left to
+right without the later lanes, which sampling draws with little context
+(--lanes forward); far below it means the later lanes carry the pattern and
+refine_lanes' both-sided view is needed.
 """
 
 from __future__ import annotations
@@ -38,12 +52,15 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.data.dataset import ChunkDataset
-from src.data.tokenizer import EMPTY, HOLD_START, MASK, PAD, TAP, K, L
+from src.data.tokenizer import BAR, EMPTY, HOLD_START, MASK, PAD, TAP, K, L
 from src.models.diffusion import load_denoiser, pick_device
 
 STRIDE = 8
 EDGE = 8                                           # rows at the chunk edges are not probed
 CONTEXTS = {"full": 0.0, "thin50": 0.5, "thin90": 0.9}
+ROUNDS = 8                                         # one-row contexts: rows per chunk
+PAST_MIN = 2 * BAR                                 # ... at least 2 bars into the chunk
+ROW_CONTEXTS = ("full (1 row)", "past+rhythm", "past")
 
 
 def probe_rows(x0: np.ndarray) -> np.ndarray:
@@ -53,6 +70,27 @@ def probe_rows(x0: np.ndarray) -> np.ndarray:
     ok = only & (taps >= 1) & (taps < K)
     ok[:EDGE] = ok[L - EDGE:] = False
     return ok
+
+
+def lane_choice_cells(x0: np.ndarray) -> np.ndarray:
+    """Bool [L, K]: the tap-or-empty cells of rows with a lane choice (0 < taps < such
+    cells), the cells sampler.forward_lanes hides in the rows it has not reached yet."""
+    free = np.isin(x0, (EMPTY, TAP))
+    taps = (x0 == TAP).sum(axis=1)
+    return free & ((taps > 0) & (taps < free.sum(axis=1)))[:, None]
+
+
+def one_row_view(x0: np.ndarray, row: int, context: str) -> np.ndarray:
+    """The chunk as a ROW_CONTEXTS context shows it, with all lanes of `row` hidden."""
+    x = x0.astype(np.int64).copy()
+    if context == "past+rhythm":
+        later = lane_choice_cells(x0)
+        later[:row] = False
+        x[later] = MASK
+    elif context == "past":
+        x[row:][x0[row:] != PAD] = MASK
+    x[row] = MASK
+    return x
 
 
 def baselines(x0: np.ndarray, row: int, truth: int) -> tuple[bool, bool]:
@@ -71,6 +109,14 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
         tot[0] += value
         tot[1] += 1
 
+    def score_row(logp: np.ndarray, x0: np.ndarray, row: int) -> tuple[int, float]:
+        truth = x0[row] == TAP
+        n = int(truth.sum())
+        pick = np.zeros(K, dtype=bool)
+        pick[np.argsort(-(logp[row, :, TAP] - logp[row, :, EMPTY]))[:n]] = True
+        return n, float(np.array_equal(pick, truth))
+
+    stats |= {c: {} for c in (*ROW_CONTEXTS, "chance (1 row)")}
     gen = torch.Generator().manual_seed(seed)
     for bi, batch in enumerate(loader):
         if bi >= batches:
@@ -102,6 +148,28 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
                     pick = np.zeros(K, dtype=bool)
                     pick[np.argsort(-score[i, j])[:n]] = True
                     add(name, n, float(np.array_equal(pick, truth)))
+
+        # one row per chunk at a time (own generator: the numbers above stay as they were)
+        pick_rng = np.random.default_rng([seed, bi])
+        rows = []
+        for i in range(len(x0)):
+            ok = np.flatnonzero(probe[i] & (np.arange(L) >= PAST_MIN))
+            rows.append(pick_rng.permutation(ok)[:ROUNDS])
+        for k in range(ROUNDS):
+            chosen = [(i, int(r[k])) for i, r in enumerate(rows) if len(r) > k]
+            if not chosen:
+                break
+            for i, row in chosen:
+                add("chance (1 row)", int((x0[i, row] == TAP).sum()),
+                    1 / comb(K, int((x0[i, row] == TAP).sum())))
+            for name in ROW_CONTEXTS:
+                x = x0.astype(np.int64).copy()
+                for i, row in chosen:
+                    x[i] = one_row_view(x0[i], row, name)
+                logits = model(torch.as_tensor(x, device=device), mel, s, b).float()
+                logp = torch.log_softmax(logits, dim=-1).cpu().numpy()
+                for i, row in chosen:
+                    add(name, *score_row(logp[i], x0[i], row))
     return {name: {n: v[0] / v[1] for n, v in sorted(d.items())} | {
         "all": sum(v[0] for v in d.values()) / max(sum(v[1] for v in d.values()), 1),
         "rows": sum(v[1] for v in d.values())} for name, d in stats.items()}
@@ -131,11 +199,21 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{a.ckpt}: tap-only rows of {min(a.batches, len(loader)) * a.batch_size:,} "
           f"{a.split} chunks, exact lane set")
-    print(f"  {'':10s} {'1 tap':>7s} {'2 taps':>7s} {'3 taps':>7s} {'all':>7s}")
-    for name, d in res.items():
-        print(f"  {name:10s} " + " ".join(f"{d.get(n, float('nan')):7.3f}" for n in (1, 2, 3))
+    print(f"  {'':12s} {'1 tap':>7s} {'2 taps':>7s} {'3 taps':>7s} {'all':>7s}")
+    def line(name: str, d: dict) -> None:
+        label = name.removesuffix(" (1 row)")
+        print(f"  {label:12s} " + " ".join(f"{d.get(n, float('nan')):7.3f}" for n in (1, 2, 3))
               + f" {d['all']:7.3f}")
+
+    one_row = (*ROW_CONTEXTS, "chance (1 row)")
+    for name, d in res.items():
+        if name not in one_row:
+            line(name, d)
     print(f"  rows probed: {res['full']['rows']:,} per context")
+    print(f"  one hidden row per chunk at a time, rows {PAST_MIN}+ of the chunk:")
+    for name in one_row:
+        line(name, res[name])
+    print(f"  rows probed: {res['past']['rows']:,} per context")
     out = a.ckpt.parent / f"pattern_probe_{a.split}.json"
     out.write_text(json.dumps({k: {str(n): round(v, 4) for n, v in d.items()}
                                for k, d in res.items()}, indent=1))

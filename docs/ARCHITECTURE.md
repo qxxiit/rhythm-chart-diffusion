@@ -64,7 +64,7 @@ audio (.mp3)                      chart (.osu)
 
 ### `src/models/`
 - ✅ **`diffusion.py`**: D-32 denoiser (Conv1D audio encoder, 6 blocks of self-attention + cross-attention + FFN, SR and tempo embeddings, ~6.87M parameters), the absorbing forward process and the continuous-time loss. Design doc §4.7-4.10; deliberate differences are listed in the module docstring.
-- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29). `refine_lanes` (generate_song `refine=`) re-chooses the lanes of tap rows afterwards with the whole rest of the chart visible, rhythm, chord sizes and holds kept. `clean_holds` (on by default) turns holds that are short for the target SR into taps and moves releases back from the next press in their lane, by rules taken from human charts (`HOLD_RULES`, `docs/_stats/hold_stats.csv`); `hold_bias` sets how readily holds start (-inf: none).
+- ✅ **`sampler.py`**: reverse process with grammar-constrained unmasking (random, confidence, or noisy order: confidence ranked with annealed Gumbel noise, MaskGIT's choice temperature) and song generation by continuation or independent chunks (§4.8). Default: random order, T = 128 (DECISIONS 2026-09-29). Also `order="block"` (beats left to right, semi-autoregressive), `steps=0` (one cell per forward pass: no two cells drawn from one prediction), `spread` (cells that open together come from different beats) and `empty_bias` (fewer or more notes). `forward_lanes` (generate_song `lanes="forward"`) chooses the lanes of every tap row once more, left to right, with the lanes before it as chosen and the later lanes hidden but the later empty rows visible; `refine_lanes` (`refine=`) re-chooses them afterwards with the whole rest of the chart visible. Both keep rhythm, chord sizes and holds. `clean_holds` (on by default) turns holds that are short for the target SR into taps and moves releases back from the next press in their lane, by rules taken from human charts (`HOLD_RULES`, `docs/_stats/hold_stats.csv`); `hold_bias` sets how readily holds start (-inf: none).
 - ⏸ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting): on hold, generator first (DECISIONS 2026-09-30).
 
 ### Training (`scripts/train.py`) ✅
@@ -132,11 +132,15 @@ python scripts/generate.py --audio X.mp3 --sr 3.5   # ✅ any audio file -> .osz
                                        #    --timing X.osu, or a constant tempo estimated from the audio)
 python scripts/playtest_pack.py --ckpt ...      # ✅ blind packs: human (tokenized) and AI charts as A/B/C;
                                        #    --score answers.csv ratings_*.csv summarizes the ratings
-python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity
+python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity, cost
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals
                                        #    --sample-seed N: same charts, other sampler draws (replicate)
+                                       #    --lanes forward, --refine N, --order block, --spread,
+                                       #    --steps 0, --empty-bias X: sampler options
+python scripts/compare_runs.py REF RUN ...    # ✅ evaluate runs paired over their songs, 95% intervals
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
-python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows, full vs thinned context
+python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows: full, thinned,
+                                       #    and the views of the left-to-right passes (past+rhythm, past)
 python scripts/hold_stats.py           # ✅ long notes in human charts by grade (share, length, release gaps)
 python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves

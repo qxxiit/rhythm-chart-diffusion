@@ -3,6 +3,8 @@
     python scripts/evaluate.py --ckpt outputs/<run>/best.pt --split val --n 50
     python scripts/evaluate.py --ckpt ... --mode independent --order confidence --steps 64
     python scripts/evaluate.py --ckpt ... --per-song --n 0 --order noisy --temperature 2
+    python scripts/evaluate.py --ckpt ... --per-song --n 0 --lanes forward --refine 2
+    python scripts/evaluate.py --ckpt ... --per-song --n 20 --steps 0     # the ceiling
 
 --per-song takes one chart per song (audio_key, a seeded random difficulty), so the
 N rows are N different songs; without it the first N charts of the split are
@@ -11,7 +13,7 @@ scored, which are a handful of songs at several difficulties. --n 0 = all.
 sampler, so the same charts are generated again with other random draws (a
 replicate: how far two runs of one setting differ by chance).
 summary.json also holds 95% bootstrap intervals over the rows (ci95_*) for the
-main numbers.
+main numbers. Compare runs song by song with scripts/compare_runs.py.
 
 For each chart (see --per-song) with SR, tokens and mel, generate at the
 human chart's SR with the song's real timing, then score:
@@ -24,10 +26,13 @@ human chart's SR with the song's real timing, then score:
     density_ratio         generated onsets / human onsets
     rho_all/in/cross/far  structure (structure.py), human_rho_* for the human chart
     coverage, run_length, breaks_per_100, motion_pred
-                          pattern clarity (patterns.py), human_* likewise
+                          pattern clarity (patterns.py), human_* likewise; coverage_p1 /
+                          _p2 / _p3plus split coverage into jacks, trills and longer motifs
+                          (whether lane passes overdo one kind)
     hold_share, hold_beats, short_holds, quick_regrab
                           long notes (holds.py), human_* likewise
     grade, bpm            for splitting results by SR grade and tempo (§4.11-4)
+    passes, seconds       forward passes and wall time spent on the song (the cost)
 and the tokenizer's own ceiling: the same F1 for decode(encode(human)).
 Writes <ckpt dir>/eval_<split>_<mode>_<order>_T<steps>/per_song.csv and summary.json.
 """
@@ -38,6 +43,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,11 +59,12 @@ from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
 from src.evaluation.structure import structure_scores
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import ORDERS, generate_song
+from src.models.sampler import LANE_PASSES, ORDERS, STATS, generate_song, steps_name
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
-PATTERN_KEYS = ("coverage", "coverage_chance", "run_length", "breaks_per_100", "motion_pred")
+PATTERN_KEYS = ("coverage", "coverage_chance", "coverage_p1", "coverage_p2", "coverage_p3plus",
+                "run_length", "breaks_per_100", "motion_pred")
 
 
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int) -> dict:
@@ -117,16 +124,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--split", default="val")
     ap.add_argument("--n", type=int, default=50, help="charts (songs with --per-song); 0 = all")
     ap.add_argument("--per-song", action="store_true", help="one chart per song")
-    ap.add_argument("--steps", type=int, default=128)   # DECISIONS 2026-09-29
+    ap.add_argument("--steps", type=int, default=128,   # DECISIONS 2026-09-29
+                    help="forward passes per window; 0 = one cell per pass (the ceiling of "
+                         "parallel sampling, about 10x the passes of 128)")
     ap.add_argument("--order", choices=list(ORDERS), default="random")
+    ap.add_argument("--spread", action="store_true",
+                    help="cells opened together come from different beats (block: rows)")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--refine", type=int, default=0,
                     help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
+    ap.add_argument("--lanes", choices=list(LANE_PASSES), default="sampled",
+                    help="forward: after sampling, choose every row's lanes again left to "
+                         "right with the rhythm known (sampler.forward_lanes), before --refine")
     ap.add_argument("--lane-temp", type=float, default=0.5,
-                    help="--refine: temperature of the lane choice (0 = most likely lanes)")
+                    help="--lanes forward / --refine: temperature of the lane choice "
+                         "(0 = most likely lanes)")
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")
+    ap.add_argument("--empty-bias", type=float, default=0.0,
+                    help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--min-hold", type=int, default=None,
                     help="long notes shorter than this many cells (1/12 beat) become taps; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
@@ -160,11 +177,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     model = load_denoiser(a.ckpt, pick_device(a.device))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
-    tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{a.steps}"
+    tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{steps_name(a.steps)}"
+    if a.spread:
+        tag += "_spread"
+    if a.lanes == "forward":
+        tag += "_fwd" + ("" if a.refine else f"t{a.lane_temp:g}")
     if a.refine:
         tag += f"_ref{a.refine}t{a.lane_temp:g}"
     if a.hold_bias:
         tag += f"_hb{a.hold_bias:g}"
+    if a.empty_bias:
+        tag += f"_eb{a.empty_bias:g}"
     if a.min_hold is not None or a.release_gap is not None:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
@@ -180,12 +203,16 @@ def main(argv: list[str] | None = None) -> int:
         tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(r["sr"])
         mel = store.chart(r["key"], tps, offset, (len(z["tokens"]) + 1) * L)   # + overhang
+        passes0, t0 = STATS["passes"], time.perf_counter()
         tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
                                order=a.order, mode=a.mode, seed=sample_seed + i,
                                temperature=a.temperature, refine=a.refine,
                                lane_temperature=a.lane_temp,
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
-                               release_gap=a.release_gap)
+                               release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
+                               empty_bias=a.empty_bias)
+        cost = {"passes": STATS["passes"] - passes0,
+                "seconds": round(time.perf_counter() - t0, 2)}
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
         back = decode(z["tokens"], metas)
@@ -201,10 +228,10 @@ def main(argv: list[str] | None = None) -> int:
                "grade": next(g for g, lo, hi in GRADES if lo <= sr < hi),
                "bpm": round(60 * beats / seconds, 2) if seconds > 0 else float("nan"),
                **score(gen, ref, back, tokens, sr, star_rating(gen), star_rating_file(ref_path)),
-               **structure_and_patterns(tokens, z["tokens"], mel, n_cells, a.far_k)}
+               **structure_and_patterns(tokens, z["tokens"], mel, n_cells, a.far_k), **cost}
         results.append(row)
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
-              f"(target {sr:.2f})  {r['path']}", flush=True)
+              f"(target {sr:.2f})  {cost['seconds']:.0f} s  {r['path']}", flush=True)
 
     with open(out_dir / "per_song.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0]), lineterminator="\n")
@@ -214,9 +241,10 @@ def main(argv: list[str] | None = None) -> int:
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
-               "steps": a.steps, "refine": a.refine, "hold_bias": a.hold_bias,
+               "steps": a.steps, "spread": a.spread, "lanes": a.lanes, "refine": a.refine,
+               "hold_bias": a.hold_bias, "empty_bias": a.empty_bias,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
-               "lane_temp": a.lane_temp if a.refine else None,
+               "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,
                "seed": a.seed, "sample_seed": sample_seed,
                "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,

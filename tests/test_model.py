@@ -290,3 +290,169 @@ def test_hold_rules_follow_the_target_sr() -> None:
     assert spans and min(e - s for _, s, e in spans) >= 6
     gaps = release_gaps(easy, spans)
     assert np.all((gaps == -1) | (gaps >= 6))
+
+
+# --- orders and lane passes (EXPERIMENTS 2026-10-02) ------------------------
+
+class Spy(nn.Module):
+    """Wraps a model and keeps every input it was called with."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model, self.config, self.seen = model, model.config, []
+
+    def forward(self, x, mel, s, b):
+        self.seen.append(x[0].cpu().numpy().copy())
+        return self.model(x, mel, s, b)
+
+
+@pytest.mark.parametrize("order,steps", [("block", 16), ("block", 0), ("random", 0)])
+def test_new_orders_with_an_oracle_rebuild_the_song(order: str, steps: int) -> None:
+    chart, tokens, metas, stats, mel = song_fixture()
+    out = generate_song(Oracle(tokens), mel, 3.0, chart.timing_points, metas[0].cell_offset,
+                        stats.n_cells, steps=steps, order=order, mode="continue")
+    assert np.array_equal(out, tokens)
+
+
+def test_block_order_fills_beats_left_to_right() -> None:
+    from src.data.tokenizer import D
+    torch.manual_seed(0)
+    spy = Spy(Denoiser(TINY))
+    x = np.full((L, K), MASK, dtype=np.int64)
+    x[:96] = EMPTY                                     # a fixed prefix, as in continuation
+    out = sample_window(spy, x, torch.randn(L * 4, 80), 3.0, 400.0, steps=48, order="block",
+                        rng=np.random.default_rng(0))
+    assert not np.any(out == MASK) and len(grammar_violations(out, closed=False)) == 0
+    assert 48 <= len(spy.seen) <= 48 + 24              # about steps, at least one per beat
+    for seen in spy.seen:
+        beat = np.flatnonzero((seen == MASK).any(axis=1))[0] // D     # the beat being filled
+        assert not np.any(seen[:beat * D] == MASK)                   # every earlier beat done
+        assert np.all(seen[(beat + 1) * D:] == MASK)                 # every later beat untouched
+
+
+def test_sequential_steps_open_one_cell_per_pass() -> None:
+    from src.models.sampler import steps_name
+    assert steps_name(0) == "seq" and steps_name(128) == "128"
+    torch.manual_seed(0)
+    for order in ("random", "block", "confidence"):
+        spy = Spy(Denoiser(TINY))
+        x = np.full((L, K), MASK, dtype=np.int64)
+        x[:300] = EMPTY
+        sample_window(spy, x, torch.randn(L * 4, 80), 3.0, 400.0, steps=0, order=order,
+                      rng=np.random.default_rng(0))
+        n_mask = [int((seen == MASK).sum()) for seen in spy.seen]
+        assert n_mask == list(range(84 * K, 0, -1))
+
+
+def test_spread_opens_cells_of_different_beats_together() -> None:
+    from src.data.tokenizer import D
+
+    def groupings(spread: bool) -> list[tuple[int, int, int]]:
+        torch.manual_seed(0)
+        spy = Spy(Denoiser(TINY))
+        x = np.full((L, K), MASK, dtype=np.int64)
+        sample_window(spy, x, torch.randn(L * 4, 80), 3.0, 400.0, steps=64, spread=spread,
+                      rng=np.random.default_rng(1))
+        out = []
+        for before, after in zip(spy.seen, spy.seen[1:], strict=False):
+            new = np.argwhere((before == MASK) & (after != MASK))
+            open_beats = len(np.unique(np.flatnonzero((before == MASK).any(axis=1)) // D))
+            out.append((len(new), len(np.unique(new[:, 0] // D)), open_beats))
+        return out
+
+    spread = groupings(True)
+    assert all(beats == min(n, open_beats) for n, beats, open_beats in spread)
+    assert any(beats < min(n, open_beats) for n, beats, open_beats in groupings(False))
+
+
+def test_empty_bias_moves_the_note_count() -> None:
+    chart, tokens, metas, stats, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, stats.n_cells)
+    onsets = {eb: int(np.isin(generate_song(*args, steps=6, seed=2, empty_bias=eb),
+                              (TAP, 2)).sum()) for eb in (-2.0, 0.0, 2.0)}
+    assert onsets[2.0] < onsets[0.0] < onsets[-2.0]
+
+
+def test_forward_lanes_restores_the_lanes_a_model_knows() -> None:
+    from src.models.sampler import forward_lanes
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    shuffled = _shuffle_taps(song, np.random.default_rng(3))
+    frames = torch.as_tensor(mel[:len(song) * 4])
+    out = forward_lanes(Oracle(tokens), shuffled.copy(), frames, 3.0, lambda row0: 400.0,
+                        stats.n_cells, temperature=0.0, rng=np.random.default_rng(0))
+    assert np.array_equal(out, song)
+
+
+def test_forward_lanes_hides_later_lanes_but_not_the_rhythm() -> None:
+    from src.models.sampler import forward_lanes, lane_choice_rows
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    todo = lane_choice_rows(song, stats.n_cells)
+    later = np.zeros(song.shape, dtype=bool)
+    for row, free, _ in todo:
+        later[row, free] = True
+    torch.manual_seed(0)
+    spy = Spy(Denoiser(TINY))
+    frames = torch.as_tensor(mel[:len(song) * 4])
+    out = forward_lanes(spy, song.copy(), frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                        temperature=0.5, rng=np.random.default_rng(0))
+    assert len(spy.seen) == len(todo)
+    for (row, free, _), seen in zip(todo, spy.seen, strict=True):
+        w0 = int(np.clip(row - (L - L // 4), 0, len(song) - L))
+        hidden = seen == MASK
+        expect = later[w0:w0 + L].copy()
+        expect[:row - w0] = False                      # rows before it: lanes as chosen
+        assert np.array_equal(hidden, expect)
+        assert hidden[row - w0, free].all() and hidden[row - w0].sum() == len(free)
+    def onsets_per_row(x):
+        return np.isin(x, (TAP, 2)).sum(axis=1)
+
+    assert np.array_equal(onsets_per_row(out), onsets_per_row(song))
+    assert np.array_equal(np.where(np.isin(out, (2, 3, 4)), out, 0),
+                          np.where(np.isin(song, (2, 3, 4)), song, 0))
+
+
+def test_forward_lanes_in_generate_song_keeps_rhythm_holds_and_grammar() -> None:
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, 700)   # 3 windows
+    plain = generate_song(*args, steps=6, seed=2)
+    forward = generate_song(*args, steps=6, seed=2, lanes="forward", refine=1)
+    assert len(grammar_violations(forward)) == 0
+    assert np.array_equal(np.isin(plain, (TAP, 2)).sum(axis=-1),
+                          np.isin(forward, (TAP, 2)).sum(axis=-1))
+    assert np.array_equal(np.where(np.isin(plain, (2, 3, 4)), plain, 0),
+                          np.where(np.isin(forward, (2, 3, 4)), forward, 0))
+    assert not np.array_equal(plain, forward)
+    with pytest.raises(ValueError):
+        generate_song(*args, steps=6, lanes="backward")
+
+
+def test_probe_hides_what_forward_lanes_hides() -> None:
+    """pattern_probe's past+rhythm view and forward_lanes mask the same cells."""
+    from scripts.pattern_probe import lane_choice_cells, one_row_view
+    from src.models.sampler import lane_choice_rows
+    _, tokens, *_ = song_fixture()
+    for x0 in tokens:
+        x0 = x0.astype(np.int64)
+        cells = np.zeros(x0.shape, dtype=bool)
+        for row, free, _ in lane_choice_rows(x0, L):
+            cells[row, free] = True
+        assert np.array_equal(cells, lane_choice_cells(x0))
+        choice_rows = np.flatnonzero(cells.any(axis=1))
+        if len(choice_rows) == 0:
+            continue
+        row = int(choice_rows[len(choice_rows) // 2])
+        view = one_row_view(x0, row, "past+rhythm")
+        assert np.array_equal(view[:row], x0[:row]) and np.all(view[row] == MASK)
+        assert np.array_equal(view[row + 1:] == MASK, cells[row + 1:])
+        past = one_row_view(x0, row, "past")
+        assert np.all(past[row:][x0[row:] != PAD] == MASK) and np.array_equal(past[:row], x0[:row])

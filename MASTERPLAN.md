@@ -3,7 +3,7 @@
 **Project**: Audio-Conditioned Discrete Diffusion for Rhythm Game Chart Generation
 **Program**: POSTECH UGRP 2026 (research track)
 **Team**: 문정현 (lead), 지현우, 표영복 · **Mentor**: 김원화 교수님 (POSTECH CSE)
-**Last updated**: 2026-10-01 (priority after the Sep 30 team meeting; §1–2)
+**Last updated**: 2026-10-02 (lane patterns: sampler first; §2)
 
 ---
 
@@ -41,7 +41,7 @@ We ask whether **discrete diffusion** — generating the entire note sequence at
 | Split, SR labels, filter | ✅ Split by song, local SR labels, 18,191 charts kept (Sep 26) |
 | Audio pipeline | ✅ Decoded at osu!'s 0 ms, log-Mel per audio file, alignment checked on 2,000 songs (Sep 29) |
 | Baseline model | ⏸ On hold (AR-4 / AR-32), generator first (Sep 30) |
-| Diffusion model | 🟡 D-32 on the full training set (full-v1, val CE 0.072, Sep 29) after a 600-song subset (0.087); sampler random T = 128 |
+| Diffusion model | 🟡 D-32 on the full training set (full-v1, val CE 0.072, Sep 29) after a 600-song subset (0.087); sampler random T = 128. The model knows lane patterns (78% of human lane sets with context, Oct 2); re-choosing lanes after sampling doubles pattern clarity (2.0x → 4.2x chance; human 6.7x); left-to-right lane pass next |
 | Generator | 🟡 Any audio file → playable .osz (`scripts/generate.py`, timing given or estimated); blind playtest packs (`scripts/playtest_pack.py`) |
 | Compute | 🟡 MacBook (MPS, ~86-91 chunks/s; full-v1 60k steps in ~3 h, 27.8 GB log-Mel cache); lab GPU expected ~October |
 

@@ -311,6 +311,87 @@ against T = 128 alone, with the replicate (`--sample-seed 1`) for the noise;
   2026-10-01): min_hold 6 / 5 / 3 cells and release gap 5 / 2 / 2 for Easy /
   Normal / Hard and up.
 
+### 2026-10-02 · Lane choice: probe, refinement and a replicate (full-v1)
+
+Questions written before the runs (2026-10-01): does the model know which lanes a
+human chart uses when the rest of the chart is visible, and does re-choosing the
+lanes after sampling (`refine_lanes`) raise pattern clarity? How far do two runs
+of one setting differ by chance?
+
+`pattern_probe.py` on 800 val chunks (tap-only rows with 1-3 taps; all four lanes
+of every 8th such row hidden at a time; the exact lane set scored):
+
+| context | 1 tap | 2 taps | 3 taps | all |
+|---|---|---|---|---|
+| full (rest of the chunk visible) | 0.800 | 0.744 | 0.793 | 0.782 |
+| thin50 (half of the rest hidden) | 0.611 | 0.561 | 0.617 | 0.596 |
+| thin90 (90% hidden) | 0.366 | 0.306 | 0.426 | 0.352 |
+| chance | 0.250 | 0.167 | 0.250 | 0.225 |
+| previous onset row's lanes | 0.025 | 0.028 | 0.032 | 0.026 |
+| best of 8 (oracle: one of the last 8 events) | 0.781 | 0.475 | 0.395 | 0.664 |
+
+34,619 rows per context. `evaluate.py --per-song --n 0`, random T = 128, the same
+240 val songs and charts as the 09-29 and 09-30 entries (`overnight_1001.log`;
+brackets: 95% bootstrap intervals):
+
+| setting | F1@50 | SR error | density | rho_in | coverage (chance) | / chance | run length | motion_pred |
+|---|---|---|---|---|---|---|---|---|
+| T128 (baseline, hold clean-up of 0021) | 0.373 [0.362, 0.384] | 0.237 [0.206, 0.270] | 1.065 | 0.213 | 0.0093 (0.0046) | 2.0 | 4.76 | 0.050 [0.047, 0.052] |
+| + refine 2, lane temp 0.5 | 0.375 [0.363, 0.386] | 0.229 [0.198, 0.263] | 1.065 | 0.208 | 0.0194 (0.0046) | 4.2 | 5.75 | 0.091 [0.087, 0.094] |
+| + refine 2, lane temp 1 | 0.374 [0.363, 0.386] | 0.229 [0.199, 0.262] | 1.065 | 0.210 | 0.0158 (0.0046) | 3.4 | 5.72 | 0.074 [0.071, 0.078] |
+| T128, replicate (`--sample-seed 1`) | 0.371 [0.360, 0.382] | 0.234 [0.205, 0.265] | 1.063 | 0.205 | 0.0096 (0.0040) | 2.4 | 4.74 | 0.050 [0.048, 0.053] |
+| human charts | - | - | 1 | 0.228 | 0.0422 (0.0063) | 6.7 | 7.49 | 0.132 |
+
+Coverage intervals: baseline [0.0077, 0.0110], refine at 0.5 [0.0160, 0.0231].
+Refinement moves only the taps of rows that have a lane choice, so onsets, density
+and holds are those of the baseline (F1@50 any lane 0.761 in all three).
+
+Readings:
+1. The model knows lane patterns: with the rest of the chunk visible it picks the
+   human lane set for 78% of tap rows, 3.5x chance and above an oracle that knows
+   which of the last 8 events the pattern repeats (66%); for chords far above it
+   (0.74 / 0.79 against 0.48 / 0.40).
+2. The knowledge needs context: 60% with half of the chunk hidden, 35% with 90%
+   hidden. In the random order a cell opens after a uniform share of the others,
+   so half of all lane choices are made with less than half of the chart open,
+   the first ones close to chance, and later choices follow those.
+3. Choosing the lanes again with the whole chart open doubles pattern clarity:
+   coverage 2.0x → 4.2x its chance level, motion_pred 0.050 → 0.091 (half of the
+   gap to the human 0.132), runs 4.8 → 5.8 events (a third of the gap), at the same
+   F1, density and rho; SR error 0.008 lower. Lane temperature 0.5 beats 1.
+4. Noise: the replicate moves coverage by 0.0003 and motion_pred by 0.0005, 30-80x
+   less than refinement; breaks_per_100 doubles between replicates (0.010 / 0.020),
+   too noisy to compare settings; rho_in and rho_all move by about 0.01.
+5. Long notes, the first full read after 0020-0021: generated charts have fewer
+   (hold share 0.154 against the human 0.218) and shorter ones (0.77 against 1.00
+   beats), none shorter than the grade's minimum and no quick re-presses (human
+   2.7% and 1.9%). PT08's surplus was that song, not the rule.
+
+Decision: pattern clarity is worked on in the sampler first (DECISIONS 2026-10-02);
+retraining for it (row masks, a rhythm channel) waits until the lane passes are
+used up.
+
+Next (0022), questions and decision rules written before the runs:
+- `pattern_probe.py` again, with one hidden row at a time: how close is
+  `past+rhythm` (earlier lanes as the human chart has them, later lanes hidden,
+  later empty rows visible: what the new left-to-right lane pass gives the model)
+  to `full (1 row)`? Close means lanes can be chosen left to right without the
+  later lanes that sampling drew with little context.
+- `--lanes forward --refine 2` against `--refine 2` (paired, `compare_runs.py`):
+  if motion_pred and coverage over chance rise with F1 and SR error unchanged, it
+  becomes the setting for playtest charts. `--lanes forward` alone tells how much is
+  the pass itself.
+- `--refine 4`: does refinement saturate after 2 sweeps?
+- `--spread` (same cost, cells of one beat in different steps) and `--order block`
+  (beats left to right): is the problem parallel sampling within a beat, or the
+  order in which lanes are chosen?
+- `--n 20 --steps 0` (one cell per forward pass, the first 20 songs; paired with
+  the same 20 songs of the baseline): if patterns stay near T128's, parallel
+  sampling is not the cause and the order is.
+- For every setting, coverage by kind (`coverage_p1` jacks, `_p2` trills, `_p3plus`
+  longer motifs) against the human charts: a lane pass must not make everything a
+  trill. Cost per song is in the new `passes` and `seconds` columns.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

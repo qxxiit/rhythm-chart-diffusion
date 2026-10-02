@@ -3,6 +3,7 @@
     python scripts/playtest_pack.py --ckpt outputs/full-v1/best.pt --songs 8
     python scripts/playtest_pack.py --ckpt ... --settings random:128 confidence:128 random:128:independent
     python scripts/playtest_pack.py --ckpt ... --settings random:128 random:128:continue:ref2@0.5
+    python scripts/playtest_pack.py --ckpt ... --settings random:128:continue:ref2 random:128:continue:fwd+ref2
     python scripts/playtest_pack.py --keys <key> <key> ...          # these charts' songs
     python scripts/playtest_pack.py --score outputs/full-v1/playtest/answers.csv ratings_*.csv
 
@@ -13,9 +14,11 @@ long, spread evenly over SR. For each song one .osz holds, as difficulties
     the human chart, put through the tokenizer (decode of its cached tokens): on
         the model's 1/12-beat grid, without hitsounds, SV, storyboard or
         background, which would give it away
-    one AI chart per --settings entry, order:steps[:mode[:refN[@T]]] (noisy0.3:128
-        for the noisy order at temperature 0.3; ref2@0.5 for two sweeps of lane
-        refinement at lane temperature 0.5), at the human chart's SR
+    one AI chart per --settings entry, order:steps[:mode[:extras]] (noisy0.3:128
+        for the noisy order at temperature 0.3; steps 0 = one cell per pass). extras
+        joined by +: refN[@T] for N sweeps of lane refinement at lane temperature T
+        (0.5), fwd[@T] for the left-to-right lane pass before it, spread, ebX for an
+        EMPTY bias of X; e.g. random:128:continue:fwd+ref2@0.5. At the human chart's SR
 all under one creator name and the human chart's OD and HP.
 
 Writes to --out (default <ckpt dir>/playtest/):
@@ -44,7 +47,7 @@ from src.data.chart_parser import _kv, _split_sections
 from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
 from src.data.tokenizer import L, decode, make_metas
-from src.models.sampler import ORDERS
+from src.models.sampler import ORDERS, steps_name
 
 CREATOR = "playtest"
 RATING_FIELDS = ["song", "title", "label", "rank", "human?", "comment"]
@@ -69,11 +72,13 @@ README = """블라인드 플레이 테스트 (rhythm-chart-diffusion)
 
 
 def parse_setting(text: str) -> dict:
-    """order:steps[:mode[:refN]] -> generate_song arguments; noisyT means order noisy at
-    temperature T, refN or refN@T N sweeps of lane refinement at lane temperature T (0.5)."""
+    """order:steps[:mode[:extras]] -> generate_song arguments; noisyT means order noisy at
+    temperature T. extras, joined by +: refN or refN@T, N sweeps of lane refinement at lane
+    temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes);
+    spread; ebX, EMPTY bias X."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
-        raise ValueError(f"bad setting {text!r}: order:steps[:mode[:refN]]")
+        raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
     name = parts[0]
     order, temperature = name, 1.0
     if name.startswith("noisy") and name != "noisy":
@@ -84,15 +89,29 @@ def parse_setting(text: str) -> dict:
     mode = parts[2] if len(parts) > 2 else "continue"
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode in {text!r}")
-    refine, lane_temp = 0, 0.5
-    if len(parts) > 3:
-        if not parts[3].startswith("ref"):
-            raise ValueError(f"bad refinement in {text!r}: refN or refN@T")
-        n, _, t = parts[3][3:].partition("@")
-        refine, lane_temp = int(n), float(t) if t else 0.5
-    name_ = f"ai {name} T{steps} {mode}" + (f" ref{refine}@{lane_temp:g}" if refine else "")
+    refine, lane_temp, lanes, spread, empty_bias = 0, 0.5, "sampled", False, 0.0
+    for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
+        head, _, t = item.partition("@")
+        if head == "fwd":
+            lanes = "forward"
+        elif head.startswith("ref") and head[3:].isdigit():
+            refine = int(head[3:])
+        elif head == "spread" and not t:
+            spread = True
+        elif head.startswith("eb") and not t:
+            empty_bias = float(head[2:])
+        else:
+            raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX")
+        if t:
+            lane_temp = float(t)
+    passes = (["fwd"] if lanes == "forward" else []) + ([f"ref{refine}"] if refine else [])
+    if passes:                                          # the lane temperature on the last pass
+        passes[-1] += f"@{lane_temp:g}"
+    extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else [])
+    name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
-            "refine": refine, "lane_temperature": lane_temp, "name": name_}
+            "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
+            "empty_bias": empty_bias, "name": name_}
 
 
 def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float) -> list[dict]:
@@ -175,7 +194,8 @@ def build(a) -> int:
                                    temperature=s["temperature"], refine=s["refine"],
                                    lane_temperature=s["lane_temperature"],
                                    hold_bias=a.hold_bias, min_hold=a.min_hold,
-                                   release_gap=a.release_gap)
+                                   release_gap=a.release_gap, lanes=s["lanes"],
+                                   spread=s["spread"], empty_bias=s["empty_bias"])
             charts.append((s["name"], decode(tokens, make_metas(tps, offset, len(tokens), sr))))
 
         order = np.random.default_rng([a.seed, i]).permutation(len(charts))
@@ -258,7 +278,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--songs", type=int, default=8)
     ap.add_argument("--keys", nargs="+", default=None, help="pack these charts' songs instead")
     ap.add_argument("--settings", nargs="+", default=["random:128", "confidence:128"],
-                    help="AI charts per song: order:steps[:mode[:refN[@T]]]")
+                    help="AI charts per song: order:steps[:mode[:extras]], extras refN[@T], "
+                         "fwd[@T], spread, ebX joined by +")
     ap.add_argument("--split", default="val")
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
