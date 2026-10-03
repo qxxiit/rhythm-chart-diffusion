@@ -11,6 +11,9 @@ window="bar"    every item starts at a random bar line inside chunk c
 
 mel comes from mel.MelStore (the real log-Mel, put on the window's grid when the
 item is read) or, with fake_mel=True, from mel.FakeMelStore (plumbing only).
+
+style (optional): key -> (genre, mapper) vocab indices (src/data/style.py); items
+then also carry "genre" and "mapper", and charts without an entry get null_style.
 """
 
 from __future__ import annotations
@@ -34,15 +37,19 @@ class ChunkDataset(Dataset):
 
     item: {"x0": long [384, 4], "mel": float [1536, 80], "s": float [], "b": float [],
            "start": long []}  (start = token row of the window's row 0)
+           + "genre", "mapper": long [] with style
     Each chunk appears once per epoch. Mel files are memory-mapped, not loaded.
     """
 
     def __init__(self, manifest: Path, cache: Path, splits=("train",), *,
                  keys: list[str] | None = None, max_charts: int | None = None,
-                 window: str = "chunk", fake_mel: bool = False):
+                 window: str = "chunk", fake_mel: bool = False,
+                 style: dict[str, tuple[int, int]] | None = None,
+                 null_style: tuple[int, int] = (0, 0)):
         if window not in ("chunk", "bar"):
             raise ValueError(f"unknown window {window!r}")
         self.window = window
+        self.style, self.null_style = style, null_style
         rows = [r for r in read_manifest(manifest) if r["split"] in splits and r["sr"] != ""
                 and r.get("drop", "") == ""]
         if keys is not None:
@@ -104,13 +111,18 @@ class ChunkDataset(Dataset):
         x0[:len(part)] = part
         frames = self.mel.frames(chart["key"], self._grid(ci), chart["cell_offset"], start, L)
         b = chart["b"][c] if start == c * L else self._beat_len(ci, start)
-        return {
+        item = {
             "x0": torch.from_numpy(x0),
             "mel": torch.from_numpy(np.ascontiguousarray(frames, dtype=np.float32)),
             "s": torch.tensor(chart["s"], dtype=torch.float32),
             "b": torch.tensor(float(b), dtype=torch.float32),
             "start": torch.tensor(start, dtype=torch.long),
         }
+        if self.style is not None:
+            genre, mapper = self.style.get(chart["key"], self.null_style)
+            item["genre"] = torch.tensor(genre, dtype=torch.long)
+            item["mapper"] = torch.tensor(mapper, dtype=torch.long)
+        return item
 
     def __getstate__(self) -> dict:                  # DataLoader workers rebuild the grids
         state = self.__dict__.copy()

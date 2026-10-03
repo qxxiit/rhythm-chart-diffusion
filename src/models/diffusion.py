@@ -1,6 +1,8 @@
 """Masked (absorbing-state) discrete diffusion for 4K charts. Design doc §4.7-4.10.
 
-    Denoiser        f(x_t, mel, s, b) -> logits [B, 384, 4, 5] over the clean state x0
+    Denoiser        f(x_t, mel, s, b[, genre, mapper]) -> logits [B, 384, 4, 5] over x0
+    Styled          a Denoiser with a fixed style, called as f(x_t, mel, s, b) by the
+                    sampler; with classifier-free guidance if asked
     sample_gamma    mask ratios for a batch, stratified over (0, 1]
     mask_tokens     forward process: each non-PAD position becomes MASK with probability gamma
                     (or, for chunks picked by row_mask, each whole row of 4 lanes)
@@ -51,6 +53,8 @@ class DenoiserConfig:
     s_scale: float = 100.0             # SR 0..10 -> 0..1000 before the sinusoid
     b_scale: float = 100.0             # log(beat ms) 5..7.6 -> 500..760
     audio_add: bool = True             # also add memory row i to cell i (see module docstring)
+    n_genres: int = 0                  # style inputs (src/data/style.py); 0 = none, as in
+    n_mappers: int = 0                 # full-v1. Index n_genres / n_mappers is "no label"
 
 
 def sinusoidal(x: torch.Tensor, dim: int) -> torch.Tensor:
@@ -82,12 +86,15 @@ class Block(nn.Module):
 
 
 class Denoiser(nn.Module):
-    """f(x_t, mel, s, b) -> logits over x0.
+    """f(x_t, mel, s, b[, genre, mapper]) -> logits over x0.
 
     x_t  [B, L, K] long     tokens with MASK where the forward process erased them
     mel  [B, L * r, F]      log-Mel frames, r = 4 per cell
     s    [B]                chart SR
     b    [B]                mean beat length of the chunk, ms
+    genre, mapper  [B] long style indices (style.encode), only with config.n_genres /
+                            n_mappers > 0; None or the index n_genres / n_mappers = no
+                            label. Their embeddings join s and b in the per-chunk condition.
     ->   [B, L, K, 5]
     There is no time input: the fraction of MASK tokens already says how far
     along the reverse process is (design doc §4.10).
@@ -107,12 +114,19 @@ class Denoiser(nn.Module):
         self.audio_norm = nn.LayerNorm(d)
         self.s_mlp = nn.Sequential(nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
         self.b_mlp = nn.Sequential(nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
+        if c.n_genres:
+            self.genre_emb = nn.Embedding(c.n_genres + 1, d)          # + "no label"
+            nn.init.normal_(self.genre_emb.weight, std=0.02)
+        if c.n_mappers:
+            self.mapper_emb = nn.Embedding(c.n_mappers + 1, d)
+            nn.init.normal_(self.mapper_emb.weight, std=0.02)
         self.blocks = nn.ModuleList(Block(c) for _ in range(c.n_layers))
         self.out_norm = nn.LayerNorm(d)
         self.head = nn.Linear(d, K * N_CLASSES)
 
     def forward(self, x_t: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
-                b: torch.Tensor) -> torch.Tensor:
+                b: torch.Tensor, genre: torch.Tensor | None = None,
+                mapper: torch.Tensor | None = None) -> torch.Tensor:
         batch = x_t.shape[0]
         pad = (x_t == PAD).all(dim=-1)                           # [B, L] whole PAD rows
         pad[:, 0] &= ~pad.all(dim=1)                             # never mask every key
@@ -120,6 +134,14 @@ class Denoiser(nn.Module):
         h = self.tok_emb(x_t).reshape(batch, L, -1) + self.pos
         cond = self.s_mlp(sinusoidal(s * self.config.s_scale, h.shape[-1])) \
             + self.b_mlp(sinusoidal(torch.log(b) * self.config.b_scale, h.shape[-1]))
+        for name, n, idx in (("genre", self.config.n_genres, genre),
+                             ("mapper", self.config.n_mappers, mapper)):
+            if n:
+                if idx is None:
+                    idx = torch.full((batch,), n, dtype=torch.long, device=x_t.device)
+                cond = cond + getattr(self, f"{name}_emb")(idx)
+            elif idx is not None:
+                raise ValueError(f"this model has no {name} input (trained without --style)")
         h = h + cond[:, None, :]
 
         mem = self.audio_conv(mel.transpose(1, 2)).transpose(1, 2)   # [B, L, d]
@@ -130,6 +152,39 @@ class Denoiser(nn.Module):
         for block in self.blocks:
             h = block(h, mem, pad)
         return self.head(self.out_norm(h)).reshape(batch, L, K, N_CLASSES)
+
+
+class Styled(nn.Module):
+    """A Denoiser with a fixed style for sampling: forward(x_t, mel, s, b), as sampler calls it.
+
+    genre, mapper   vocab indices (style.encode), None = no label
+    guidance        classifier-free guidance w: logits = c + w * (c - u), c with the style
+                    and u without (both None): two forward passes per call. w = 0: c alone.
+    """
+
+    def __init__(self, model: Denoiser, genre: int | None = None, mapper: int | None = None,
+                 guidance: float = 0.0):
+        super().__init__()
+        self.model, self.config = model, model.config
+        self.genre, self.mapper, self.guidance = genre, mapper, guidance
+
+    def _idx(self, v: int | None, n: int, like: torch.Tensor) -> torch.Tensor | None:
+        if not n:
+            if v is not None:
+                raise ValueError("this model has no style input (trained without --style)")
+            return None
+        return torch.full((like.shape[0],), n if v is None else v, dtype=torch.long,
+                          device=like.device)
+
+    def forward(self, x_t, mel, s, b):
+        c = self.config
+        out = self.model(x_t, mel, s, b, genre=self._idx(self.genre, c.n_genres, x_t),
+                         mapper=self._idx(self.mapper, c.n_mappers, x_t))
+        if self.guidance:
+            free = self.model(x_t, mel, s, b, genre=self._idx(None, c.n_genres, x_t),
+                              mapper=self._idx(None, c.n_mappers, x_t))
+            out = out + self.guidance * (out - free)
+        return out
 
 
 def n_params(model: nn.Module) -> int:
@@ -174,7 +229,8 @@ def mask_tokens(x0: torch.Tensor, gamma: torch.Tensor,
 def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
                    b: torch.Tensor, gamma: torch.Tensor | None = None,
                    generator: torch.Generator | None = None,
-                   row_mask: float = 0.0) -> tuple[torch.Tensor, dict]:
+                   row_mask: float = 0.0, genre: torch.Tensor | None = None,
+                   mapper: torch.Tensor | None = None) -> tuple[torch.Tensor, dict]:
     """L = E_gamma[ (1/gamma) * sum over masked positions of -log p(x0) ] / N   (§4.9).
 
     The 1/gamma weight makes every mask ratio count equally: a chunk masked at
@@ -182,6 +238,7 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
     an upper bound on the per-position NLL.
     row_mask: share of chunks masked row by row (mask_tokens rows=); the 1/gamma
     weight stays right, since every position is still masked with probability gamma.
+    genre, mapper: style indices for a model with style inputs (None: not passed).
     Returns (loss, info) where info holds unweighted diagnostics.
     """
     if gamma is None:
@@ -192,7 +249,8 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
                           device=generator.device if generator is not None else x0.device)
         rows = rows < row_mask
     x_t, masked = mask_tokens(x0, gamma, generator, rows)
-    logits = model(x_t, mel, s, b).float()
+    style = {k: v for k, v in (("genre", genre), ("mapper", mapper)) if v is not None}
+    logits = model(x_t, mel, s, b, **style).float()
     target = torch.where(x0 == PAD, torch.zeros_like(x0), x0)       # PAD is never scored
     ce = F.cross_entropy(logits.reshape(-1, N_CLASSES), target.reshape(-1),
                          reduction="none").view_as(x0)
@@ -208,10 +266,12 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
 
 
 def load_denoiser(path, device="cpu") -> Denoiser:
-    """Model from a checkpoint written by scripts/train.py, in eval mode."""
+    """Model from a checkpoint written by scripts/train.py, in eval mode. model.style is
+    the style vocab it was trained with (style.py), None for a model without style inputs."""
     ckpt = torch.load(path, map_location=device, weights_only=True)
     model = Denoiser(DenoiserConfig(**ckpt["config"])).to(device)
     model.load_state_dict(ckpt["model"])
+    model.style = ckpt.get("style")
     return model.eval()
 
 

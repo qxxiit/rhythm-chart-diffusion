@@ -3,6 +3,9 @@
     python scripts/generate.py --audio song.mp3 --bpm 174 --offset 1234 --sr 2 3.5 5
     python scripts/generate.py --audio song.mp3 --timing timed.osu --sr 4
     python scripts/generate.py --audio song.mp3 --bpm 174 --offset 1234 --title T --artist A
+    python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio song.mp3 --bpm 174 \
+        --offset 1234 --sr 4 --genre electronic --mapper <name or user id>
+    python scripts/generate.py --ckpt outputs/full-v2/best.pt --list-styles
 
 The model takes the timing as given (design doc §4.4): it places notes on the
 beat grid, it does not find the beat. Give either
@@ -30,6 +33,11 @@ become taps and releases keep --release-gap empty cells before the next press
 in their lane (sampler.clean_holds); by default both follow the target SR as in
 human charts (sampler.HOLD_RULES: Easy 6 / 5 cells, Normal 5 / 2, Hard and up
 3 / 2).
+
+Style (a model trained with --style, src/data/style.py): --genre (a name or id from
+--list-styles) and --mapper (a name or user id from the model's vocab, or "other")
+choose whose charts to imitate; leave them out for no label. --style-guidance W
+pushes harder towards that style (classifier-free guidance, twice the passes).
 """
 
 from __future__ import annotations
@@ -49,6 +57,7 @@ from src.data.beat_grid import from_timing_points
 from src.data.chart_parser import _split_sections
 from src.data.chart_writer import write_osu
 from src.data.mel import FRAMES_PER_CELL, log_mel, on_grid, song_stats
+from src.data.style import GENRES, genre_index, mapper_index
 from src.data.tokenizer import BAR, D, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import LANE_PASSES, ORDERS, generate_song, steps_name
@@ -165,10 +174,23 @@ def safe(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", name).strip() or "song"
 
 
+def list_styles(model) -> int:
+    vocab = getattr(model, "style", None)
+    if vocab is None:
+        print("this model was trained without --style: no genres or mappers")
+        return 0
+    print("genres: " + ", ".join(f"{GENRES[g]} ({g})" for g in vocab["genres"]))
+    print(f"mappers (>= {vocab['min_charts']} train charts each; 'other' = everyone else):")
+    for m, n in zip(vocab["mappers"], vocab["mapper_charts"], strict=True):
+        name = vocab["mapper_names"].get(str(m), "")
+        print(f"  {m:>9d}  {n:4d} charts  {name}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ckpt", type=Path, default=Path("outputs/full-v1/best.pt"))
-    ap.add_argument("--audio", type=Path, required=True)
+    ap.add_argument("--audio", type=Path, default=None, help="the song (required)")
     ap.add_argument("--bpm", type=float, default=None)
     ap.add_argument("--offset", type=float, default=None, help="ms of the first downbeat")
     ap.add_argument("--timing", type=Path, default=None, help=".osu whose red lines to use")
@@ -191,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="--lanes forward: its own lane temperature (default: --lane-temp)")
     ap.add_argument("--jack-bias", type=float, default=0.0,
                     help="lane passes: log-score bonus for repeating the previous onset's lanes")
+    ap.add_argument("--copy-bias", type=float, default=None,
+                    help="after the lane passes, copy earlier bars with similar audio when the "
+                         "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -207,8 +232,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--title", default=None, help="default: the audio file name")
     ap.add_argument("--artist", default="unknown")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--genre", default=None, help="style: genre name or id (--list-styles)")
+    ap.add_argument("--mapper", default=None,
+                    help="style: mapper name or user id from the model's vocab, or other")
+    ap.add_argument("--style-guidance", type=float, default=0.0,
+                    help="classifier-free guidance towards --genre / --mapper (0 = none)")
+    ap.add_argument("--list-styles", action="store_true",
+                    help="print the genres and mappers the model knows, and stop")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
+    if a.list_styles:
+        return list_styles(load_denoiser(a.ckpt, "cpu"))
+    if a.audio is None:
+        ap.error("--audio is required")
 
     if a.timing is not None:
         if a.bpm is not None or a.offset is not None:
@@ -245,6 +281,17 @@ def main(argv: list[str] | None = None) -> int:
           f"{f' ({len(tps)} red lines)' if len(tps) > 1 else ''}, {n_cells:,} cells")
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
+    style = {}
+    if a.genre is not None or a.mapper is not None or a.style_guidance:
+        vocab = getattr(model, "style", None)
+        if vocab is None:
+            ap.error(f"{a.ckpt} was trained without --style: no --genre / --mapper")
+        try:
+            style = {"genre": None if a.genre is None else genre_index(vocab, a.genre),
+                     "mapper": None if a.mapper is None else mapper_index(vocab, a.mapper),
+                     "style_guidance": a.style_guidance}
+        except ValueError as e:
+            ap.error(str(e))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
     if a.spread:
         order += "-spread"
@@ -256,6 +303,14 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-eb{a.empty_bias:g}"
     if a.jack_bias:
         order += f"-jb{a.jack_bias:g}"
+    if a.copy_bias is not None:
+        order += f"-cp{a.copy_bias:g}"
+    if a.genre is not None:
+        order += f"-{safe(a.genre)}"
+    if a.mapper is not None:
+        order += f"-by-{safe(a.mapper)}"
+    if a.style_guidance:
+        order += f"-sg{a.style_guidance:g}"
     written = []
     for sr in a.sr:
         tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
@@ -265,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                                empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
-                           jack_bias=a.jack_bias)
+                               jack_bias=a.jack_bias, copy_bias=a.copy_bias, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name

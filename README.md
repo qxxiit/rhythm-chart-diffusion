@@ -108,9 +108,14 @@ python scripts/build_manifest.py        # data/manifest.csv: cache key, split by
 python scripts/preprocess_data.py       # token cache
 python scripts/preprocess_data.py --mel # log-Mel per audio file (see docs/ARCHITECTURE.md)
 python scripts/train.py --overfit 10    # milestone check; drop --overfit for a full run
+python scripts/build_style.py           # data/style.csv: genre and mapper per chart
+python scripts/train.py --steps 60000 --val-every 2000 --style data/style.csv --run full-v2
 python scripts/sample.py --ckpt outputs/<run>/best.pt --key <key>   # a dataset song -> .osu + .osz
 python scripts/evaluate.py --ckpt outputs/<run>/best.pt --per-song --n 0   # F1, SR error, rho, patterns
 python scripts/compare_runs.py <eval dir> <eval dir> ...   # paired over songs, 95% intervals
+python scripts/rescore.py <eval dir> ...   # new pattern columns for an earlier run (charts.npz)
+python scripts/evaluate.py --ckpt ... --per-song --n 0 --copy-bias 0 --from-charts <eval dir>
+                                        # bar copies on saved charts, no new sampling
 ```
 
 The cache layout is in `src/data/cache.py`. Not implemented: the AR baselines (on hold).
@@ -122,6 +127,9 @@ python scripts/generate.py --audio "song.mp3" --sr 2 3.5 5          # tempo and 
 python scripts/generate.py --audio "song.mp3" --bpm 174 --offset 1234 --sr 3.5
 python scripts/generate.py --audio "song.mp3" --timing timed.osu --sr 3.5   # red lines of an .osu
 python scripts/generate.py --audio "song.mp3" --sr 3.5 --lanes sampled --refine 0   # raw sampler output
+python scripts/generate.py --ckpt outputs/full-v2/best.pt --list-styles     # genres and mappers it knows
+python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio "song.mp3" --sr 3.5 \
+    --genre electronic --mapper <name>  # a model trained with --style
 ```
 
 Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). By default the lanes are chosen again after sampling (`--lanes forward --refine 2`): a left-to-right pass, then two sweeps with the whole chart in view, which brought pattern clarity on the val songs to the human level (EXPERIMENTS 2026-10-02/03) at about 1.6x the time. The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.

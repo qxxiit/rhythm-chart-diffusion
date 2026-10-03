@@ -52,6 +52,16 @@ Per chart (summarize):
                       2-1-2: trills, bounces); the rest is irregular. Among single-note
                       moves within a beat: move_jack, the same lane again; move_leap,
                       1 to 4 or back. chord_share: events with 2+ notes.
+    lone_chord        (always) of the events inside a single-note stream (both
+                      neighbours single notes at the same gap, at most a beat), the
+                      share that are chords: a chord that cuts a trill or a stair.
+                      The lane passes keep chord sizes, so these come from sampling.
+    bar_rhythm_repeat, bar_lane_repeat
+                      (always) phrase-level repetition. Of the bars with at least 4
+                      onsets, the share whose rhythm (onset cells and chord sizes)
+                      equals an earlier bar's; and of those, the share whose lanes
+                      also equal one such earlier bar's, as they are or mirrored
+                      (lane k <-> 3 - k): a1 b1 c1 a2 b2 c2.
 The target is the level of human charts of the same grade, not the maximum
 (§4.11): scripts/human_baselines.py measures it.
 Fix MAX_GAP, P_MAX and the minimum length before any model output is scored.
@@ -137,7 +147,8 @@ def summarize(tokens: np.ndarray, chance_seeds: int = 0) -> dict:
     chance_seeds > 0, also coverage_chance and motion_pred over that many
     lane-redrawn copies."""
     rows, masks = events(tokens)
-    out = _stats(rows, masks) | move_shares(rows, masks)
+    out = _stats(rows, masks) | move_shares(rows, masks) | lone_chords(rows, masks) \
+        | bar_repeats(rows, masks)
     if chance_seeds:
         redrawn = [_redraw_lanes(masks, np.random.default_rng(seed)) for seed in range(chance_seeds)]
         out["coverage_chance"] = float(np.mean([_stats(rows, m)["coverage"] for m in redrawn]))
@@ -161,6 +172,47 @@ def move_shares(rows: np.ndarray, masks: np.ndarray) -> dict:
             "move_jack": float((delta[step] == 0).mean()) if n_step else nan,
             "move_leap": float((np.abs(delta[step]) == 3).mean()) if n_step else nan,
             "chord_share": float((_POP[masks] >= 2).mean()) if len(masks) else nan}
+
+
+def lone_chords(rows: np.ndarray, masks: np.ndarray) -> dict:
+    """lone_chord (module docstring); nan without single-note streams."""
+    if len(masks) < 3:
+        return {"lone_chord": float("nan")}
+    gap = np.diff(rows)
+    single = _POP[masks] == 1
+    inside = (gap[:-1] == gap[1:]) & (gap[1:] <= MAX_GAP) & single[:-2] & single[2:]
+    if not inside.any():
+        return {"lone_chord": float("nan")}
+    return {"lone_chord": float((~single[1:-1])[inside].mean())}
+
+
+_MIRROR = np.array([int(f"{m:04b}"[::-1], 2) for m in range(16)])
+MIN_BAR_ONSETS = 4
+
+
+def bar_repeats(rows: np.ndarray, masks: np.ndarray, bar: int = BAR) -> dict:
+    """bar_rhythm_repeat, bar_lane_repeat (module docstring); nan when undefined."""
+    nan = float("nan")
+    bars: dict[int, list[tuple[int, int]]] = {}
+    for r, m in zip(rows.tolist(), masks.tolist(), strict=True):
+        bars.setdefault(r // bar, []).append((r % bar, m))
+    seen: dict[tuple, list[tuple]] = {}           # rhythm -> lane patterns of earlier bars
+    n = rhythm_hits = lane_hits = 0
+    for b in sorted(bars):
+        notes = bars[b]
+        if len(notes) < MIN_BAR_ONSETS:
+            continue
+        n += 1
+        rhythm = tuple((o, int(_POP[m])) for o, m in notes)
+        lanes = tuple(m for _, m in notes)
+        mirrored = tuple(int(_MIRROR[m]) for m in lanes)
+        earlier = seen.setdefault(rhythm, [])
+        if earlier:
+            rhythm_hits += 1
+            lane_hits += any(e in (lanes, mirrored) for e in earlier)
+        earlier.append(lanes)
+    return {"bar_rhythm_repeat": rhythm_hits / n if n else nan,
+            "bar_lane_repeat": lane_hits / rhythm_hits if rhythm_hits else nan}
 
 
 MOTION_ORDER = 4

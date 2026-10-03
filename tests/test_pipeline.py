@@ -55,11 +55,13 @@ def data(tmp_path_factory) -> Path:
             write_osu(folder / f"v{v}.osu", chart, title=title,
                       artist=artist if s != 7 else "Artist 0", version=f"v{v}",
                       beatmap_id=bid if (s, v) != (3, 1) else 0, set_id=100 + s)
-            beatmaps.append({"id": bid, "difficulty_rating": 2.0 + s * 0.3 + v})
+            beatmaps.append({"id": bid, "difficulty_rating": 2.0 + s * 0.3 + v,
+                             "user_id": 500 + (s + v) % 3})                # the mapper
             if v == 0 and can_write_mp3():            # the set's audio follows chart v0
                 onsets = sorted({n.time_ms for n in notes})
                 write_mp3(folder / "audio.mp3", clicks(onsets, 44100, 42.0, seed=s), 44100)
-        sets.append({"id": 100 + s, "beatmaps": beatmaps})
+        sets.append({"id": 100 + s, "beatmaps": beatmaps, "genre_id": [10, 3, 5][s % 3],
+                     "user_id": 500 + s % 3, "creator": f"host{s % 3}"})
     meta = base / "metadata" / "beatmapsets.jsonl"
     meta.parent.mkdir(parents=True)
     meta.write_text("\n".join(json.dumps(x) for x in sets) + "\n")
@@ -176,6 +178,56 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     assert summary["mean_ceiling_f1@20"] > 0.99                        # tokenizer round trip
     assert summary["mean_human_rho_all"] > 0          # the fake mel is made from the human chart
     assert 0.0 <= summary["mean_coverage"] <= 1.0
+
+
+def test_style_conditioning_end_to_end(data: Path, tmp_path: Path) -> None:
+    from scripts import build_style
+    from src.data.style import read_style
+    style_csv = tmp_path / "style.csv"
+    assert build_style.main(["--manifest", str(data / "manifest.csv"),
+                             "--metadata", str(data / "metadata" / "beatmapsets.jsonl"),
+                             "--out", str(style_csv), "--min-charts", "2"]) == 0
+    labels = read_style(style_csv)
+    assert len(labels) == 16
+    with_id = [v for v in labels.values() if v["mapper_id"] is not None]
+    assert len(with_id) == 15                                 # one .osu has no beatmap id
+    assert {v["genre_id"] for v in labels.values()} == {10, 3, 5}
+    assert any(v["mapper_name"].startswith("host") for v in with_id)
+
+    args = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--out", str(tmp_path), "--run", "st", "--overfit", "4", "--steps", "30",
+            "--batch-size", "4", "--warmup", "5", "--d-model", "64", "--layers", "2",
+            "--heads", "2", "--d-ff", "128", "--log-every", "10", "--val-every", "30",
+            "--sample-steps", "4", "--fake-mel", "--device", "cpu",
+            "--style", str(style_csv), "--min-mapper-charts", "1", "--style-drop", "0.3"]
+    assert train.main(args) == 0
+    ckpt = torch.load(tmp_path / "st" / "best.pt", weights_only=True)
+    vocab = ckpt["style"]
+    assert ckpt["config"]["n_genres"] == len(vocab["genres"]) == 13
+    assert ckpt["config"]["n_mappers"] == len(vocab["mappers"]) + 1 and vocab["mappers"]
+    with open(tmp_path / "st" / "val.csv", newline="") as f:
+        assert float(next(csv.DictReader(f))["val_ce_null"]) > 0
+    assert train.main([*args[:-6], "--resume", str(tmp_path / "st" / "last.pt"),
+                       "--steps", "40"]) == 2               # a style run resumes with --style
+    assert train.main([*args, "--resume", str(tmp_path / "st" / "last.pt"),
+                       "--steps", "40"]) == 0
+
+    key = json.loads((tmp_path / "st" / "config.json").read_text())["overfit_keys"][0]
+    common = ["--ckpt", str(tmp_path / "st" / "best.pt"), "--manifest", str(data / "manifest.csv"),
+              "--root", str(data / "raw"), "--cache", str(data / "cache"), "--fake-mel",
+              "--device", "cpu", "--steps", "4"]
+    assert sample.main([*common, "--key", key, "--style", "oracle", "--style-csv", str(style_csv),
+                        "--style-guidance", "1"]) == 0
+    assert list((tmp_path / "st" / "samples").glob("*-style-sg1_*.osu"))
+    pytest.importorskip("rosu_pp_py")
+    from scripts import evaluate
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--style", "oracle",
+                          "--style-csv", str(style_csv)]) == 0
+    run = next((tmp_path / "st").glob("eval_*_style"))
+    with open(run / "per_song.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert all(r["genre"] in ("electronic", "anime", "pop") for r in rows)
+    assert all(r["mapper_known"] in ("0", "1", "") for r in rows)
 
 
 def test_human_baselines(data: Path, tmp_path: Path) -> None:
@@ -330,6 +382,34 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                             "human?": "y" if is_h else "n"})
     assert playtest_pack.main(["--score", str(pt / "answers.csv"), str(filled)]) == 0
 
+    # pairs: the human chart and one AI chart per song, the settings taking turns
+    pp = tmp_path / "pairs"
+    assert playtest_pack.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                               "--songs", "2", "--sr-range", "0", "10", "--pairs",
+                               "--settings", "random:4", "random:4:continue:fwd+cp2",
+                               "--manifest", str(data / "manifest.csv"),
+                               "--root", str(data / "raw"), "--cache", str(data / "cache"),
+                               "--out", str(pp), "--device", "cpu"]) == 0
+    with open(pp / "answers.csv", encoding="utf-8-sig") as f:
+        answers = list(csv.DictReader(f))
+    by_song = {}
+    for r in answers:
+        by_song.setdefault(r["song"], {})[r["label"]] = r["source"]
+    assert all(sorted(v) == ["A", "B"] and "human" in v.values() for v in by_song.values())
+    assert sorted(src for v in by_song.values() for src in v.values() if src != "human") == \
+        ["ai random T4 continue", "ai random T4 continue fwd@0.5 cp2"]
+    with open(pp / "pack" / "ratings.csv", encoding="utf-8-sig") as f:
+        sheet = list(csv.DictReader(f))
+    assert [r["song"] for r in sheet] == sorted(by_song) and list(sheet[0]) == playtest_pack.PAIR_FIELDS
+    filled = tmp_path / "ratings_pairs.csv"
+    with open(filled, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=playtest_pack.PAIR_FIELDS)
+        w.writeheader()
+        for song, labels in sorted(by_song.items()):
+            ai = next(lb for lb, src in labels.items() if src != "human")
+            w.writerow({"song": song, "human": ai, "better": "="})       # fooled every time
+    assert playtest_pack.main(["--score", str(pp / "answers.csv"), str(filled)]) == 0
+
     from scripts import audio_ablation
     assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                                 "--manifest", str(data / "manifest.csv"),
@@ -399,6 +479,20 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     saved = np.load(tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"
                     / "charts.npz")
     assert len(saved.files) == 2 and saved[saved.files[0]].shape[1:] == (L, 4)
+    from scripts import rescore
+    run_dir = tmp_path / "r" / "eval_train_songs_continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"
+    assert rescore.main([str(run_dir), "--cache", str(data / "cache")]) == 0
+    with open(run_dir / "per_song.csv", newline="") as f:
+        rescored = list(csv.DictReader(f))
+    assert len(rescored) == 2 and "bar_lane_repeat" in rescored[0] and "human_lone_chord" in rescored[0]
+    assert (run_dir / "per_song.orig.csv").exists()
+    assert "mean_bar_rhythm_repeat" in json.loads((run_dir / "summary.json").read_text())
+    assert evaluate.main([*common, "--n", "2", "--copy-bias", "0",
+                          "--from-charts", str(run_dir)]) == 0             # no new sampling
+    copied = json.loads((run_dir.parent / (run_dir.name + "_cp0") / "summary.json").read_text())
+    assert copied["songs"] == 2 and copied["mean_violation_rate"] == 0
+    assert "mean_copied_bars" in copied and copied["copy_bias"] == 0
+    assert evaluate.main([*common, "--n", "3", "--from-charts", str(run_dir)]) == 2   # not saved
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
                           "--sample-seed", "1",
@@ -443,5 +537,8 @@ def test_playtest_settings() -> None:
     assert alone["lane_temperature"] == 0.3 and alone["forward_temperature"] is None
     assert alone["spread"] and alone["empty_bias"] == 0.2 and alone["steps"] == 0
     assert alone["name"] == "ai random Tseq continue spread fwd@0.3 eb0.2"
+    copies = parse_setting("random:128:continue:fwd+ref2+cp4")
+    assert copies["copy_bias"] == 4 and copies["name"] == "ai random T128 continue fwd ref2@0.5 cp4"
+    assert parse_setting("random:128")["copy_bias"] is None
     with pytest.raises(ValueError):
         parse_setting("random:128:continue:bogus")

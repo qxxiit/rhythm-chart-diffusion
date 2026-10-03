@@ -197,3 +197,31 @@ def test_move_shares(seq, stair, trill, jack, leap) -> None:
     assert chords["chord_share"] == 0.5 and np.isnan(chords["move_stair"])
     far = summarize(grid([(0,), (1,), (2,), (3,)] * 3, gap=13))        # more than a beat apart
     assert np.isnan(far["move_jack"])
+
+
+def test_lone_chords_in_streams() -> None:
+    from src.evaluation.patterns import lone_chords
+    trill = [(k,) for k in [0, 2] * 6]
+    assert summarize(grid(trill))["lone_chord"] == 0.0
+    cut = [*trill[:5], (0, 3), *trill[6:]]                          # one chord inside the stream
+    r = summarize(grid(cut))["lone_chord"]
+    assert r == pytest.approx(1 / 8)                               # its neighbours no longer count
+    rows, masks = events(grid([(0,), (1,)]))
+    assert np.isnan(lone_chords(rows, masks)["lone_chord"])
+
+
+def test_bar_repeats_count_copies_and_mirrors() -> None:
+    from src.evaluation.patterns import bar_repeats
+    def song(bars):                                                 # each bar: 4 notes at 0, 12, 24, 36
+        x = np.full((len(bars) * 48, 4), EMPTY)
+        for b, lanes in enumerate(bars):
+            for i, k in enumerate(lanes):
+                x[b * 48 + 12 * i, k] = TAP
+        return events(x)
+    a, b = [0, 1, 2, 3], [3, 1, 0, 2]
+    mirror_a = [3 - k for k in a]
+    r = bar_repeats(*song([a, b, a, mirror_a, [1, 1, 1, 1]]))
+    assert r["bar_rhythm_repeat"] == pytest.approx(4 / 5)          # every bar after the first
+    assert r["bar_lane_repeat"] == pytest.approx(2 / 4)            # a again, mirrored a
+    none = bar_repeats(*song([[0, 1, 2]] * 3))                       # under 4 onsets: not counted
+    assert np.isnan(none["bar_rhythm_repeat"]) and np.isnan(none["bar_lane_repeat"])

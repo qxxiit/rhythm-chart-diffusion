@@ -14,6 +14,10 @@
                     the chart as context, rhythm and chord sizes kept (generate_song's
                     refine= sweeps). Sampling commits lanes early, when little is open
                     yet; this lets every lane choice see what came after it as well.
+    copy_bars       afterwards (copy_bias): offer every bar a copy of an earlier bar
+                    whose audio is similar, as it is or mirrored, and take it when the
+                    model scores it within copy_bias of the bar it replaces. Human charts
+                    copy about a sixth of their bars; sampled ones almost none.
     clean_holds     afterwards: a release followed too soon by an onset in its lane
                     moves back, and holds shorter than min_hold cells become taps.
                     Cells are sampled one by one, so a hold can be closed by the grammar
@@ -53,7 +57,8 @@ from src.data.tokenizer import (
     K,
     L,
 )
-from src.models.diffusion import N_CLASSES
+from src.evaluation.structure import ssm_audio
+from src.models.diffusion import N_CLASSES, Styled
 
 _OPENS = np.array([False, False, True, True, False])     # START, BODY leave a hold open
 _NEEDS = np.array([False, False, False, True, True])     # BODY, END continue one
@@ -73,13 +78,14 @@ def _neighbour(v: int) -> int | None:
     return None if v == MASK else (EMPTY if v == PAD else int(v))
 
 
-STATS = {"passes": 0}           # forward passes so far (evaluate.py reports them per song)
+STATS = {"passes": 0, "copied_bars": 0}   # forward passes and bar copies so far
+                                         # (evaluate.py reports them per song)
 
 
 @torch.no_grad()
 def denoiser_probs(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float) -> np.ndarray:
     """p(x0 | x) for one window: [L, K, 5] float64."""
-    STATS["passes"] += 1
+    STATS["passes"] += 2 if getattr(model, "guidance", 0) else 1     # guidance: two passes
     device = mel.device
     was_training = model.training
     model.eval()
@@ -437,7 +443,153 @@ def refine_lanes(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
     return song
 
 
+# Bar copies. Human charts repeat whole bars where the music repeats; on the 240 val
+# charts (EXPERIMENTS 2026-10-03) 17% of the bars with 4+ onsets copy an earlier bar,
+# as it is or mirrored, and the source is the earlier bar whose audio is most similar
+# 71% of the time, among the 3 most similar 85%; when that bar's similarity is 0.9 or
+# more, 36% of bars copy it, below 0.5 3%. The model's own charts copy 1.4% of bars.
+COPY_TOP = 3                    # sources: the most similar earlier bars ...
+COPY_MIN_SIM = 0.5              # ... with at least this audio cosine (ssm_audio)
+COPY_MIN_ONSETS = 4             # a source bar has at least this many onset rows
+COPY_DENSITY = 0.15             # a copy keeps the bar's onset count within 15% (or 1)
+
+
+def _closed_bar(song: np.ndarray, r0: int) -> bool:
+    """True if no long note crosses either edge of the bar that starts at row r0."""
+    return not (np.isin(song[r0], (HOLD_BODY, HOLD_END)).any()
+                or np.isin(song[r0 + BAR - 1], (HOLD_START, HOLD_BODY)).any())
+
+
+def onset_count_logp(p_onset: np.ndarray) -> np.ndarray:
+    """[rows, K] onset probability per cell -> [rows, K + 1] log P(the row has n onsets),
+    the lanes taken as independent (as the model's cells are, given the context)."""
+    dist = np.zeros((len(p_onset), p_onset.shape[1] + 1))
+    dist[:, 0] = 1.0
+    for k in range(p_onset.shape[1]):
+        q = p_onset[:, k:k + 1]
+        dist = dist * (1 - q) + np.pad(dist[:, :-1], ((0, 0), (1, 0))) * q
+    return np.log(dist + 1e-12)
+
+
+def copy_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+              n_cells: int, s_audio: np.ndarray, *, copy_bias: float,
+              top: int = COPY_TOP, min_sim: float = COPY_MIN_SIM, mirror: bool = True) -> int:
+    """Offer every bar a copy of an earlier bar with similar audio; returns how many it took.
+
+    song      [n_rows, K] tokens of the whole song (no MASK), changed in place
+    s_audio   [n_bars, n_bars] audio similarity of the song's bars (structure.ssm_audio)
+    Bars in time order. Sources: the top bars before it by audio similarity, at least
+    min_sim, with COPY_MIN_ONSETS onset rows and an onset count within COPY_DENSITY of
+    the bar's own; the whole bar is copied (rhythm, lanes and long notes), as it is or
+    mirrored (lane k <-> 3 - k). One forward pass with the bar MASK and the rest of
+    the chart around it (a window centred on it) gives p(cell) for the bar's cells.
+    The rhythm decides: a version scores, row by row, log P(that many onsets in the
+    row) (onset_count_logp), the bar as it is too, and the first source in order of
+    audio similarity whose score + copy_bias reaches the bar's own replaces it
+    (copy_bias in nats per bar: how much worse a copy may fit the music and still be
+    taken). Between a source as it is and mirrored, sum log p over the cells picks
+    (the lanes at the bar's edges). Taking the best-scoring source instead, or
+    scoring cell by cell, preferred sparse copies (10 val songs, 2026-10-03: -5% to
+    -12% notes): with the bar MASK the model spreads a sure note over the lanes, and
+    the likeliest version is the one without the uncertain notes. Bars with a long
+    note across an edge neither copy nor are copied, so the grammar holds; run
+    clean_holds afterwards for the release gap at the edges. A copied bar can be
+    copied again.
+    """
+    fpc = model.config.frames_per_cell
+    n_bars = min(n_cells // BAR, len(s_audio))
+    rows, lanes = np.arange(BAR), np.arange(K)
+    copied = 0
+
+    def counts(version: np.ndarray) -> np.ndarray:
+        return np.isin(version, (TAP, HOLD_START)).sum(axis=1)
+
+    for b in range(1, n_bars):
+        r0 = b * BAR
+        if not _closed_bar(song, r0):
+            continue
+        current = song[r0:r0 + BAR].copy()
+        n_now = int(counts(current).sum())
+        sources: list[np.ndarray] = []
+        sims = s_audio[b, :b]
+        for a in np.argsort(-sims, kind="stable")[:top]:
+            a0 = int(a) * BAR
+            src = song[a0:a0 + BAR].copy()
+            if sims[a] >= min_sim and _closed_bar(song, a0) \
+                    and np.isin(src, (TAP, HOLD_START)).any(axis=1).sum() >= COPY_MIN_ONSETS \
+                    and abs(int(counts(src).sum()) - n_now) <= max(1, COPY_DENSITY * n_now) \
+                    and not np.array_equal(src, current):
+                sources.append(src)
+        if not sources:
+            continue
+        w0 = int(np.clip(r0 - (L - BAR) // 2, 0, len(song) - L))
+        x = song[w0:w0 + L].astype(np.int64).copy()
+        x[r0 - w0:r0 - w0 + BAR] = MASK
+        probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+        bar = probs[r0 - w0:r0 - w0 + BAR]
+        logp = onset_count_logp(bar[..., TAP] + bar[..., HOLD_START])
+        cell_logp = np.log(bar + 1e-12)
+        own = float(logp[rows, counts(current)].sum())
+        for src in sources:
+            if float(logp[rows, counts(src)].sum()) + copy_bias < own:
+                continue
+            versions = [src, src[:, ::-1]] if mirror else [src]
+            fit = [float(cell_logp[rows[:, None], lanes[None, :], v].sum()) for v in versions]
+            song[r0:r0 + BAR] = versions[int(np.argmax(fit))]
+            copied += 1
+            break
+    STATS["copied_bars"] += copied
+    return copied
+
+
 LANE_PASSES = ("sampled", "forward")
+
+
+def _song_frames(model, mel: np.ndarray, n_rows: int,
+                 n_cells_for_ssm: int = 0) -> tuple[torch.Tensor, np.ndarray | None]:
+    """(frames for n_rows token rows on the model's device, padded with silence past the
+    audio; the bars' audio similarity over the first n_cells_for_ssm cells, or None)."""
+    device = next(model.parameters()).device
+    frames = np.asarray(mel, dtype=np.float32)
+    need = n_rows * model.config.frames_per_cell
+    if len(frames) < need:                                          # past the audio: silence
+        fill = frames.min() if frames.size else 0.0
+        frames = np.concatenate([frames, np.full((need - len(frames), frames.shape[1]), fill,
+                                                 dtype=np.float32)])
+    n_bars = n_cells_for_ssm // BAR
+    s_audio = ssm_audio(frames, n_bars) if n_bars >= 2 else None
+    return torch.as_tensor(frames[:need], device=device), s_audio
+
+
+def _beat_len_fn(timing_points, cell_offset: int):
+    """row0 -> mean beat length (ms) of the window starting at token row row0 (the b input)."""
+    grid = from_timing_points(timing_points)
+
+    def beat_len(row0: int) -> float:
+        start = row0 - cell_offset
+        return (grid.time_from_cell(start + L, D) - grid.time_from_cell(start, D)) / BEATS_PER_CHUNK
+    return beat_len
+
+
+def copy_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_points,
+              cell_offset: int, n_cells: int, *, copy_bias: float, min_hold: int | None = None,
+              release_gap: int | None = None, genre: int | None = None,
+              mapper: int | None = None) -> np.ndarray:
+    """copy_bars on a finished chart ([n_chunks, L, K] tokens as generate_song returns
+    them, e.g. from evaluate.py's charts.npz), then clean_holds; a new array."""
+    if genre is not None or mapper is not None:
+        model = Styled(model, genre, mapper)
+    song = np.concatenate([np.asarray(tokens, dtype=np.int64).reshape(-1, K),
+                           np.full((L, K), PAD, dtype=np.int64)])
+    frames, s_audio = _song_frames(model, mel, len(song), n_cells)
+    auto_hold, auto_gap = hold_rules(s)
+    min_hold = auto_hold if min_hold is None else min_hold
+    release_gap = auto_gap if release_gap is None else release_gap
+    if s_audio is not None and copy_bars(model, song, frames, s, _beat_len_fn(timing_points,
+                                         cell_offset), n_cells, s_audio, copy_bias=copy_bias) \
+            and (min_hold > 0 or release_gap > 0):
+        clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
 
 
 def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: int,
@@ -448,7 +600,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   min_hold: int | None = None, release_gap: int | None = None,
                   lanes: str = "sampled", spread: bool = False,
                   empty_bias: float = 0.0, forward_temperature: float | None = None,
-                  jack_bias: float = 0.0) -> np.ndarray:
+                  jack_bias: float = 0.0, copy_bias: float | None = None,
+                  genre: int | None = None, mapper: int | None = None,
+                  style_guidance: float = 0.0) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -466,36 +620,31 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     jack_bias     both lane passes: log-score bonus for repeating the lanes of the onset
                   row just before (at most a beat): the model picks jacks at a fifth of
                   the human rate (EXPERIMENTS 2026-10-03)
+    copy_bias     copy_bars after the lane passes with this bias in nats per bar (None:
+                  no copies); the audio similarity of bars comes from mel
+    genre, mapper style indices (style.encode) for a model trained with --style; None =
+                  no label. style_guidance w > 0: classifier-free guidance towards the
+                  style (diffusion.Styled), two forward passes for every one
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
-    Order of work: sample, clean_holds, forward_lanes, refine_lanes.
+    Order of work: sample, clean_holds, forward_lanes, refine_lanes, copy_bars, and
+    clean_holds again if a bar was copied.
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode {mode!r}")
     if lanes not in LANE_PASSES:
         raise ValueError(f"unknown lanes {lanes!r}")
-    device = next(model.parameters()).device
+    if genre is not None or mapper is not None or style_guidance:
+        model = Styled(model, genre, mapper, style_guidance)
     r = model.config.frames_per_cell
     n_chunks = -(-n_cells // L)
     song = np.full(((n_chunks + 1) * L, K), PAD, dtype=np.int64)   # +1 chunk for overhang
     song[:n_cells] = MASK
-
-    frames = np.asarray(mel, dtype=np.float32)
-    need = song.shape[0] * r
-    if len(frames) < need:                                          # past the audio: silence
-        fill = frames.min() if frames.size else 0.0
-        frames = np.concatenate([frames, np.full((need - len(frames), frames.shape[1]), fill,
-                                                 dtype=np.float32)])
-    frames = torch.as_tensor(frames[:need], device=device)
-
-    grid = from_timing_points(timing_points)
+    frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None else 0)
+    beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
-
-    def beat_len(row0: int) -> float:
-        start = row0 - cell_offset
-        return (grid.time_from_cell(start + L, D) - grid.time_from_cell(start, D)) / BEATS_PER_CHUNK
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(
@@ -529,4 +678,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
         refine_lanes(model, song, frames, s, beat_len, n_cells, sweeps=refine,
                      temperature=lane_temperature, rng=rng, release_gap=release_gap,
                      jack_bias=jack_bias)
+    copied = s_audio is not None and copy_bars(model, song, frames, s, beat_len, n_cells,
+                                               s_audio, copy_bias=copy_bias)
+    if copied and (min_hold > 0 or release_gap > 0):
+        clean_holds(song, min_hold=min_hold, release_gap=release_gap)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)

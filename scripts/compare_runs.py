@@ -12,7 +12,8 @@ charts' level where there is one (density 1). sr_bias is sr_gen - sr_target.
 Pattern coverage is also given over its chance level (ratio of means), with an
 interval for the run's ratio over the reference's. Cost (passes, seconds) where
 both runs recorded it. --by-grade adds the mean differences of the main numbers
-per SR grade.
+per SR grade, --by-genre per genre of the song (evaluate.py's genre column), with
+the human level of each in brackets.
 Read the intervals over songs, not the means alone: one sampled chart per song
 moves by chance too (--sample-seed replicates show how much).
 """
@@ -38,6 +39,8 @@ METRICS = [
     ("move_stair", "human_move_stair"), ("move_trill", "human_move_trill"),
     ("move_jack", "human_move_jack"),
     ("move_leap", "human_move_leap"), ("chord_share", "human_chord_share"),
+    ("lone_chord", "human_lone_chord"), ("bar_rhythm_repeat", "human_bar_rhythm_repeat"),
+    ("bar_lane_repeat", "human_bar_lane_repeat"),
     ("hold_share", "human_hold_share"), ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")
@@ -128,7 +131,7 @@ def fmt(x: float, signed: bool = False) -> str:
         f"{x:+.4f}" if signed else f"{x:.4f}"
 
 
-def compare(run: dict, ref: dict, by_grade: bool) -> list[str]:
+def compare(run: dict, ref: dict, by_grade: bool, by_genre: bool = False) -> list[str]:
     keys = [k for k in ref if k in run]
     lines = [f"  {'metric':16s} {'run':>8s} {'ref':>8s}   {'run - ref [95% CI]':30s} "
              f"{'up':>5s} {'down':>5s} {'human':>8s}"]
@@ -149,18 +152,34 @@ def compare(run: dict, ref: dict, by_grade: bool) -> list[str]:
         lines.append(f"  {'coverage/chance':16s} {c['run']:8.2f} {c['ref']:8.2f}   {times:30s} "
                      f"{'':>5s} {'':>5s} {h:>8s}")
     if by_grade:
-        lines.append(f"  by grade (mean run - ref): {'n':>4s} " +
-                     " ".join(f"{m:>13s}" for m in GRADE_METRICS))
-        for g in GRADES:
-            gk = [k for k in keys if ref[k].get("grade") == g]
-            if not gk:
-                continue
-            cells = []
-            for m in GRADE_METRICS:
-                p = paired(run, ref, gk, m)
-                cells.append(f"{fmt(p['diff'], True) if p else '-':>13s}")
-            lines.append(f"  {g:26s} {len(gk):4d} " + " ".join(cells))
+        lines += _groups(run, ref, keys, "grade", list(GRADES))
+    if by_genre:
+        counts: dict[str, int] = {}
+        for k in keys:
+            g = run[k].get("genre") or ref[k].get("genre")
+            if isinstance(g, str) and g:
+                counts[g] = counts.get(g, 0) + 1
+        lines += _groups(run, ref, keys, "genre", sorted(counts, key=lambda g: -counts[g]))
     return lines
+
+
+def _groups(run: dict, ref: dict, keys: list[str], column: str, values: list[str]) -> list[str]:
+    """Mean run - ref of GRADE_METRICS per value of a column; [human level] for coverage
+    and motion_pred."""
+    out = [f"  by {column} (mean run - ref [human]): {'n':>4s} " +
+           " ".join(f"{m:>22s}" for m in GRADE_METRICS)]
+    for v in values:
+        gk = [k for k in keys if (run[k].get(column) or ref[k].get(column)) == v]
+        if not gk:
+            continue
+        cells = []
+        for m in GRADE_METRICS:
+            p = paired(run, ref, gk, m)
+            h = human_level(run, gk, dict(METRICS).get(m))
+            cell = (fmt(p["diff"], True) if p else "-") + (f" [{h:.3f}]" if h is not None else "")
+            cells.append(f"{cell:>22s}")
+        out.append(f"  {v:35s} {len(gk):4d} " + " ".join(cells))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="evaluate.py output directories (or per_song.csv files); the first "
                          "is the reference")
     ap.add_argument("--by-grade", action="store_true")
+    ap.add_argument("--by-genre", action="store_true")
     a = ap.parse_args(argv)
     if len(a.runs) < 2:
         print("give a reference and at least one run", file=sys.stderr)
@@ -181,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{path}: {common} songs in common")
         if common == 0:
             continue
-        print("\n".join(compare(run, ref, a.by_grade)))
+        print("\n".join(compare(run, ref, a.by_grade, a.by_genre)))
     return 0
 
 

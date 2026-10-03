@@ -127,18 +127,26 @@ python scripts/preprocess_data.py --mel --splits train val --train-groups 600
 python scripts/check_decoder.py        # ✅ audio census (mp3 tags); --bass PATH: compare with osu!'s decoder
 python scripts/check_alignment.py      # ✅ notes vs audio onsets, by mp3 tag and on the token grid
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
+python scripts/build_style.py          # ✅ data/style.csv: genre (set) and mapper (beatmap user_id)
+                                       #    per chart; train.py --style data/style.csv conditions on them
 python scripts/sample.py --ckpt ... --key ...   # ✅ a dataset song -> .osu, and an .osz with the beatmap's files
 python scripts/generate.py --audio X.mp3 --sr 3.5   # ✅ any audio file -> .osz (--bpm/--offset,
                                        #    --timing X.osu, or a constant tempo estimated from the audio)
 python scripts/playtest_pack.py --ckpt ...      # ✅ blind packs: human (tokenized) and AI charts as A/B/C;
+                                       #    --pairs: human + one AI chart per song (forced choice);
                                        #    --score answers.csv ratings_*.csv summarizes the ratings
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity, cost
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals
                                        #    --sample-seed N: same charts, other sampler draws (replicate)
                                        #    --lanes forward [--forward-temp T], --refine N, --order block,
-                                       #    --spread, --steps 0, --empty-bias X: sampler options;
-                                       #    charts.npz keeps the generated tokens
+                                       #    --spread, --steps 0, --empty-bias X, --jack-bias X,
+                                       #    --copy-bias X (bar copies): sampler options;
+                                       #    --style oracle|none (+ --style-guidance W) for a style model;
+                                       #    charts.npz keeps the generated tokens, and
+                                       #    --from-charts DIR scores those (after --copy-bias) again
+python scripts/rescore.py RUN ...      # ✅ pattern / long-note columns again from a run's charts.npz
 python scripts/compare_runs.py REF RUN ...    # ✅ evaluate runs paired over their songs, 95% intervals
+                                       #    (--by-grade, --by-genre)
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
 python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows: full, thinned,
                                        #    and the views of the left-to-right passes (past+rhythm, past)

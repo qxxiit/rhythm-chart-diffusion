@@ -2,6 +2,7 @@
 
     python scripts/sample.py --ckpt outputs/<run>/best.pt --key <manifest key>
     python scripts/sample.py --ckpt ... --key ... --sr 4.5 --steps 64 --order confidence
+    python scripts/sample.py --ckpt outputs/full-v2/best.pt --key ... --style oracle
 
 Uses the song's cached mel and its real timing (BPM and offset are given,
 design doc §4.4) and writes <ckpt dir>/samples/<key>_....osu that refers to the
@@ -27,6 +28,7 @@ from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections, parse_osu
 from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
+from src.data.style import encode, read_style
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import LANE_PASSES, ORDERS, generate_song, steps_name
@@ -64,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="--lanes forward: its own lane temperature (default: --lane-temp)")
     ap.add_argument("--jack-bias", type=float, default=0.0,
                     help="lane passes: log-score bonus for repeating the previous onset's lanes")
+    ap.add_argument("--copy-bias", type=float, default=None,
+                    help="after the lane passes, copy earlier bars with similar audio when the "
+                         "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -82,6 +87,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
     ap.add_argument("--fake-mel", action="store_true", help="the plumbing-only mel (train.py --fake-mel)")
     ap.add_argument("--out", type=Path, default=None, help="default: <ckpt dir>/samples")
+    ap.add_argument("--style", choices=["none", "oracle"], default="none",
+                    help="oracle: the genre and mapper of this chart (a model trained with "
+                         "--style); none: without labels")
+    ap.add_argument("--style-csv", type=Path, default=Path("data/style.csv"))
+    ap.add_argument("--style-guidance", type=float, default=0.0,
+                    help="--style oracle: classifier-free guidance weight")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
 
@@ -100,13 +111,23 @@ def main(argv: list[str] | None = None) -> int:
     sr = a.sr if a.sr is not None else float(row["sr"] or z["sr"])
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
+    style = {}
+    if a.style == "oracle":
+        vocab = getattr(model, "style", None)
+        label = read_style(a.style_csv).get(a.key, {}) if a.style_csv.exists() else {}
+        if vocab is None or not label:
+            print("--style oracle needs a model trained with --style and this chart in "
+                  "--style-csv", file=sys.stderr)
+            return 2
+        genre, mapper = encode(vocab, label.get("genre_id"), label.get("mapper_id"))
+        style = {"genre": genre, "mapper": mapper, "style_guidance": a.style_guidance}
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                            order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
                            hold_bias=a.hold_bias, min_hold=a.min_hold,
                            release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                            empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
-                           jack_bias=a.jack_bias)
+                           jack_bias=a.jack_bias, copy_bias=a.copy_bias, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -126,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-eb{a.empty_bias:g}"
     if a.jack_bias:
         order += f"-jb{a.jack_bias:g}"
+    if a.copy_bias is not None:
+        order += f"-cp{a.copy_bias:g}"
+    if style:
+        order += "-style" + (f"-sg{a.style_guidance:g}" if a.style_guidance else "")
     steps = steps_name(a.steps)
     out = out_dir / f"{a.key}_{a.mode}_{order}_T{steps}_s{sr:.2f}.osu"
     write_osu(out, chart, title=meta.get("Title", ""), artist=meta.get("Artist", ""),

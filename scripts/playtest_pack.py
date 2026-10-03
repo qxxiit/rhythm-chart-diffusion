@@ -5,6 +5,8 @@
     python scripts/playtest_pack.py --ckpt ... --settings random:128 random:128:continue:ref2@0.5
     python scripts/playtest_pack.py --ckpt ... --settings random:128:continue:ref2 random:128:continue:fwd+ref2
     python scripts/playtest_pack.py --keys <key> <key> ...          # these charts' songs
+    python scripts/playtest_pack.py --pairs --songs 16 --settings \
+        random:128:continue:fwd+ref2 random:128:continue:fwd+ref2+cp4
     python scripts/playtest_pack.py --score outputs/full-v1/playtest/answers.csv ratings_*.csv
 
 Songs come from --split (val by default: not seen in training), one chart per
@@ -18,8 +20,18 @@ long, spread evenly over SR. For each song one .osz holds, as difficulties
         for the noisy order at temperature 0.3; steps 0 = one cell per pass). extras
         joined by +: refN[@T] for N sweeps of lane refinement at lane temperature T
         (0.5), fwd[@T] for the left-to-right lane pass before it, spread, ebX for an
-        EMPTY bias of X; e.g. random:128:continue:fwd+ref2@0.5. At the human chart's SR
+        EMPTY bias of X, jbX for a jack bias of X, cpX for bar copies with a bias of X
+        nats (sampler.copy_bars), style for the human chart's genre and mapper (a model
+        trained with --style; --style-csv), sgW for guidance towards it; e.g.
+        random:128:continue:fwd+ref2@0.5. At the human chart's SR
 all under one creator name and the human chart's OD and HP.
+
+--pairs: two charts per song instead, [A] and [B]: the human chart and one AI chart,
+the --settings taking turns over the songs (in SR order, so each setting gets songs
+across the whole range). With one human and two AI charts, players found the human
+one by elimination when the two AI charts looked alike (2026-10-03); a pair asks
+only "which one is human" (forced choice) and "which one was more fun". Use more
+songs (16 or so): each song gives one answer per player.
 
 Writes to --out (default <ckpt dir>/playtest/):
     pack/             what the players get: the .osz files, ratings.csv, README.txt
@@ -46,11 +58,13 @@ from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections
 from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
+from src.data.style import encode, read_style
 from src.data.tokenizer import L, decode, make_metas
 from src.models.sampler import ORDERS, steps_name
 
 CREATOR = "playtest"
 RATING_FIELDS = ["song", "title", "label", "rank", "human?", "comment"]
+PAIR_FIELDS = ["song", "title", "human", "better", "comment"]
 
 README = """블라인드 플레이 테스트 (rhythm-chart-diffusion)
 
@@ -71,11 +85,32 @@ README = """블라인드 플레이 테스트 (rhythm-chart-diffusion)
 """
 
 
+README_PAIRS = """블라인드 플레이 테스트, 짝 비교 (rhythm-chart-diffusion)
+
+곡마다 채보가 2개 있습니다 (난이도 이름 A, B). 하나는 사람이 만든 채보이고 하나는 AI
+채보입니다. 곡마다 AI 설정이 다를 수 있으니, 곡 안의 두 채보끼리만 비교해 주세요.
+
+1. .osz 파일을 osu!(lazer) 창에 끌어다 놓거나 더블클릭해서 가져옵니다.
+   osu! stable: Songs 폴더에 넣고 곡 선택 화면에서 F5.
+2. 곡마다 두 채보를 모두 한 번 이상 플레이합니다 (모드 · 배속 변경 없이).
+3. ratings.csv 를 채웁니다 (곡마다 한 줄).
+   human    사람이 만든 채보 같은 쪽: A 또는 B (헷갈려도 꼭 하나를 고르세요)
+   better   더 재밌었던 쪽: A 또는 B, 비슷하면 =
+   comment  왜 그렇게 골랐는지 자유롭게
+4. 파일 이름 끝에 본인 이름을 붙여 돌려주세요 (예: ratings_홍길동.csv).
+
+사람 채보도 AI 와 같은 격자(1/12 비트)로 옮기고 히트사운드 · 배속 변화 · 배경을
+지웠습니다. 겉모양으로는 구별되지 않게 하려는 것이니, 채보 내용으로만 판단해 주세요.
+"""
+
+
 def parse_setting(text: str) -> dict:
     """order:steps[:mode[:extras]] -> generate_song arguments; noisyT means order noisy at
     temperature T. extras, joined by +: refN or refN@T, N sweeps of lane refinement at lane
     temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes)
-    at T (default: refinement's); spread; ebX, EMPTY bias X."""
+    at T (default: refinement's); spread; ebX, EMPTY bias X; jbX, jack bias X; cpX, bar
+    copies with bias X (sampler.copy_bars); style, the human chart's genre and mapper;
+    sgW, classifier-free guidance W towards it."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -90,7 +125,7 @@ def parse_setting(text: str) -> dict:
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode in {text!r}")
     refine, lane_temp, lanes, spread, empty_bias, jack_bias = 0, 0.5, "sampled", False, 0.0, 0.0
-    fwd_temp = None
+    fwd_temp, copy_bias, style, guidance = None, None, False, 0.0
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -105,8 +140,17 @@ def parse_setting(text: str) -> dict:
             empty_bias = float(head[2:])
         elif head.startswith("jb") and not t:
             jack_bias = float(head[2:])
+        elif head.startswith("cp") and not t:
+            copy_bias = float(head[2:])
+        elif head == "style" and not t:
+            style = True
+        elif head.startswith("sg") and not t:
+            guidance = float(head[2:])
         else:
-            raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, jbX")
+            raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
+                             "jbX, cpX, style, sgW")
+    if guidance and not style:
+        raise ValueError(f"sgW in {text!r} guides towards a style: add style")
     if lanes == "forward" and not refine and fwd_temp is not None:
         lane_temp, fwd_temp = fwd_temp, None              # one lane pass: one temperature
     if fwd_temp == lane_temp:
@@ -116,12 +160,23 @@ def parse_setting(text: str) -> dict:
     if passes and not passes[-1].startswith("fwd@"):    # the lane temperature on the last pass
         passes[-1] += f"@{lane_temp:g}"
     extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else []) \
-        + ([f"jb{jack_bias:g}"] if jack_bias else [])
+        + ([f"jb{jack_bias:g}"] if jack_bias else []) \
+        + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
+        + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
             "empty_bias": empty_bias, "forward_temperature": fwd_temp, "jack_bias": jack_bias,
+            "copy_bias": copy_bias, "style": style, "style_guidance": guidance,
             "name": name_}
+
+
+def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
+    """generate_song's style arguments for a setting with "style": the human chart's labels."""
+    if not setting["style"]:
+        return {}
+    genre, mapper = encode(vocab, label.get("genre_id"), label.get("mapper_id"))
+    return {"genre": genre, "mapper": mapper, "style_guidance": setting["style_guidance"]}
 
 
 def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float) -> list[dict]:
@@ -147,7 +202,7 @@ def safe(name: str) -> str:
 
 def build(a) -> int:
     settings = [parse_setting(s) for s in a.settings]
-    labels = [chr(ord("A") + i) for i in range(len(settings) + 1)]
+    labels = [chr(ord("A") + i) for i in range(2 if a.pairs else len(settings) + 1)]
     store = open_mel(a.cache)
     rows = [r for r in read_manifest(a.manifest) if r["sr"] and r.get("drop", "") == ""
             and (a.cache / "tokens" / f"{r['key']}.npz").exists() and store.has(r["key"])]
@@ -173,6 +228,12 @@ def build(a) -> int:
         star_rating = None
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
+    vocab = getattr(model, "style", None)
+    style_labels = read_style(a.style_csv) if a.style_csv.exists() else {}
+    if any(s["style"] for s in settings) and (vocab is None or not style_labels):
+        print("style settings need a model trained with --style and --style-csv",
+              file=sys.stderr)
+        return 2
     out = a.out or a.ckpt.parent / "playtest"
     pack = out / "pack"
     pack.mkdir(parents=True, exist_ok=True)
@@ -198,7 +259,7 @@ def build(a) -> int:
         metas = make_metas(tps, offset, len(z["tokens"]), sr)
         charts = [("human", decode(z["tokens"], metas))]
         mel = store.chart(row["key"], tps, offset, (len(z["tokens"]) + 1) * L)
-        for s in settings:
+        for s in [settings[(i - 1) % len(settings)]] if a.pairs else settings:
             tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=s["steps"],
                                    order=s["order"], mode=s["mode"], seed=a.seed + i,
                                    temperature=s["temperature"], refine=s["refine"],
@@ -207,7 +268,8 @@ def build(a) -> int:
                                    release_gap=a.release_gap, lanes=s["lanes"],
                                    spread=s["spread"], empty_bias=s["empty_bias"],
                                    forward_temperature=s["forward_temperature"],
-                                   jack_bias=s["jack_bias"])
+                                   jack_bias=s["jack_bias"], copy_bias=s["copy_bias"],
+                                   **style_args(s, vocab, style_labels.get(row["key"], {})))
             charts.append((s["name"], decode(tokens, make_metas(tps, offset, len(tokens), sr))))
 
         order = np.random.default_rng([a.seed, i]).permutation(len(charts))
@@ -227,16 +289,21 @@ def build(a) -> int:
                                 "key": row["key"], "path": row["path"], "sr_target": sr,
                                 "label": label, "source": source, "notes": len(chart.notes),
                                 "sr": round(star_rating(chart), 2) if star_rating else ""})
-                ratings.append({"song": song, "title": meta.get("Title", ""), "label": label,
-                                "rank": "", "human?": "", "comment": ""})
-        print(f"{song}  s={sr:.2f}  {row['path']}")
+                if not a.pairs:
+                    ratings.append({"song": song, "title": meta.get("Title", ""), "label": label,
+                                    "rank": "", "human?": "", "comment": ""})
+        if a.pairs:
+            ratings.append({"song": song, "title": meta.get("Title", ""), "human": "",
+                            "better": "", "comment": ""})
+        print(f"{song}  s={sr:.2f}  {row['path']}"
+              + (f"  vs {charts[1][0]}" if a.pairs else ""))
 
     with open(pack / "ratings.csv", "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=RATING_FIELDS)
+        w = csv.DictWriter(f, fieldnames=PAIR_FIELDS if a.pairs else RATING_FIELDS)
         w.writeheader()
         w.writerows(ratings)
-    (pack / "README.txt").write_text(README.format(n=len(labels), labels=", ".join(labels)),
-                                     encoding="utf-8")
+    readme = README_PAIRS if a.pairs else README.format(n=len(labels), labels=", ".join(labels))
+    (pack / "README.txt").write_text(readme, encoding="utf-8")
     with open(out / "answers.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(answers[0]))
         w.writeheader()
@@ -254,9 +321,60 @@ def read_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson interval of a proportion k / n."""
+    if n == 0:
+        return float("nan"), float("nan")
+    p, zz = k / n, z * z
+    mid = (p + zz / (2 * n)) / (1 + zz / n)
+    half = z * np.sqrt(p * (1 - p) / n + zz / (4 * n * n)) / (1 + zz / n)
+    return mid - half, mid + half
+
+
+def score_pairs(answers: list[dict], paths: list[Path]) -> int:
+    """--pairs packs: per AI setting, how often players took its chart for the human one
+    (50% = could not tell them apart) and how often they found it more fun (= counts half)."""
+    by_song: dict[str, dict[str, str]] = {}
+    for r in answers:
+        by_song.setdefault(r["song"], {})[r["label"]] = r["source"]
+    taken: dict[str, list[bool]] = {}
+    fun: dict[str, list[float]] = {}
+    players = []
+    for path in paths:
+        right = total = 0
+        for r in read_csv(path):
+            labels = by_song.get(r.get("song", ""), {})
+            ai = [lb for lb, src in labels.items() if src != "human"]
+            if len(labels) != 2 or len(ai) != 1:
+                continue
+            source = labels[ai[0]]
+            guess = r.get("human", "").strip().upper()
+            if guess in labels:
+                taken.setdefault(source, []).append(guess == ai[0])
+                total += 1
+                right += guess != ai[0]
+            pick = r.get("better", "").strip().upper()
+            if pick in labels or pick == "=":
+                fun.setdefault(source, []).append(0.5 if pick == "=" else float(pick == ai[0]))
+        players.append((path.stem, right, total))
+    print(f"{'AI chart':40s} {'pairs':>5s} {'taken for human [95% CI]':>26s} {'more fun':>8s}")
+    for source in sorted(set(taken) | set(fun)):
+        t, f = taken.get(source, []), fun.get(source, [])
+        lo, hi = wilson(sum(t), len(t))
+        share = f"{np.mean(t):.0%} [{lo:.0%}, {hi:.0%}]" if t else "-"
+        print(f"{source:40s} {len(t):5d} {share:>26s} {(f'{np.mean(f):.0%}' if f else '-'):>8s}")
+    print("taken for human 50% = players could not tell it from the human chart")
+    for who, right, total in players:
+        print(f"{who}: picked the human chart in {right}/{total} pairs")
+    return 0
+
+
 def score(paths: list[Path]) -> int:
     """answers.csv first, then one filled ratings.csv per player."""
-    truth = {(r["song"], r["label"]): r["source"] for r in read_csv(paths[0])}
+    answers = read_csv(paths[0])
+    if paths[1:] and "human" in (read_csv(paths[1])[:1] or [{}])[0]:
+        return score_pairs(answers, paths[1:])
+    truth = {(r["song"], r["label"]): r["source"] for r in answers}
     ranks: dict[str, list[float]] = {}
     human_votes: dict[str, list[int]] = {}
     guesses = []
@@ -290,9 +408,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--songs", type=int, default=8)
     ap.add_argument("--keys", nargs="+", default=None, help="pack these charts' songs instead")
     ap.add_argument("--settings", nargs="+", default=["random:128", "confidence:128"],
-                    help="AI charts per song: order:steps[:mode[:extras]], extras refN[@T], "
-                         "fwd[@T], spread, ebX joined by +")
+                    help="AI charts per song (--pairs: one per song, in turn): "
+                         "order:steps[:mode[:extras]], extras refN[@T], fwd[@T], spread, ebX, "
+                         "jbX, cpX joined by +")
+    ap.add_argument("--pairs", action="store_true",
+                    help="two charts per song: the human one and one AI chart, the --settings "
+                         "taking turns over the songs")
     ap.add_argument("--split", default="val")
+    ap.add_argument("--style-csv", type=Path, default=Path("data/style.csv"),
+                    help="genre and mapper per chart, for the style extra")
     ap.add_argument("--hold-bias", type=float, default=0.0,
                     help="log-scale bias on starting long notes; -1 roughly a third as many "
                          "start, -inf none (sampler.sample_window)")

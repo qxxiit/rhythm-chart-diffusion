@@ -502,6 +502,155 @@ low temperature) is the next probe line (`jack prob` at lane temperature 1 and
 0.5); meanwhile `--jack-bias` adds a log-score bonus for repeating the previous
 onset's lanes in both passes, to be set so that the jack rate meets the human one.
 
+### 2026-10-03 · Jack bias (60 val songs)
+
+`evaluate.py --per-song --n 60 --lanes forward --refine 2 --jack-bias 1` (and 2),
+paired against fwd + ref2 at 0.5 on the same 60 songs (`compare_runs.py`):
+
+| jack bias | jack | trill | stair | motion_pred | coverage | F1@50 | SR bias |
+|---|---|---|---|---|---|---|---|
+| 0 | 0.010 | 0.112 | 0.191 | 0.124 | 0.052 | 0.366 | +0.041 |
+| 1 | 0.022 (+0.012 [+0.007, +0.018]) | 0.118 | 0.195 | 0.099 (-0.025 [-0.031, -0.019]) | 0.038 | 0.371 | +0.051 |
+| 2 | 0.178 | 0.167 | 0.163 | 0.042 | 0.030 | 0.368 | +0.168 |
+| human | 0.055 | 0.160 | 0.193 | 0.129 | 0.046 | - | - |
+
+A bonus of 1 doubles the jacks (still 40% of the human rate) and costs a fifth of
+motion_pred; 2 puts jacks at three times the human rate, breaks the patterns and
+raises SR by 0.13 (jacks are hard). The jack shortfall is not one number away: no
+default bias; a playtest variant at most.
+
+### 2026-10-03 · Why trills break and bars do not repeat (240 val songs, rescored)
+
+Two complaints from the 10-03 playtests: long trills (fjfjfjfj... for bars) do not
+come, and pairs of phrases do not come back (a1 b1 c1 a2 b2 c2). New columns in
+`patterns.summarize`, computed for the saved charts with `scripts/rescore.py` (no
+new sampling): `lone_chord` (of the events inside a single-note stream, the share
+that are chords), `bar_rhythm_repeat` (bars with 4+ onsets whose rhythm, onset
+cells and chord sizes, equals an earlier bar's) and `bar_lane_repeat` (of those,
+the share whose lanes also equal such a bar's, as they are or mirrored). Same 240
+songs and charts as the 10-02/03 entry.
+
+| | T128 | ref2 at 0.5 | fwd + ref2 at 0.5 | human |
+|---|---|---|---|---|
+| lone_chord | 0.343 | 0.343 | 0.343 | 0.413 |
+| bar_rhythm_repeat | 0.122 | 0.122 | 0.122 | 0.435 |
+| bar_lane_repeat | 0.012 | 0.027 | 0.111 | 0.334 |
+| bars copied whole (product) | 0.1% | 0.3% | 1.4% | 14.5% |
+
+Single-note streams (consecutive single notes at one gap of at most a beat), share
+of all events in streams of at least 8 / 16 / 32 notes: sampled rhythm 4.9% / 1.7% /
+0.5%, human 7.8% / 3.6% / 2.1%. How streams of 8+ end: the next event a chord at
+the same gap 41% (human 61%), one note missing (twice the gap) 28% (12.5%), a
+faster note 20% (15%). Inside those streams, of two single-note moves in a row:
+trill 0.079 and stair 0.194 with fwd + ref2 (human 0.135 / 0.165; T128 0.187 /
+0.139). Strict single-note trill runs (period 2) hold 0.11% of events (human 0.32%),
+runs of 8+ 0.03% (0.20%); jumptrills 1.26% (0.66%).
+
+Human charts, all 240 val songs, 26,675 bars with 4+ onsets: 16.9% copy an earlier
+bar exactly or mirrored, 27.5% more repeat its rhythm only. The source is the
+earlier bar with the most similar audio (`structure.ssm_audio`) 71% of the time,
+among the 3 most similar 85%, the 5 most similar 90%; it lies a median of 16 bars
+back (within 2 bars: 15%). By the audio similarity of the most similar earlier
+bar, the share of bars that copy some earlier bar: below 0.3 3%, 0.5-0.6 11%,
+0.7-0.8 20%, 0.9 and up 42%.
+
+Readings:
+1. Chords do not cut the streams (the AI puts fewer chords in streams than the
+   human charts). Long trills fail twice: the sampled rhythm drops single notes
+   inside long streams (a run of independent draws; one miss ends the stream),
+   and on the streams that remain the lane passes choose stairs over trills.
+2. Whole-bar repetition is the largest gap measured so far, ten times: the
+   rhythm itself repeats a quarter as often as in human charts, so lane
+   refinement alone cannot close it.
+3. Where humans copy is predictable from the audio (top-3 similar earlier bars),
+   which a sampler move can use without training: `sampler.copy_bars` (next entry).
+
+### 2026-10-03 · Bar copies (`sampler.copy_bars`), first check (12 val songs, CPU)
+
+After the lane passes, every bar is offered a copy of an earlier bar: sources are
+the 3 earlier bars with the most similar audio, at least 0.5 (human copies: top-1
+71%, top-3 85%), with 4+ onset rows; the whole bar is copied (rhythm, lanes, long
+notes), as it is or mirrored. One forward pass with the bar MASK scores both: row
+by row, log P(that many onsets) under the model's cells (`onset_count_logp`).
+The first source in order of similarity whose score + `copy_bias` reaches the
+bar's own replaces it; its onset count must be within 15% of the bar's. Bars with
+a long note across an edge are left alone. Cost: one pass per bar with a source
+(about a quarter of the bars, under 1% of the passes of a song).
+
+Check: the copy pass on the saved fwd + ref2 charts of 12 val songs (`copy_calib`,
+full-v1 on CPU), against the same charts without it. F1 here is a token-level
+proxy (onsets within 2 cells of a human onset in the same lane), not F1@50.
+
+| copy_bias | bars copied | notes | F1 proxy | bar_rhythm_repeat | bar_lane_repeat | run length |
+|---|---|---|---|---|---|---|
+| none | - | 2180 | 0.437 | 0.061 | 0.084 | 6.67 |
+| 0 | 13.9% | -0.9% | -0.004 [-0.008, -0.000] | 0.188 | 0.750 | 6.51 |
+| 4 | 20.3% | -0.6% | -0.002 [-0.007, +0.002] | 0.249 | 0.862 | 5.75 |
+| 10 | 22.3% | -0.4% | -0.003 [-0.008, +0.002] | 0.266 | 0.882 | 5.45 |
+| human (240 songs) | - | - | - | 0.435 | 0.334 | 7.49 |
+
+Two scoring rules came first and were dropped: sum log p over the bar's cells,
+best source taken (23 songs: 21% of bars copied, notes -6%, F1 proxy -0.009), and
+the onset-count score with the best source taken (notes -5% at bias 0, -12% at
+4). With the bar MASK the model spreads a sure note over the four lanes, and the
+likeliest version is the one without the uncertain notes; taking the first
+source by audio similarity and guarding the onset count keeps the density.
+
+Readings: at bias 0 whole-bar copies go from 0.5% to 14% of bars (human 14.5%)
+at nearly the same notes and F1; higher biases copy more and shorten the runs
+(a copy does not continue the pattern across its edges). The rhythm repeats in
+19% of bars (human 43%): the rest of the human repetition is rhythm only, with
+new lanes. To check on 240 songs without sampling again: `evaluate.py
+--from-charts <fwd + ref2 run> --copy-bias 0` (and 4), minutes instead of hours.
+Off by default until then.
+
+### 2026-10-03 · full-v2: genre and mapper as inputs (prediction, written before the run)
+
+Why: mappers differ (1,146 made the train charts; 215 with 20+ train charts made
+74% of them) and the model's pattern rate is wrong by genre (pop: AI 0.047 vs human
+0.022). One model learns every style and the style-free distribution; sampling
+chooses.
+
+Setup: `build_style.py` -> data/style.csv (genre per set, mapper = the beatmap's
+user_id). Vocab from the train charts: 13 genres; the 215 mappers with 20+ charts,
+"other", and "no label". 555 of the 784 kept val charts (71%) are by a mapper in
+the vocab. Model: full-v1's D-32 plus a genre and a mapper embedding added to the
+s and b condition (+59k parameters, 6.93M). Condition dropout: both labels dropped
+with probability 0.1, then each with 0.1 (no label at all for 11% of chunks).
+Recipe exactly as full-v1 (60k steps, batch 16, lr 3e-4, fixed chunks, seed 0),
+from scratch: `train.py --steps 60000 --val-every 2000 --style data/style.csv
+--run full-v2`. Validation: val_ce with each chart's labels (best.pt), val_ce_null
+with none.
+
+Evaluation plan (240 val songs, fwd + ref2 at 0.5, compare_runs.py against
+full-v1's fwd + ref2): `--style oracle` (each chart's own genre and mapper) and
+`--style none`, `--by-genre`; then a pairs playtest (v1 against v2-oracle).
+
+Predictions:
+1. val CE: val_ce ends at 0.066-0.070 (full-v1: 0.072); val_ce_null within 0.002
+   of full-v1. Style mostly decides which lanes and how dense, which the masked CE
+   at high mask ratios carries, so the gain is largest at mask 0.7-0.9.
+2. `--style none` vs full-v1: no difference beyond noise (F1@50 within 0.003,
+   coverage within 0.005): dropout costs nothing.
+3. `--style oracle` vs full-v1: F1@50 +0.005 to +0.015, SR error -0.01 to -0.03,
+   density ratio closer to 1. The per-song distance to the human chart's pattern
+   numbers (|coverage - human|, |motion_pred - human|, |move_stair - human|) falls
+   by 10-30%.
+4. By genre: the over-patterned genres (pop, anime, rock) move at least half way
+   to their human coverage with `--style oracle`; electronic and video game change
+   little.
+5. The gains in 3 sit with the charts whose mapper is in the vocab (71%); "other"
+   charts gain only through the genre.
+6. Guidance (`--style-guidance 1-2`) widens the gap between styles but costs F1
+   (-0.005 or more) at twice the passes; not a default.
+7. The gaps of the 10-03 entry stay: bar_rhythm_repeat within 0.02 of full-v1's
+   0.122 and as few long single-note streams. They come from how the chart is
+   sampled, not from whose style it imitates.
+How it could fail: the model ignores the labels (val_ce = val_ce_null within
+0.001), because the audio already tells the genre and a mapper's charts are few;
+or a mapper stands for a difficulty band, and SR error moves instead of the
+patterns. Expected time: about 3.5 h on the MacBook (validation runs twice).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

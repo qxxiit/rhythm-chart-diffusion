@@ -480,3 +480,162 @@ def test_jack_bias_repeats_the_previous_lanes() -> None:
     rng = np.random.default_rng(0)
     assert _lane_sets([0, 1, 2, 3], 1, p_tap, 1 - p_tap, 0.0, rng) == (0,)
     assert _lane_sets([0, 1, 2, 3], 1, p_tap, 1 - p_tap, 0.0, rng, jack_bonus(song, 13, 3.0)) == (3,)
+
+
+def _bars_song(patterns: list[list[tuple[int, int]]]) -> np.ndarray:
+    """Whole bars of taps, (row in bar, lane) each, then PAD to two windows."""
+    from src.data.tokenizer import BAR
+    song = np.full((2 * L, K), PAD, dtype=np.int64)
+    song[:len(patterns) * BAR] = EMPTY
+    for b, taps in enumerate(patterns):
+        for row, lane in taps:
+            song[b * BAR + row, lane] = TAP
+    return song
+
+
+def test_copy_bars_takes_similar_sources_within_the_bias() -> None:
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, copy_bars
+    song = _bars_song([[(0, 0), (12, 1), (24, 2), (36, 3)], [(0, 3), (6, 1), (24, 0), (30, 2)],
+                       [(0, 1), (12, 2), (24, 1), (36, 2)], [(0, 2), (12, 0), (24, 3), (36, 1)]])
+    sims = np.eye(4)
+    sims[1, 0] = sims[0, 1] = 0.6
+    sims[2, 0] = sims[0, 2] = 0.9
+    sims[2, 1] = sims[1, 2] = 0.2
+    sims[3, :3] = sims[:3, 3] = 0.3                     # below COPY_MIN_SIM: no source
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))    # every version scores the same
+    frames = torch.zeros(len(song) * 4, 80)
+
+    def run(x, bias):
+        return copy_bars(uniform, x, frames, 3.0, lambda row0: 400.0, 4 * BAR, sims,
+                         copy_bias=bias)
+
+    strict = song.copy()
+    assert run(strict, -1.0) == 0 and np.array_equal(strict, song)  # must fit 1 nat better
+    before = STATS["copied_bars"]
+    out = song.copy()
+    assert run(out, 0.0) == 2 and STATS["copied_bars"] == before + 2  # as good: repeat
+    for b in (1, 2):                                    # bar 0 as it is (the first option)
+        assert np.array_equal(out[b * BAR:(b + 1) * BAR], song[:BAR])
+    assert np.array_equal(out[3 * BAR:], song[3 * BAR:])
+
+    held = song.copy()                                  # a long note across bars 1 | 2
+    held[2 * BAR - 2, 0], held[2 * BAR - 1, 0], held[2 * BAR, 0] = HOLD_START, HOLD_BODY, HOLD_END
+    assert run(held, 0.0) == 0
+    dense = song.copy()                                 # bar 0 twice as dense: no source
+    dense[[6, 18, 30, 42], [3, 0, 1, 2]] = TAP
+    assert run(dense, 0.0) == 0
+
+
+def test_copy_bars_prefers_the_rhythm_the_model_expects() -> None:
+    """Of two similar earlier bars, the one whose rhythm the model expects is copied, even
+    at bias 0; the lanes are not scored, and a sparse bar is not preferred for being sparse."""
+    from src.data.tokenizer import BAR
+    from src.models.sampler import copy_bars, onset_count_logp
+    on_beats = [(0, 0), (12, 1), (24, 2), (36, 3)]
+    song = _bars_song([on_beats, [(6, 0), (18, 1), (30, 2), (42, 3)],
+                       [(3, 1), (15, 1), (27, 2), (39, 0)]])
+    logits = torch.zeros(1, L, K, N_CLASSES)
+    logits[..., EMPTY] = 2.0                            # mostly nothing ...
+    for row, _ in on_beats:                             # ... but a note on each beat of bar 2
+        logits[0, 2 * BAR + row, :, EMPTY] = 0.0        # (the window starts at row 0)
+        logits[0, 2 * BAR + row, :, TAP] = 1.0
+    sims = np.array([[1.0, 0.2, 0.9], [0.2, 1.0, 0.8], [0.9, 0.8, 1.0]])
+    out = song.copy()
+    assert copy_bars(Fixed(logits), out, torch.zeros(len(song) * 4, 80), 3.0,
+                     lambda row0: 400.0, 3 * BAR, sims, copy_bias=0.0) == 1
+    assert np.array_equal(out[2 * BAR:3 * BAR], song[:BAR])
+    p = np.full((1, K), 0.25)                           # one sure note spread over 4 lanes
+    assert np.exp(onset_count_logp(p))[0].sum() == pytest.approx(1.0)
+    assert onset_count_logp(p)[0, 1] > onset_count_logp(np.full((1, K), 0.05))[0, 1]
+
+
+def test_copy_bars_leaves_a_song_the_model_knows() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import copy_bars
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    n_bars = stats.n_cells // BAR
+    out = song.copy()
+    copy_bars(Oracle(tokens), out, torch.as_tensor(mel[:len(song) * 4]), 3.0,
+              lambda row0: 400.0, stats.n_cells, np.ones((n_bars, n_bars)), copy_bias=1.0)
+    assert np.array_equal(out, song)
+
+
+def test_copy_bias_in_generate_song_copies_bars_of_repeated_audio() -> None:
+    from src.data.tokenizer import BAR
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    loop = np.random.default_rng(1).normal(size=(2 * BAR * 4, 80))      # two bars of audio
+    mel = np.tile(loop, (len(tokens) * L * 4 // len(loop) + 1, 1))      # bar b sounds as b - 2
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, 700)
+    plain = generate_song(*args, steps=6, seed=2, lanes="forward").reshape(-1, K)
+    copied = generate_song(*args, steps=6, seed=2, lanes="forward",
+                           copy_bias=1e6).reshape(-1, K)
+    assert len(grammar_violations(copied.reshape(-1, L, K))) == 0
+    onsets = np.isin(copied, (TAP, 2))
+    changed = [b for b in range(700 // BAR)
+               if not np.array_equal(plain[b * BAR:(b + 1) * BAR], copied[b * BAR:(b + 1) * BAR])]
+    assert changed
+    for b in changed:                                   # onsets never move in clean_holds
+        bar = onsets[b * BAR:(b + 1) * BAR]
+        assert any(np.array_equal(bar, onsets[a * BAR:(a + 1) * BAR])
+                   or np.array_equal(bar, onsets[a * BAR:(a + 1) * BAR, ::-1])
+                   for a in range(b - 2, -1, -2))
+
+
+STYLED = DenoiserConfig(d_model=64, lane_dim=16, n_layers=2, n_heads=2, d_ff=128,
+                        n_genres=3, n_mappers=4)
+
+
+def test_style_inputs_and_guidance() -> None:
+    from src.models.diffusion import Styled
+    torch.manual_seed(0)
+    model = Denoiser(STYLED).eval()
+    x0, mel, s, b = batch(n=2)
+    x = torch.where(x0 == PAD, x0, torch.full_like(x0, MASK))
+    with torch.no_grad():
+        free = model(x, mel, s, b)
+        null = model(x, mel, s, b, genre=torch.tensor([3, 3]), mapper=torch.tensor([4, 4]))
+        c = model(x, mel, s, b, genre=torch.tensor([1, 1]), mapper=torch.tensor([2, 2]))
+        assert torch.allclose(free, null)                   # None = the "no label" index
+        assert not torch.allclose(c, null)
+        assert torch.allclose(Styled(model, genre=1, mapper=2)(x, mel, s, b), c)
+        guided = Styled(model, genre=1, mapper=2, guidance=2.0)(x, mel, s, b)
+        assert torch.allclose(guided, c + 2.0 * (c - null), atol=1e-5)
+    with pytest.raises(ValueError):                         # a model without style inputs
+        Denoiser(TINY)(x, mel, s, b, genre=torch.tensor([0, 0]))
+    loss, _ = diffusion_loss(model, x0, mel, s, b, genre=torch.tensor([0, 3]),
+                             mapper=torch.tensor([4, 1]))
+    assert torch.isfinite(loss)
+
+
+def test_checkpoints_without_style_load(tmp_path) -> None:
+    from dataclasses import asdict
+
+    from src.models.diffusion import load_denoiser
+    config = asdict(TINY)
+    del config["n_genres"], config["n_mappers"]             # as full-v1 saved it
+    torch.save({"model": Denoiser(TINY).state_dict(), "config": config}, tmp_path / "v1.pt")
+    model = load_denoiser(tmp_path / "v1.pt")
+    assert model.style is None and model.config.n_genres == model.config.n_mappers == 0
+
+
+def test_generate_song_with_style_and_guidance() -> None:
+    from src.models.sampler import STATS
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(STYLED)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (mel, 3.0, chart.timing_points, metas[0].cell_offset, 400)
+    p0 = STATS["passes"]
+    plain = generate_song(model, *args, steps=6, seed=2)
+    p1 = STATS["passes"]
+    styled = generate_song(model, *args, steps=6, seed=2, genre=0, mapper=1, style_guidance=1.5)
+    p2 = STATS["passes"]
+    assert len(grammar_violations(styled)) == 0 and not np.array_equal(plain, styled)
+    assert p2 - p1 == 2 * (p1 - p0)                         # guidance: two passes for one
+    with pytest.raises(ValueError):
+        generate_song(Denoiser(TINY), *args, steps=6, genre=0)
