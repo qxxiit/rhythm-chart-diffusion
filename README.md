@@ -3,7 +3,7 @@
 > Discrete diffusion model for generating rhythm-game charts from audio.
 > POSTECH UGRP 2026. **Open source** from day one — contributions and feedback welcome.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 [![Status: Pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](MASTERPLAN.md)
@@ -49,7 +49,7 @@ Collection, extraction, and parsing are fully scripted and reproducible. Raw bea
 
 ### Requirements
 
-- Python ≥ 3.10
+- Python ≥ 3.11
 - PyTorch ≥ 2.0 (CUDA or MPS)
 - ~30 GB free disk space (`.osz` archives are discarded after extracting 4K charts and audio)
 - osu! API v2 credentials (`OSU_CLIENT_ID`, `OSU_CLIENT_SECRET`) — register an OAuth application at <https://osu.ppy.sh/home/account/edit>
