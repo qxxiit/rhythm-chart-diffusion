@@ -177,12 +177,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="forward passes per window; 0 = one cell per pass")
     ap.add_argument("--order", choices=list(ORDERS), default="random")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
-    ap.add_argument("--refine", type=int, default=0,
+    ap.add_argument("--refine", type=int, default=2,   # DECISIONS 2026-10-03
                     help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
     ap.add_argument("--lane-temp", type=float, default=0.5,
                     help="--lanes forward / --refine: temperature of the lane choice "
                          "(0 = most likely lanes)")
-    ap.add_argument("--lanes", choices=list(LANE_PASSES), default="sampled",
+    ap.add_argument("--lanes", choices=list(LANE_PASSES), default="forward",   # 2026-10-03
                     help="forward: choose every row's lanes again left to right with the "
                          "rhythm known (sampler.forward_lanes), before --refine")
     ap.add_argument("--spread", action="store_true",

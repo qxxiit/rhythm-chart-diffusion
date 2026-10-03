@@ -254,9 +254,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    assert list((tmp_path / "r" / "samples").glob("*_noisy2_T4_*.osu"))
+    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5_T4_*.osu"))
     import zipfile
-    osz = next((tmp_path / "r" / "samples").glob("*_noisy2_T4_*.osz"))
+    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5_T4_*.osz"))
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
@@ -345,7 +345,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                                "--batch-size", "4", "--device", "cpu"]) == 0
     probe = json.loads((tmp_path / "r" / "pattern_probe_train.json").read_text())
     assert set(probe) == {"full", "thin50", "thin90", "chance", "previous", "best of 8",
-                          "full (1 row)", "past+rhythm", "past", "chance (1 row)"}
+                          "full (1 row)", "past+rhythm", "past", "chance (1 row)",
+                          "move: jack", "move: step", "move: skip", "move: leap",
+                          "jack rate (human)", "jack rate (model)"}
     assert probe["full"]["rows"] == probe["chance"]["rows"] > 0
     assert probe["past"]["rows"] == probe["past+rhythm"]["rows"] == probe["full (1 row)"]["rows"]
     assert 0 < probe["past"]["rows"] <= probe["full"]["rows"]

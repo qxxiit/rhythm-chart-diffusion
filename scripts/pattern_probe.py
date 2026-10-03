@@ -32,6 +32,15 @@ One hidden row per chunk at a time (up to 8 rows per chunk, rows with at least
                   what sampler.forward_lanes gives the model
     past          everything after the row hidden: what --order block gives it
     chance (1 row) 1 / C(4, n) on these rows
+Single-tap rows right after a single tap (at most a beat earlier), by how the human
+chart moves there (full context; the rows of the first table):
+    move: jack / step / skip / leap   exact lane for moves of 0 / 1 / 2 / 3 lanes
+    jack rate (human / model)         how often the human row repeats the lane, and
+                                      how often the model's pick does (the lane passes
+                                      take the model's pick at temperature 0)
+Reading: a model pick rate far below the human rate means the model itself
+under-predicts jacks with the whole chart in view, so the lane passes inherit it.
+
 Reading: past+rhythm close to full (1 row) means the lanes can be chosen left to
 right without the later lanes, which sampling draws with little context
 (--lanes forward); far below it means the later lanes carry the pattern and
@@ -61,6 +70,16 @@ CONTEXTS = {"full": 0.0, "thin50": 0.5, "thin90": 0.9}
 ROUNDS = 8                                         # one-row contexts: rows per chunk
 PAST_MIN = 2 * BAR                                 # ... at least 2 bars into the chunk
 ROW_CONTEXTS = ("full (1 row)", "past+rhythm", "past")
+MOVE_KEYS = ("move: jack", "move: step", "move: skip", "move: leap")
+
+
+def previous_single(x0: np.ndarray, row: int) -> int | None:
+    """Lane of the onset row before `row` if it is a single tap at most a beat earlier."""
+    onset = np.isin(x0[:row], (TAP, HOLD_START))
+    rows = np.flatnonzero(onset.any(axis=1))
+    if len(rows) == 0 or row - rows[-1] > 12 or onset[rows[-1]].sum() != 1:
+        return None
+    return int(np.flatnonzero(onset[rows[-1]])[0])
 
 
 def probe_rows(x0: np.ndarray) -> np.ndarray:
@@ -117,6 +136,7 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
         return n, float(np.array_equal(pick, truth))
 
     stats |= {c: {} for c in (*ROW_CONTEXTS, "chance (1 row)")}
+    stats |= {c: {} for c in (*MOVE_KEYS, "jack rate (human)", "jack rate (model)")}
     gen = torch.Generator().manual_seed(seed)
     for bi, batch in enumerate(loader):
         if bi >= batches:
@@ -148,6 +168,13 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
                     pick = np.zeros(K, dtype=bool)
                     pick[np.argsort(-score[i, j])[:n]] = True
                     add(name, n, float(np.array_equal(pick, truth)))
+                    if name == "full" and n == 1:
+                        prev = previous_single(x0[i], j)
+                        if prev is not None:
+                            lane, guess = int(np.flatnonzero(truth)[0]), int(np.flatnonzero(pick)[0])
+                            add(MOVE_KEYS[abs(lane - prev)], 1, float(lane == guess))
+                            add("jack rate (human)", 1, float(lane == prev))
+                            add("jack rate (model)", 1, float(guess == prev))
 
         # one row per chunk at a time (own generator: the numbers above stay as they were)
         pick_rng = np.random.default_rng([seed, bi])
@@ -206,14 +233,19 @@ def main(argv: list[str] | None = None) -> int:
               + f" {d['all']:7.3f}")
 
     one_row = (*ROW_CONTEXTS, "chance (1 row)")
+    moves = (*MOVE_KEYS, "jack rate (human)", "jack rate (model)")
     for name, d in res.items():
-        if name not in one_row:
+        if name not in one_row and name not in moves:
             line(name, d)
     print(f"  rows probed: {res['full']['rows']:,} per context")
     print(f"  one hidden row per chunk at a time, rows {PAST_MIN}+ of the chunk:")
     for name in one_row:
         line(name, res[name])
     print(f"  rows probed: {res['past']['rows']:,} per context")
+    print("  single taps after a single tap, full context, by the human move:")
+    for name in (*MOVE_KEYS, "jack rate (human)", "jack rate (model)"):
+        d = res[name]
+        print(f"  {name:18s} {d.get(1, float('nan')):7.3f}   ({d['rows']:,} rows)")
     out = a.ckpt.parent / f"pattern_probe_{a.split}.json"
     out.write_text(json.dumps({k: {str(n): round(v, 4) for n, v in d.items()}
                                for k, d in res.items()}, indent=1))

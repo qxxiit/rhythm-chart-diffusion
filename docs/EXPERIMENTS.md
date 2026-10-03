@@ -5,6 +5,7 @@
 
 | Date | Run ID | Phase | Model | Key Config | Val F1 | Test F1 | wandb | Notes |
 |------|--------|-------|-------|------------|--------|---------|-------|-------|
+| 2026-10-03 | full-v1 + lane passes | 2 | D-32, 6.87M, audio_add | sampler: random T128, then forward_lanes and refine_lanes 2 at lane temperature 0.5 (no training) | F1@50 0.373 (240 val songs) | - | - | pattern coverage 0.047 (human 0.042), runs 7.6 (7.5), motion_pred 0.122 (0.132); jacks a quarter of the human rate |
 | 2026-09-29 | full-v1 | 2 | D-32, 6.87M, audio_add | all train songs (16,410 charts, 218,142 chunks), 60k steps (4.4 epochs), batch 16, MPS, ~3 h | F1@50 0.373 (240 val songs, random T128) | - | - | val CE 0.072; vs subset: F1 same, SR error 0.375→0.236, rho at the human level, pattern coverage still 2x chance; sampler fixed to random T128 |
 | 2026-09-27 | subset600-v1 | 2 | D-32, 6.87M, audio_add | 600 train songs (2,110 charts, 28,004 chunks), 20k steps, batch 16, MPS, 1 h | F1@50 0.37 (240 val songs, every sampler) | - | - | val CE 0.087, no overfitting; sampler moves density 0.81-1.16; without audio onset CE +79% |
 | 2026-09-26 | 20260926-060904 | 2 | D-32, 6.87M, audio_add | `--overfit 10`, fake mel, 3000 steps, batch 16, MPS | - | - | - | Plumbing check; sampler order matters (see Phase 2) |
@@ -433,6 +434,63 @@ ref2 again (for the move kinds); fwd + ref2; fwd at lane temperature 1 + ref2 at
 0.5 (`--forward-temp 1`: motifs chosen at the model's own spread, polished at
 0.5); ref4; fwd alone. Spread, block and the sequential ceiling move to the next
 night.
+
+### 2026-10-02/03 · Lane passes on 240 val songs (overnight)
+
+`pattern_probe.py` (one hidden row per chunk, rows 96+, 5,400 rows per context):
+
+| context | 1 tap | 2 taps | 3 taps | all |
+|---|---|---|---|---|
+| full (1 row) | 0.795 | 0.742 | 0.782 | 0.779 |
+| past+rhythm | 0.593 | 0.588 | 0.715 | 0.599 |
+| past | 0.563 | 0.582 | 0.718 | 0.578 |
+
+Hiding the later lanes costs 0.18 (to the thin50 level); the later empty rows
+add only 0.02; single taps lose the most (0.80 → 0.59), 3-tap chords little.
+Human lanes are chosen with the later notes in view, so the left-to-right pass
+alone chooses each lane at about the 0.6 level: it is a starting point for
+`refine_lanes`, not a replacement (the decision rule of the 10-02 entry).
+
+`evaluate.py --per-song --n 0`, random T128, the same 240 songs and charts; paired
+differences against T128 (`compare_runs.py`), 95% intervals:
+
+| setting | coverage (/ chance) | run length | motion_pred | stair | trill | jack | leap | SR error | s / song |
+|---|---|---|---|---|---|---|---|---|---|
+| T128 (`_s0`, same charts as 10-01) | 0.0093 (2.0) | 4.76 | 0.050 | 0.160 | 0.206 | 0.047 | 0.127 | 0.237 | 31 |
+| ref2 at 0.5 (`_s0`) | 0.0194 (4.2) | 5.75 | 0.091 | 0.184 | 0.139 | 0.012 | 0.122 | 0.229 | 35 |
+| fwd + ref2 at 0.5 | **0.0465 (10.2)** | **7.61** | **0.122** | 0.192 | 0.112 | 0.011 | 0.143 | **0.226** | 48 |
+| fwd at 1 + ref2 at 0.5 | 0.0267 (5.8) | 6.59 | 0.099 | 0.187 | 0.128 | 0.012 | 0.133 | 0.227 | 48 |
+| fwd + ref2 at 1 | 0.0223 (4.9) | 6.19 | 0.082 | 0.183 | 0.143 | 0.021 | 0.136 | 0.230 | 48 |
+| human charts | 0.0422 (6.7) | 7.49 | 0.132 | 0.211 | 0.153 | 0.044 | 0.122 | - | - |
+
+fwd + ref2 at 0.5 against T128: coverage +0.037 [+0.031, +0.043] (up in 81% of
+songs, down in 6%), run length +2.85 [+2.30, +3.37], motion_pred +0.072 [+0.068,
++0.076] (up in every song), SR error -0.010 [-0.017, -0.003], F1@50 +0.001
+[-0.002, +0.003], rho_in +0.007 [-0.001, +0.014]. Against ref2 alone it more than
+doubles coverage and adds 0.031 motion_pred. Gains hold in every grade (largest
+in coverage for Easy, in motion_pred for Insane and up).
+
+Readings:
+1. Pattern clarity reached the human level: coverage 0.047 against 0.042, runs
+   7.6 against 7.5 events, motion_pred 92% of the human value, F1 unchanged and
+   SR error lower. Coverage over chance is above the human ratio only because the
+   sampled rhythm has a lower chance level.
+2. Temperature is not the variety lever: lane temperature 1 for the forward pass
+   (or both passes) gives back little (trills 0.11 → 0.13-0.14, jacks 0.011 →
+   0.012-0.021) and loses much of the clarity.
+3. Variety is what is left. Jacks: the sampled charts have the human rate (0.047),
+   refinement alone takes it to 0.012, a quarter of the human 0.044, and the
+   forward pass adds nothing to that. Trill moves fall below the human rate
+   (0.11 against 0.15) while exact trill runs reach twice it (coverage_p2 0.018
+   against 0.010): short back-and-forth disappears, a started trill runs long.
+4. Cost: the lane passes take forward passes from 2,665 to 4,187 per song (+57%);
+   one 240-song evaluation is 2 h (T128) or 3.2 h (with both passes) on the MacBook.
+
+Next: `pattern_probe.py` now splits single-tap rows by the human move and compares
+the human jack rate with the model's pick (`jack rate`): whether the model
+under-predicts jacks with the whole chart visible (then the lane passes inherit
+it, and the fix is in the scoring or training) or the passes lose them some
+other way. Playtests (Oct 7) with fwd + ref2 at 0.5.
 
 ## Phase 3 Ablation A: Diffusion Design
 

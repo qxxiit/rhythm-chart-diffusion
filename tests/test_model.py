@@ -456,3 +456,15 @@ def test_probe_hides_what_forward_lanes_hides() -> None:
         assert np.array_equal(view[row + 1:] == MASK, cells[row + 1:])
         past = one_row_view(x0, row, "past")
         assert np.all(past[row:][x0[row:] != PAD] == MASK) and np.array_equal(past[:row], x0[:row])
+
+
+def test_previous_single_tap() -> None:
+    from scripts.pattern_probe import previous_single
+    x = np.full((L, K), EMPTY, dtype=np.int64)
+    x[10, 2] = TAP
+    assert previous_single(x, 13) == 2 and previous_single(x, 22) == 2
+    assert previous_single(x, 23) is None                  # more than a beat later
+    x[12, 0] = 2                                           # a hold start counts as an onset
+    assert previous_single(x, 14) == 0
+    x[12, 1] = TAP                                         # a chord is not a single tap
+    assert previous_single(x, 14) is None and previous_single(x, 5) is None

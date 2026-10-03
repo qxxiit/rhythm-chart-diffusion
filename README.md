@@ -121,10 +121,10 @@ The cache layout is in `src/data/cache.py`. Not implemented: the AR baselines (o
 python scripts/generate.py --audio "song.mp3" --sr 2 3.5 5          # tempo and offset estimated
 python scripts/generate.py --audio "song.mp3" --bpm 174 --offset 1234 --sr 3.5
 python scripts/generate.py --audio "song.mp3" --timing timed.osu --sr 3.5   # red lines of an .osu
-python scripts/generate.py --audio "song.mp3" --sr 3.5 --refine 2   # lanes chosen again: clearer patterns
+python scripts/generate.py --audio "song.mp3" --sr 3.5 --lanes sampled --refine 0   # raw sampler output
 ```
 
-Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). `--refine 2` re-chooses the lanes after sampling with the whole chart in view, which doubled pattern clarity on the val songs (EXPERIMENTS 2026-10-02); `--lanes forward` adds a left-to-right pass before it (being compared). The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.
+Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). By default the lanes are chosen again after sampling (`--lanes forward --refine 2`): a left-to-right pass, then two sweeps with the whole chart in view, which brought pattern clarity on the val songs to the human level (EXPERIMENTS 2026-10-02/03) at about 1.6x the time. The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.
 
 ## Repository Structure
 
