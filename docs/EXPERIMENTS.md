@@ -492,6 +492,16 @@ under-predicts jacks with the whole chart visible (then the lane passes inherit
 it, and the fix is in the scoring or training) or the passes lose them some
 other way. Playtests (Oct 7) with fwd + ref2 at 0.5.
 
+Answer (`pattern_probe.py`, 800 val chunks, single taps after a single tap at
+most a beat earlier, full context): exact lane 0.124 where the human chart
+jacks (516 rows), against 0.858 / 0.778 / 0.729 for moves of 1 / 2 / 3 lanes;
+the human rows repeat the lane 3.6% of the time, the model's best lane 0.7%. The
+model under-picks jacks with the whole chart in view and the lane passes inherit
+it. Whether its probabilities are low (the model) or only rarely the largest (the
+low temperature) is the next probe line (`jack prob` at lane temperature 1 and
+0.5); meanwhile `--jack-bias` adds a log-score bonus for repeating the previous
+onset's lanes in both passes, to be set so that the jack rate meets the human one.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

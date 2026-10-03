@@ -189,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="cells opened together come from different beats (block: rows)")
     ap.add_argument("--forward-temp", type=float, default=None,
                     help="--lanes forward: its own lane temperature (default: --lane-temp)")
+    ap.add_argument("--jack-bias", type=float, default=0.0,
+                    help="lane passes: log-score bonus for repeating the previous onset's lanes")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -252,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-ref{a.refine}t{a.lane_temp:g}"
     if a.empty_bias:
         order += f"-eb{a.empty_bias:g}"
+    if a.jack_bias:
+        order += f"-jb{a.jack_bias:g}"
     written = []
     for sr in a.sr:
         tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
@@ -260,7 +264,8 @@ def main(argv: list[str] | None = None) -> int:
                                lane_temperature=a.lane_temp,
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
-                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp)
+                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
+                           jack_bias=a.jack_bias)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name

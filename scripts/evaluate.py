@@ -147,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
                          "start, -inf none (sampler.sample_window)")
     ap.add_argument("--forward-temp", type=float, default=None,
                     help="--lanes forward: its own lane temperature (default: --lane-temp)")
+    ap.add_argument("--jack-bias", type=float, default=0.0,
+                    help="lane passes: log-score bonus for repeating the previous onset's lanes")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--min-hold", type=int, default=None,
@@ -194,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_hb{a.hold_bias:g}"
     if a.empty_bias:
         tag += f"_eb{a.empty_bias:g}"
+    if a.jack_bias:
+        tag += f"_jb{a.jack_bias:g}"
     if a.min_hold is not None or a.release_gap is not None:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
@@ -216,7 +220,8 @@ def main(argv: list[str] | None = None) -> int:
                                lane_temperature=a.lane_temp,
                                hold_bias=a.hold_bias, min_hold=a.min_hold,
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
-                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp)
+                               empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
+                               jack_bias=a.jack_bias)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
         charts[r["key"]] = tokens
@@ -250,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
                "steps": a.steps, "spread": a.spread, "lanes": a.lanes, "refine": a.refine,
-               "hold_bias": a.hold_bias, "empty_bias": a.empty_bias,
+               "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,
                "forward_temp": fwd_temp if a.lanes == "forward" else None,

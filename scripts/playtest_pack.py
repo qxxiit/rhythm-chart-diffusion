@@ -89,7 +89,7 @@ def parse_setting(text: str) -> dict:
     mode = parts[2] if len(parts) > 2 else "continue"
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode in {text!r}")
-    refine, lane_temp, lanes, spread, empty_bias = 0, 0.5, "sampled", False, 0.0
+    refine, lane_temp, lanes, spread, empty_bias, jack_bias = 0, 0.5, "sampled", False, 0.0, 0.0
     fwd_temp = None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
@@ -103,8 +103,10 @@ def parse_setting(text: str) -> dict:
             spread = True
         elif head.startswith("eb") and not t:
             empty_bias = float(head[2:])
+        elif head.startswith("jb") and not t:
+            jack_bias = float(head[2:])
         else:
-            raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX")
+            raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, jbX")
     if lanes == "forward" and not refine and fwd_temp is not None:
         lane_temp, fwd_temp = fwd_temp, None              # one lane pass: one temperature
     if fwd_temp == lane_temp:
@@ -113,11 +115,13 @@ def parse_setting(text: str) -> dict:
               else []) + ([f"ref{refine}"] if refine else [])
     if passes and not passes[-1].startswith("fwd@"):    # the lane temperature on the last pass
         passes[-1] += f"@{lane_temp:g}"
-    extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else [])
+    extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else []) \
+        + ([f"jb{jack_bias:g}"] if jack_bias else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
-            "empty_bias": empty_bias, "forward_temperature": fwd_temp, "name": name_}
+            "empty_bias": empty_bias, "forward_temperature": fwd_temp, "jack_bias": jack_bias,
+            "name": name_}
 
 
 def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float) -> list[dict]:
@@ -202,7 +206,8 @@ def build(a) -> int:
                                    hold_bias=a.hold_bias, min_hold=a.min_hold,
                                    release_gap=a.release_gap, lanes=s["lanes"],
                                    spread=s["spread"], empty_bias=s["empty_bias"],
-                                   forward_temperature=s["forward_temperature"])
+                                   forward_temperature=s["forward_temperature"],
+                                   jack_bias=s["jack_bias"])
             charts.append((s["name"], decode(tokens, make_metas(tps, offset, len(tokens), sr))))
 
         order = np.random.default_rng([a.seed, i]).permutation(len(charts))

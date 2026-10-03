@@ -38,6 +38,12 @@ chart moves there (full context; the rows of the first table):
     jack rate (human / model)         how often the human row repeats the lane, and
                                       how often the model's pick does (the lane passes
                                       take the model's pick at temperature 0)
+    jack prob (t=1 / t=0.5)           the mean probability the lane choice gives the
+                                      jack lane at lane temperature 1 / 0.5: what the
+                                      passes would draw. At t=1 close to the human
+                                      rate: the model is calibrated and the low
+                                      temperature loses the jacks; far below: the
+                                      model itself under-rates them
 Reading: a model pick rate far below the human rate means the model itself
 under-predicts jacks with the whole chart in view, so the lane passes inherit it.
 
@@ -71,6 +77,7 @@ ROUNDS = 8                                         # one-row contexts: rows per 
 PAST_MIN = 2 * BAR                                 # ... at least 2 bars into the chunk
 ROW_CONTEXTS = ("full (1 row)", "past+rhythm", "past")
 MOVE_KEYS = ("move: jack", "move: step", "move: skip", "move: leap")
+JACK_KEYS = ("jack rate (human)", "jack rate (model)", "jack prob (t=1)", "jack prob (t=0.5)")
 
 
 def previous_single(x0: np.ndarray, row: int) -> int | None:
@@ -136,7 +143,7 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
         return n, float(np.array_equal(pick, truth))
 
     stats |= {c: {} for c in (*ROW_CONTEXTS, "chance (1 row)")}
-    stats |= {c: {} for c in (*MOVE_KEYS, "jack rate (human)", "jack rate (model)")}
+    stats |= {c: {} for c in (*MOVE_KEYS, *JACK_KEYS)}
     gen = torch.Generator().manual_seed(seed)
     for bi, batch in enumerate(loader):
         if bi >= batches:
@@ -175,6 +182,10 @@ def run(model, loader, device, batches: int, seed: int) -> dict:
                             add(MOVE_KEYS[abs(lane - prev)], 1, float(lane == guess))
                             add("jack rate (human)", 1, float(lane == prev))
                             add("jack rate (model)", 1, float(guess == prev))
+                            sc = score[i, j] - score[i, j].max()
+                            for key, t in (("jack prob (t=1)", 1.0), ("jack prob (t=0.5)", 0.5)):
+                                w = np.exp(sc / t)
+                                add(key, 1, float(w[prev] / w.sum()))
 
         # one row per chunk at a time (own generator: the numbers above stay as they were)
         pick_rng = np.random.default_rng([seed, bi])
@@ -233,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
               + f" {d['all']:7.3f}")
 
     one_row = (*ROW_CONTEXTS, "chance (1 row)")
-    moves = (*MOVE_KEYS, "jack rate (human)", "jack rate (model)")
+    moves = (*MOVE_KEYS, *JACK_KEYS)
     for name, d in res.items():
         if name not in one_row and name not in moves:
             line(name, d)
@@ -243,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         line(name, res[name])
     print(f"  rows probed: {res['past']['rows']:,} per context")
     print("  single taps after a single tap, full context, by the human move:")
-    for name in (*MOVE_KEYS, "jack rate (human)", "jack rate (model)"):
+    for name in (*MOVE_KEYS, *JACK_KEYS):
         d = res[name]
         print(f"  {name:18s} {d.get(1, float('nan')):7.3f}   ({d['rows']:,} rows)")
     out = a.ckpt.parent / f"pattern_probe_{a.split}.json"

@@ -347,7 +347,8 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert set(probe) == {"full", "thin50", "thin90", "chance", "previous", "best of 8",
                           "full (1 row)", "past+rhythm", "past", "chance (1 row)",
                           "move: jack", "move: step", "move: skip", "move: leap",
-                          "jack rate (human)", "jack rate (model)"}
+                          "jack rate (human)", "jack rate (model)", "jack prob (t=1)",
+                          "jack prob (t=0.5)"}
     assert probe["full"]["rows"] == probe["chance"]["rows"] > 0
     assert probe["past"]["rows"] == probe["past+rhythm"]["rows"] == probe["full (1 row)"]["rows"]
     assert 0 < probe["past"]["rows"] <= probe["full"]["rows"]

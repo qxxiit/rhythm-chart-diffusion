@@ -468,3 +468,15 @@ def test_previous_single_tap() -> None:
     assert previous_single(x, 14) == 0
     x[12, 1] = TAP                                         # a chord is not a single tap
     assert previous_single(x, 14) is None and previous_single(x, 5) is None
+
+
+def test_jack_bias_repeats_the_previous_lanes() -> None:
+    from src.models.sampler import _lane_sets, jack_bonus
+    song = np.full((40, K), EMPTY, dtype=np.int64)
+    song[10, 3] = TAP
+    assert jack_bonus(song, 13, 0.0) is None and jack_bonus(song, 30, 1.0) is None
+    assert list(jack_bonus(song, 13, 1.5)) == [0, 0, 0, 1.5]
+    p_tap = np.array([0.5, 0.2, 0.2, 0.1])
+    rng = np.random.default_rng(0)
+    assert _lane_sets([0, 1, 2, 3], 1, p_tap, 1 - p_tap, 0.0, rng) == (0,)
+    assert _lane_sets([0, 1, 2, 3], 1, p_tap, 1 - p_tap, 0.0, rng, jack_bonus(song, 13, 3.0)) == (3,)
