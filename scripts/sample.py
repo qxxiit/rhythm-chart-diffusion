@@ -3,6 +3,7 @@
     python scripts/sample.py --ckpt outputs/<run>/best.pt --key <manifest key>
     python scripts/sample.py --ckpt ... --key ... --sr 4.5 --steps 64 --order confidence
     python scripts/sample.py --ckpt outputs/full-v2/best.pt --key ... --style oracle
+    python scripts/sample.py --ckpt outputs/full-v4/best.pt --key ... --stats oracle
 
 Uses the song's cached mel and its real timing (BPM and offset are given,
 design doc §4.4) and writes <ckpt dir>/samples/<key>_....osu that refers to the
@@ -24,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
+from src.data import chartstats
 from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections, parse_osu
 from src.data.chart_writer import write_osu
@@ -31,7 +33,7 @@ from src.data.mel import open_mel
 from src.data.style import encode, read_style
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, ORDERS, generate_song, steps_name
+from src.models.sampler import LANE_PASSES, LOUD_SIDES, ORDERS, generate_song, steps_name
 
 
 def onset_match(pred: np.ndarray, real: np.ndarray) -> tuple[float, float]:
@@ -74,7 +76,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="decide tap or long note and the release again with the whole chart "
                          "in view (sampler.refine_holds)")
     ap.add_argument("--loud-bias", type=float, default=0.0,
-                    help="fewer notes in quiet bars, more in loud ones (sampler.loudness_bias)")
+                    help="fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
+                    help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
                     help="this share of the onsets become long notes, where the model expects "
                          "them most (0: no long notes; implies --refine-holds)")
@@ -102,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--style-csv", type=Path, default=Path("data/style.csv"))
     ap.add_argument("--style-guidance", type=float, default=0.0,
                     help="--style oracle: classifier-free guidance weight")
+    ap.add_argument("--stats", default=None,
+                    help="chart stats (model trained with --chart-stats): oracle (this chart's "
+                         "own), or values like ln=0.4,jack=0.05,trill=0.15")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
     if a.no_copy:
@@ -132,6 +139,22 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         genre, mapper = encode(vocab, label.get("genre_id"), label.get("mapper_id"))
         style = {"genre": genre, "mapper": mapper, "style_guidance": a.style_guidance}
+    buckets = None
+    if a.stats is not None:
+        spec = getattr(model, "chart_stats", None)
+        if spec is None:
+            print("--stats needs a model trained with --chart-stats", file=sys.stderr)
+            return 2
+        try:
+            wanted = (chartstats.chart_stats(z["tokens"].reshape(-1, z["tokens"].shape[-1])
+                                             [:n_cells])
+                      if a.stats == "oracle" else chartstats.parse(a.stats))
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        buckets = chartstats.encode(spec, wanted)
+        print("chart stats: " + ", ".join(f"{chartstats.SHORT[n]} {v:.3f}"
+                                          for n, v in wanted.items()))
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                            order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
@@ -140,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
                            empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                            jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
-                           **style)
+                           loud_side=a.loud_side, stats=buckets, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -161,13 +184,16 @@ def main(argv: list[str] | None = None) -> int:
     if a.jack_bias:
         order += f"-jb{a.jack_bias:g}"
     if a.loud_bias:
-        order += f"-lb{a.loud_bias:g}"
+        order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
     if style:
         order += "-style" + (f"-sg{a.style_guidance:g}" if a.style_guidance else "")
+    if a.stats is not None:
+        order += "-st" + "".join(ch for ch in a.stats.replace("=", "").replace(",", "")
+                                 if ch.isalnum() or ch in ".-")
     steps = steps_name(a.steps)
     out = out_dir / f"{a.key}_{a.mode}_{order}_T{steps}_s{sr:.2f}.osu"
     write_osu(out, chart, title=meta.get("Title", ""), artist=meta.get("Artist", ""),

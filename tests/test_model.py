@@ -617,10 +617,12 @@ def test_checkpoints_without_style_load(tmp_path) -> None:
 
     from src.models.diffusion import load_denoiser
     config = asdict(TINY)
-    del config["n_genres"], config["n_mappers"]             # as full-v1 saved it
+    for k in ("n_genres", "n_mappers", "n_stats", "stat_bins"):    # as full-v1 saved it
+        del config[k]
     torch.save({"model": Denoiser(TINY).state_dict(), "config": config}, tmp_path / "v1.pt")
     model = load_denoiser(tmp_path / "v1.pt")
     assert model.style is None and model.config.n_genres == model.config.n_mappers == 0
+    assert model.chart_stats is None and model.config.n_stats == 0
 
 
 def test_generate_song_with_style_and_guidance() -> None:
@@ -689,9 +691,13 @@ def test_loudness_bias_thins_quiet_bars() -> None:
     mel = np.zeros((8 * BAR * 4, 80))
     mel[:4 * BAR * 4] = -1.0                                        # four quiet bars, four loud
     mel[4 * BAR * 4:] = 1.0
-    bias = loudness_bias(mel, 8 * BAR, 9 * BAR, 0.5)
+    bias = loudness_bias(mel, 8 * BAR, 9 * BAR, 0.5, side="both")
     assert np.all(bias[:4 * BAR] > 0) and np.all(bias[4 * BAR:8 * BAR] < 0)
     assert np.all(bias[8 * BAR:] == 0) and not loudness_bias(mel, 8 * BAR, 9 * BAR, 0.0).any()
+    quiet = loudness_bias(mel, 8 * BAR, 9 * BAR, 0.5)          # default: quiet bars only
+    assert np.allclose(quiet[:4 * BAR], bias[:4 * BAR]) and not quiet[4 * BAR:].any()
+    with pytest.raises(ValueError):
+        loudness_bias(mel, 8 * BAR, 9 * BAR, 0.5, side="loud")
     chart, tokens, metas, _, _ = song_fixture()
     torch.manual_seed(0)
     model = Denoiser(TINY)
@@ -704,6 +710,64 @@ def test_loudness_bias_thins_quiet_bars() -> None:
         return int(np.isin(x[:4 * BAR], (TAP, 2)).sum())
 
     assert quiet_onsets(loud_bias=2.0) < quiet_onsets()
+    assert quiet_onsets(loud_bias=2.0, loud_side="both") < quiet_onsets()
+
+
+STATS_CFG = DenoiserConfig(d_model=64, lane_dim=16, n_layers=2, n_heads=2, d_ff=128,
+                           n_stats=3, stat_bins=4)
+
+
+def test_chart_stat_inputs_and_guidance() -> None:
+    from src.models.diffusion import Styled
+    torch.manual_seed(0)
+    model = Denoiser(STATS_CFG).eval()
+    nn.init.normal_(model.stat_emb.weight, std=1.0)          # make the inputs matter
+    x0, mel, s, b = batch(n=2)
+    x = torch.where(x0 == PAD, x0, torch.full_like(x0, MASK))
+    with torch.no_grad():
+        free = model(x, mel, s, b)
+        null = model(x, mel, s, b, stats=torch.full((2, 3), 4))
+        c = model(x, mel, s, b, stats=torch.tensor([[0, 1, 2], [0, 1, 2]]))
+        other = model(x, mel, s, b, stats=torch.tensor([[3, 1, 2], [3, 1, 2]]))
+        assert torch.allclose(free, null)                     # None = every stat's null bucket
+        assert not torch.allclose(c, null) and not torch.allclose(c, other)
+        assert torch.allclose(Styled(model, stats=(0, 1, 2))(x, mel, s, b), c)
+        guided = Styled(model, stats=(0, 1, 2), guidance=1.5)(x, mel, s, b)
+        assert torch.allclose(guided, c + 1.5 * (c - null), atol=1e-5)
+    with pytest.raises(ValueError):                           # a model without chart stats
+        Denoiser(TINY)(x, mel, s, b, stats=torch.zeros(2, 3, dtype=torch.long))
+    with pytest.raises(ValueError):
+        Styled(Denoiser(TINY), stats=(0, 1, 2))
+    with pytest.raises(ValueError):
+        Styled(model, stats=(0, 1))                           # one bucket per stat
+    loss, _ = diffusion_loss(model, x0, mel, s, b, stats=torch.tensor([[0, 4, 2], [4, 4, 4]]))
+    assert torch.isfinite(loss)
+
+
+def test_generate_song_with_chart_stats() -> None:
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(STATS_CFG)
+    nn.init.normal_(model.stat_emb.weight, std=1.0)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (mel, 3.0, chart.timing_points, metas[0].cell_offset, 400)
+    plain = generate_song(model, *args, steps=6, seed=2)
+    asked = generate_song(model, *args, steps=6, seed=2, stats=(3, 0, 1))
+    assert len(grammar_violations(asked)) == 0 and not np.array_equal(plain, asked)
+    assert np.array_equal(plain, generate_song(model, *args, steps=6, seed=2, stats=None))
+    with pytest.raises(ValueError):
+        generate_song(Denoiser(TINY), *args, steps=6, stats=(0, 0, 0))
+
+
+def test_drop_stats() -> None:
+    from scripts.train import drop_stats
+    torch.manual_seed(0)
+    stats = torch.zeros(4000, 3, dtype=torch.long)
+    out = drop_stats(stats, 8, 0.2)
+    dropped = (out == 8).float()
+    assert abs(dropped.mean().item() - (0.2 + 0.8 * 0.2)) < 0.02     # all with p, then each
+    assert abs((dropped.sum(1) == 3).float().mean().item() - (0.2 + 0.8 * 0.2 ** 3)) < 0.02
+    assert torch.equal(drop_stats(stats, 8, 0.0), stats)
 
 
 def test_release_on_onset() -> None:

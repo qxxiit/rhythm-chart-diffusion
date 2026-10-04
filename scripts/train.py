@@ -4,6 +4,8 @@
     python scripts/train.py --steps 50000 --batch-size 32     # full run on the train split
     python scripts/train.py --resume outputs/<run>/last.pt    # continue after an interruption
     python scripts/train.py --steps 60000 --val-every 2000 --style data/style.csv --run full-v2
+    python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
+        --chart-stats data/chart_stats.csv --run full-v4
 
 Reads data/manifest.csv and data/cache (tokens + log-Mel, layout in src/data/cache.py).
 --fake-mel reads the plumbing-only mel that encodes the answer instead (never report it).
@@ -18,6 +20,12 @@ checkpoint. In training, with probability --style-drop both labels are dropped
 so the model also learns the style-free distribution (classifier-free guidance,
 sampler). Validation reports val_ce with the charts' own labels and val_ce_null
 without any; best.pt follows val_ce.
+
+--chart-stats data/chart_stats.csv (scripts/build_chart_stats.py) adds the chart's own
+long-note share, jack rate and trill rate as inputs (src/data/chartstats.py), as
+quantile buckets of the train charts (the edges are saved in the checkpoint). With
+probability --stats-drop all three are dropped, and otherwise each one on its own with
+the same probability. val_ce_null is then without style and without stats.
 
 --overfit N trains and validates on the same N charts, then samples chunk 0
 of the first one and counts matching cells. The loss should approach 0 and the
@@ -42,6 +50,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from src.data import chartstats
 from src.data.dataset import ChunkDataset
 from src.data.style import MIN_MAPPER_CHARTS, build_vocab, encode, read_style, sizes
 from src.data.tokenizer import HOLD_START, MASK, PAD, TAP, grammar_violations
@@ -89,6 +98,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="--style: mappers with fewer train charts share one 'other' label")
     ap.add_argument("--style-drop", type=float, default=0.1,
                     help="--style: probability of dropping both labels, and then each one")
+    ap.add_argument("--chart-stats", type=Path, default=None,
+                    help="data/chart_stats.csv: condition on the chart's long-note share, jack "
+                         "and trill rate (default: none)")
+    ap.add_argument("--stats-drop", type=float, default=0.15,
+                    help="--chart-stats: probability of dropping all stats, and then each one")
     ap.add_argument("--d-model", type=int, default=256)
     ap.add_argument("--layers", type=int, default=6)
     ap.add_argument("--heads", type=int, default=4)
@@ -143,11 +157,21 @@ def drop_style(genre: torch.Tensor, mapper: torch.Tensor, null: tuple[int, int],
             torch.where(both | (u[2] < p), torch.full_like(mapper, null[1]), mapper))
 
 
+def drop_stats(stats: torch.Tensor, null: int, p: float) -> torch.Tensor:
+    """Condition dropout for chart stats [B, n]: all -> null with probability p, then each."""
+    if p <= 0:
+        return stats
+    u_all = torch.rand(stats.shape[0], 1, device=stats.device)
+    u_each = torch.rand(stats.shape, device=stats.device)
+    return torch.where((u_all < p) | (u_each < p), torch.full_like(stats, null), stats)
+
+
 @torch.no_grad()
 def validate(model, loader, device, amp, max_batches: int,
-             null: tuple[int, int] | None = None) -> dict:
+             null: tuple[int, int] | None = None, stats_null: int | None = None) -> dict:
     """Masked CE at fixed mask ratios with fixed masks, so runs are comparable. With style
-    (null = the no-label indices): val_ce with each chart's labels, val_ce_null without."""
+    (null = the no-label indices) or chart stats (stats_null = the no-value bucket): val_ce
+    with each chart's own, val_ce_null without any."""
     model.eval()
     sums = {g: 0.0 for g in VAL_GAMMAS}
     sum_null = 0.0
@@ -158,16 +182,18 @@ def validate(model, loader, device, amp, max_batches: int,
         batch = to_device(batch, device)
         for j, g in enumerate(VAL_GAMMAS):
             gamma = torch.full((batch["x0"].shape[0],), g, device=device)
-            styles = [(batch.get("genre"), batch.get("mapper"))]
-            if null is not None:
-                styles.append((torch.full_like(batch["genre"], null[0]),
-                               torch.full_like(batch["mapper"], null[1])))
-            for k, (genre, mapper) in enumerate(styles):
+            conds = [(batch.get("genre"), batch.get("mapper"), batch.get("stats"))]
+            if null is not None or stats_null is not None:
+                conds.append((
+                    None if null is None else torch.full_like(batch["genre"], null[0]),
+                    None if null is None else torch.full_like(batch["mapper"], null[1]),
+                    None if stats_null is None else torch.full_like(batch["stats"], stats_null)))
+            for k, (genre, mapper, stats) in enumerate(conds):
                 gen = torch.Generator().manual_seed(10_000 * i + j)   # CPU: same masks anywhere
                 with amp():
                     _, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"],
                                              batch["b"], gamma=gamma, generator=gen,
-                                             genre=genre, mapper=mapper)
+                                             genre=genre, mapper=mapper, stats=stats)
                 if k == 0:
                     sums[g] += info["masked_ce"]
                 else:
@@ -176,7 +202,7 @@ def validate(model, loader, device, amp, max_batches: int,
     model.train()
     out = {f"val_ce@{g}": sums[g] / max(n, 1) for g in VAL_GAMMAS}
     out["val_ce"] = sum(out.values()) / len(VAL_GAMMAS)
-    if null is not None:
+    if null is not None or stats_null is not None:
         out["val_ce_null"] = sum_null / max(n, 1)
     return out
 
@@ -243,11 +269,16 @@ def main(argv=None) -> int:
         val_ds = ChunkDataset(a.manifest, a.cache, ("val",),           # always the fixed chunks
                               fake_mel=a.fake_mel)
         keys = None
-    vocab, null = None, None
+    vocab, null, spec, stats_null = None, None, None, None
     if a.resume:                                           # a style run keeps its vocab
-        vocab = torch.load(a.resume, map_location="cpu", weights_only=True).get("style")
+        saved = torch.load(a.resume, map_location="cpu", weights_only=True)
+        vocab, spec = saved.get("style"), saved.get("chart_stats")
         if (vocab is None) != (a.style is None):
             print("--resume: give --style exactly when the run was started with it",
+                  file=sys.stderr)
+            return 2
+        if (spec is None) != (a.chart_stats is None):
+            print("--resume: give --chart-stats exactly when the run was started with it",
                   file=sys.stderr)
             return 2
     if a.style is not None:
@@ -258,6 +289,14 @@ def main(argv=None) -> int:
         coded = {k: encode(vocab, v["genre_id"], v["mapper_id"]) for k, v in labels.items()}
         for ds in {id(train_ds): train_ds, id(val_ds): val_ds}.values():
             ds.style, ds.null_style = coded, null
+    if a.chart_stats is not None:
+        table = chartstats.read_stats(a.chart_stats)
+        if spec is None:
+            spec = chartstats.build_spec(table, [c["key"] for c in train_ds.charts])
+        stats_null = chartstats.null_index(spec)
+        coded_stats = {k: chartstats.encode(spec, v) for k, v in table.items()}
+        for ds in {id(train_ds): train_ds, id(val_ds): val_ds}.values():
+            ds.stats, ds.null_stats = coded_stats, (stats_null,) * len(spec["names"])
     if len(train_ds) == 0:
         where = "data/cache/fake_mel" if a.fake_mel else "data/cache/logmel (preprocess_data.py --mel)"
         print("no training chunks: run scripts/build_manifest.py and scripts/preprocess_data.py, "
@@ -273,7 +312,9 @@ def main(argv=None) -> int:
     config = DenoiserConfig(d_model=a.d_model, lane_dim=a.d_model // 4, n_layers=a.layers,
                             n_heads=a.heads, d_ff=a.d_ff, dropout=a.dropout,
                             audio_add=not a.no_audio_add,
-                            n_genres=null[0] if null else 0, n_mappers=null[1] if null else 0)
+                            n_genres=null[0] if null else 0, n_mappers=null[1] if null else 0,
+                            n_stats=len(spec["names"]) if spec else 0,
+                            stat_bins=spec["bins"] if spec else 0)
     model = Denoiser(config).to(device)
     opt = torch.optim.AdamW(param_groups(model, a.weight_decay), lr=a.lr, betas=tuple(a.betas))
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda(a.warmup, a.steps))
@@ -291,7 +332,8 @@ def main(argv=None) -> int:
     args_json = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}
     (run_dir / "config.json").write_text(json.dumps(
         {"args": args_json, "model": asdict(config), "overfit_keys": keys,
-         "device": str(device), "params": n_params(model), "style": vocab}, indent=2))
+         "device": str(device), "params": n_params(model), "style": vocab,
+         "chart_stats": spec}, indent=2))
     print(f"{run_dir}: {n_params(model):,} params on {device}, {len(train_ds):,} train chunks "
           f"from {len(train_ds.charts):,} charts, {len(val_ds):,} val chunks")
     if vocab is not None:
@@ -300,6 +342,11 @@ def main(argv=None) -> int:
         print(f"style: {len(vocab['genres'])} genres, {len(vocab['mappers'])} mappers with >= "
               f"{vocab['min_charts']} train charts ({known:,} of {len(train_ds.charts):,} charts), "
               f"drop {a.style_drop}")
+    if spec is not None:
+        have = sum(c["key"] in train_ds.stats for c in train_ds.charts)
+        print(f"chart stats: {', '.join(spec['names'])}, "
+              f"{'/'.join(str(len(e) + 1) for e in spec['edges'])} buckets, {have:,} of "
+              f"{len(train_ds.charts):,} train charts, drop {a.stats_drop}")
 
     wandb = None
     if a.wandb:
@@ -311,7 +358,8 @@ def main(argv=None) -> int:
     def checkpoint(name: str) -> None:
         save(run_dir / name, model=model.state_dict(), optimizer=opt.state_dict(),
              scheduler=sched.state_dict(), step=step, best=best, config=asdict(config),
-             args=args_json, **({"style": vocab} if vocab is not None else {}))
+             args=args_json, **({"style": vocab} if vocab is not None else {}),
+             **({"chart_stats": spec} if spec is not None else {}))
 
     # --- loop ---
     model.train()
@@ -324,10 +372,13 @@ def main(argv=None) -> int:
             genre, mapper = batch.get("genre"), batch.get("mapper")
             if null is not None:
                 genre, mapper = drop_style(genre, mapper, null, a.style_drop)
+            stats = batch.get("stats")
+            if stats_null is not None:
+                stats = drop_stats(stats, stats_null, a.stats_drop)
             with amp():
                 loss, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"],
                                             batch["b"], row_mask=a.row_mask, genre=genre,
-                                            mapper=mapper)
+                                            mapper=mapper, stats=stats)
             (loss / a.grad_accum).backward()
             micro += 1
             seen += batch["x0"].shape[0]
@@ -361,12 +412,13 @@ def main(argv=None) -> int:
                 n_running, seen, t0 = 0, 0, time.time()
 
             if step % a.val_every == 0 or step == a.steps:
-                val = validate(model, val_loader, device, amp, a.val_batches, null)
+                val = validate(model, val_loader, device, amp, a.val_batches, null, stats_null)
                 append_csv(run_dir / "val.csv", ["step", *val.keys()],
                            [step, *(f"{v:.5f}" for v in val.values())])
                 print(f"  val_ce {val['val_ce']:.4f}  " + "  ".join(
                     f"@{g} {val[f'val_ce@{g}']:.3f}" for g in VAL_GAMMAS)
-                    + (f"  null {val['val_ce_null']:.4f}" if null is not None else ""), flush=True)
+                    + (f"  null {val['val_ce_null']:.4f}" if "val_ce_null" in val else ""),
+                    flush=True)
                 if wandb:
                     wandb.log(val, step=step)
                 if val["val_ce"] < best:

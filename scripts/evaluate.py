@@ -10,6 +10,8 @@
         --refine 2 --style oracle                  # each chart's own genre and mapper
     python scripts/evaluate.py --ckpt ... --per-song --n 0 --copy-bias 0 \
         --from-charts outputs/full-v1/eval_val_songs_continue_random_T128_fwd_ref2t0.5
+    python scripts/evaluate.py --ckpt outputs/full-v4/best.pt --per-song --n 0 --lanes forward \
+        --refine 2 --stats oracle                  # each chart's own long-note/jack/trill rate
 
 --per-song takes one chart per song (audio_key, a seeded random difficulty), so the
 N rows are N different songs; without it the first N charts of the split are
@@ -57,7 +59,13 @@ options are ignored, and passes / seconds are those of the passes run here. Writ
 DIR_hr_cp<bias> (the parts asked for).
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
---style-guidance W adds classifier-free guidance towards that style.
+--style-guidance W adds classifier-free guidance towards that style (and the stats).
+--stats (a model trained with --chart-stats): oracle generates every chart with the
+long-note share, jack and trill rate of the human chart it is scored against; sample
+with those of a random train chart within 0.3 SR (data/chart_stats.csv; seeded by
+--seed and the song, so every run picks the same); "ln=0.3,jack=0.05" with these for
+every song (names left out get none); none (default) with none. Columns stat_<name>
+hold the values asked for, stat_key the train chart they came from.
 and the tokenizer's own ceiling: the same F1 for decode(encode(human)).
 Writes <ckpt dir>/eval_<split>_<mode>_<order>_T<steps>/per_song.csv, summary.json and
 charts.npz (the generated tokens by chart key, so new metrics need no new sampling).
@@ -75,6 +83,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
+from src.data import chartstats
 from src.data.cache import read_manifest
 from src.data.chart_parser import parse_osu
 from src.data.mel import open_mel
@@ -86,7 +95,15 @@ from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
 from src.evaluation.structure import dynamics, structure_scores
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, ORDERS, STATS, generate_song, post_song, steps_name
+from src.models.sampler import (
+    LANE_PASSES,
+    LOUD_SIDES,
+    ORDERS,
+    STATS,
+    generate_song,
+    post_song,
+    steps_name,
+)
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
@@ -186,7 +203,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--loud-bias", type=float, default=0.0,
                     help="EMPTY bias of -X times each bar's loudness z-score while sampling: "
-                         "fewer notes in quiet bars, more in loud ones (sampler.loudness_bias)")
+                         "fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
+                    help="--loud-bias: quiet bars only (default), or both: also more notes in "
+                         "loud bars (the 10-04 runs, tag _lb; quiet is _lbq)")
     ap.add_argument("--refine-holds", action="store_true",
                     help="after the lane passes, decide tap or long note and the release "
                          "again with the whole chart in view (sampler.refine_holds)")
@@ -216,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="genre and mapper per chart (scripts/build_style.py)")
     ap.add_argument("--style-guidance", type=float, default=0.0,
                     help="--style oracle: classifier-free guidance weight (0 = none)")
+    ap.add_argument("--stats", default="none",
+                    help="chart stats for a model trained with --chart-stats: none, oracle, "
+                         "sample, or values like ln=0.3,jack=0.05,trill=0.15")
+    ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"),
+                    help="--stats sample: the charts to draw from (build_chart_stats.py)")
     ap.add_argument("--from-charts", type=Path, default=None,
                     help="score the charts.npz of this earlier run (after --copy-bias, if "
                          "given) instead of sampling")
@@ -245,6 +270,26 @@ def main(argv: list[str] | None = None) -> int:
         print("--style-guidance guides towards a style: use it with --style oracle",
               file=sys.stderr)
         return 2
+    spec = getattr(model, "chart_stats", None)
+    fixed_stats, table = None, None
+    if a.stats != "none":
+        if spec is None:
+            print("--stats needs a model trained with --chart-stats", file=sys.stderr)
+            return 2
+        if a.stats == "sample":
+            if not a.stats_csv.exists():
+                print(f"--stats sample: no {a.stats_csv} (scripts/build_chart_stats.py)",
+                      file=sys.stderr)
+                return 2
+            table = chartstats.read_stats(a.stats_csv)
+        elif a.stats != "oracle":
+            try:
+                fixed_stats = chartstats.parse(a.stats)
+            except ValueError as e:
+                print(e, file=sys.stderr)
+                return 2
+    stats_tag = "" if a.stats == "none" else "_st-" + "".join(
+        ch for ch in a.stats.replace("=", "").replace(",", "") if ch.isalnum() or ch in ".-")
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
     tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{steps_name(a.steps)}"
     if a.spread:
@@ -261,13 +306,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.jack_bias:
         tag += f"_jb{a.jack_bias:g}"
     if a.loud_bias:
-        tag += f"_lb{a.loud_bias:g}"
+        tag += f"_lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}"
     if a.style == "oracle":
         tag += "_style" + (f"_sg{a.style_guidance:g}" if a.style_guidance else "")
+    tag += stats_tag
     if a.min_hold is not None or a.release_gap is not None:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
@@ -285,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
-            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "")
+            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + stats_tag
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -309,13 +355,21 @@ def main(argv: list[str] | None = None) -> int:
             share = 0.0 if not np.isfinite(share) else share
         elif a.hold_share is not None:
             share = float(a.hold_share)
+        wanted, stat_key = {}, ""
+        if a.stats == "oracle":
+            wanted = chartstats.chart_stats(z["tokens"].reshape(-1, K)[:n_cells])
+        elif a.stats == "sample":
+            stat_key, wanted = chartstats.sample(table, sr, np.random.default_rng([a.seed, i]))
+        elif fixed_stats is not None:
+            wanted = fixed_stats
+        buckets = chartstats.encode(spec, wanted) if a.stats != "none" else None
         if saved is not None:
             tokens = saved[r["key"]]
             if a.copy_bias is not None or a.refine_holds or share is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
-                                   seed=sample_seed + i,
+                                   seed=sample_seed + i, stats=buckets,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
             tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
@@ -327,7 +381,8 @@ def main(argv: list[str] | None = None) -> int:
                                    empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    holds=a.refine_holds, hold_share=share,
-                                   loud_bias=a.loud_bias, **style)
+                                   loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
+                                   **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
         if a.copy_bias is not None:
@@ -354,6 +409,9 @@ def main(argv: list[str] | None = None) -> int:
                "bpm": round(60 * beats / seconds, 2) if seconds > 0 else float("nan"),
                **score(gen, ref, back, tokens, sr, star_rating(gen), star_rating_file(ref_path)),
                **structure_and_patterns(tokens, z["tokens"], mel, n_cells, a.far_k), **cost}
+        if a.stats != "none":
+            row.update({f"stat_{n}": wanted.get(n, float("nan")) for n in chartstats.NAMES})
+            row["stat_key"] = stat_key
         results.append(row)
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
               f"(target {sr:.2f})  {cost['seconds']:.0f} s  {r['path']}", flush=True)
@@ -363,7 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         w = csv.DictWriter(f, fieldnames=list(results[0]), lineterminator="\n")
         w.writeheader()
         w.writerows(results)
-    numeric = [k for k in results[0] if k not in ("key", "path", "grade", "genre", "mapper_known")]
+    numeric = [k for k in results[0]
+               if k not in ("key", "path", "grade", "genre", "mapper_known", "stat_key")]
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
@@ -371,7 +430,8 @@ def main(argv: list[str] | None = None) -> int:
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
-               "loud_bias": a.loud_bias,
+               "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
+               "stats": a.stats,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,

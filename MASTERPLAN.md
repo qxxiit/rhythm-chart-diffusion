@@ -41,8 +41,8 @@ We ask whether **discrete diffusion** — generating the entire note sequence at
 | Split, SR labels, filter | ✅ Split by song, local SR labels, 18,191 charts kept (Sep 26) |
 | Audio pipeline | ✅ Decoded at osu!'s 0 ms, log-Mel per audio file, alignment checked on 2,000 songs (Sep 29) |
 | Baseline model | ⏸ On hold (AR-4 / AR-32), generator first (Sep 30) |
-| Diffusion model | 🟡 D-32 on the full training set (full-v1, val CE 0.072, Sep 29); sampler random T = 128, then a left-to-right lane pass and two refinement sweeps: pattern clarity at the human level (Oct 3). Gaps now: phrase repetition (whole-bar copies 1.4% vs 14.5%; bar copies in the sampler, Oct 3), long single-note trills, jacks. full-v2 with genre and mapper inputs training (Oct 3) |
-| Generator | 🟡 Any audio file → playable .osz (`scripts/generate.py`, timing given or estimated; style by genre and mapper with full-v2); blind playtest packs (`scripts/playtest_pack.py`, in pairs from Oct 3) |
+| Diffusion model | 🟡 D-32 on the full training set (full-v1, val CE 0.072, Sep 29); sampler random T = 128, then a left-to-right lane pass and two refinement sweeps: pattern clarity at the human level (Oct 3). Bar copies bring whole-bar repetition to the human rate (Oct 4). Blind pairs playtest: 16/16 human charts found (Oct 4). The largest gap now: the AI does not choose a style per song (long-note amount, jacks, trills follow the human chart at 0.12 / 0.01 / 0.00, with half the spread over songs; Oct 5) → full-v4 with the chart's own long-note share, jack and trill rate as inputs (Oct 5). full-v2 (genre, mapper) and full-v3 (row masks) did not move the patterns |
+| Generator | 🟡 Any audio file → playable .osz (`scripts/generate.py`, timing given or estimated; long-note share, jacks and trills chosen with full-v4: `--stats`); blind playtest packs (`scripts/playtest_pack.py`, in pairs from Oct 3) |
 | Compute | 🟡 MacBook (MPS, ~86-91 chunks/s; full-v1 60k steps in ~3 h, 27.8 GB log-Mel cache); lab GPU expected ~October |
 
 ---

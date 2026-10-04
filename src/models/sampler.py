@@ -582,13 +582,22 @@ def refine_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
 LOUD_CLIP = 3.0                 # loudness z-scores beyond this count as this
 
 
-def loudness_bias(mel: np.ndarray, n_cells: int, n_rows: int, loud_bias: float) -> np.ndarray:
+LOUD_SIDES = ("quiet", "both")
+
+
+def loudness_bias(mel: np.ndarray, n_cells: int, n_rows: int, loud_bias: float,
+                  side: str = "quiet") -> np.ndarray:
     """[n_rows] log bias on EMPTY per row: -loud_bias * the loudness z-score of the row's
     bar (mean of the song-standardized log-Mel over the bar, standardized over the song's
     bars, clipped at LOUD_CLIP), 0 past n_cells. Human charts thin out more in quiet bars
     than the sampler does (EXPERIMENTS 2026-10-04: in the quietest bars, z < -1.5, the
     sampled charts have 17% more notes than the human ones; structure.dynamics' slope
-    0.20 against 0.22): loud_bias > 0 puts fewer notes in quiet bars, more in loud ones."""
+    0.20 against 0.22): loud_bias > 0 puts fewer notes in quiet bars. side "quiet": only
+    there (z < 0; louder bars keep their bias 0); "both": also more notes in loud bars,
+    which already have more than the human charts and raised the SR by 0.09 at 0.1
+    (EXPERIMENTS 2026-10-05)."""
+    if side not in LOUD_SIDES:
+        raise ValueError(f"unknown loudness side {side!r}")
     out = np.zeros(n_rows)
     n_bars = n_cells // BAR
     if loud_bias == 0 or n_bars < 2:
@@ -596,6 +605,8 @@ def loudness_bias(mel: np.ndarray, n_cells: int, n_rows: int, loud_bias: float) 
     frames = np.asarray(mel, dtype=np.float64)[:n_bars * BAR * 4]
     loud = frames.reshape(n_bars, BAR * 4, -1).mean(axis=(1, 2))
     z = np.clip((loud - loud.mean()) / (loud.std() + 1e-9), -LOUD_CLIP, LOUD_CLIP)
+    if side == "quiet":
+        z = np.minimum(z, 0.0)
     out[:n_bars * BAR] = np.repeat(-loud_bias * z, BAR)
     if n_cells > n_bars * BAR:                   # the part bar at the end: as the last bar
         out[n_bars * BAR:n_cells] = -loud_bias * z[-1]
@@ -735,13 +746,13 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               hold_share: float | None = None,
               copy_bias: float | None = None, min_hold: int | None = None,
               release_gap: int | None = None, seed: int = 0, genre: int | None = None,
-              mapper: int | None = None) -> np.ndarray:
+              mapper: int | None = None, stats=None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share), copy_bars (copy_bias), clean_holds;
     a new array."""
-    if genre is not None or mapper is not None:
-        model = Styled(model, genre, mapper)
+    if genre is not None or mapper is not None or stats is not None:
+        model = Styled(model, genre, mapper, stats=stats)
     song = np.concatenate([np.asarray(tokens, dtype=np.int64).reshape(-1, K),
                            np.full((L, K), PAD, dtype=np.int64)])
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None else 0)
@@ -771,7 +782,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   jack_bias: float = 0.0, copy_bias: float | None = None,
                   genre: int | None = None, mapper: int | None = None,
                   style_guidance: float = 0.0, holds: bool = False,
-                  hold_share: float | None = None, loud_bias: float = 0.0) -> np.ndarray:
+                  hold_share: float | None = None, loud_bias: float = 0.0,
+                  loud_side: str = "quiet", stats=None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -795,10 +807,14 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     copy_bias     copy_bars after that with this bias in nats per bar (None: no copies);
                   the audio similarity of bars comes from mel
     loud_bias     while sampling, log bias on EMPTY of -loud_bias * the bar's loudness
-                  z-score (loudness_bias): fewer notes where the music is quiet
+                  z-score (loudness_bias): fewer notes where the music is quiet; loud_side
+                  "quiet" (only there) or "both" (also more where it is loud)
     genre, mapper style indices (style.encode) for a model trained with --style; None =
                   no label. style_guidance w > 0: classifier-free guidance towards the
-                  style (diffusion.Styled), two forward passes for every one
+                  style and stats (diffusion.Styled), two forward passes for every one
+    stats         chart-stat buckets (chartstats.encode: long-note share, jack rate, trill
+                  rate) for a model trained with --chart-stats; None = none given, which
+                  is what that model samples when no one chooses
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
@@ -810,8 +826,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
         raise ValueError(f"unknown mode {mode!r}")
     if lanes not in LANE_PASSES:
         raise ValueError(f"unknown lanes {lanes!r}")
-    if genre is not None or mapper is not None or style_guidance:
-        model = Styled(model, genre, mapper, style_guidance)
+    if genre is not None or mapper is not None or style_guidance or stats is not None:
+        model = Styled(model, genre, mapper, style_guidance, stats=stats)
     r = model.config.frames_per_cell
     n_chunks = -(-n_cells // L)
     song = np.full(((n_chunks + 1) * L, K), PAD, dtype=np.int64)   # +1 chunk for overhang
@@ -819,7 +835,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None else 0)
     beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
-    row_bias = loudness_bias(mel, n_cells, len(song), loud_bias) if loud_bias else None
+    row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) if loud_bias else None
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(

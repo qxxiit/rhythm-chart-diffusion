@@ -14,6 +14,8 @@ item is read) or, with fake_mel=True, from mel.FakeMelStore (plumbing only).
 
 style (optional): key -> (genre, mapper) vocab indices (src/data/style.py); items
 then also carry "genre" and "mapper", and charts without an entry get null_style.
+stats (optional): key -> chart-stat buckets (src/data/chartstats.py); items then also
+carry "stats", and charts without an entry get null_stats.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ class ChunkDataset(Dataset):
 
     item: {"x0": long [384, 4], "mel": float [1536, 80], "s": float [], "b": float [],
            "start": long []}  (start = token row of the window's row 0)
-           + "genre", "mapper": long [] with style
+           + "genre", "mapper": long [] with style; + "stats": long [n_stats] with stats
     Each chunk appears once per epoch. Mel files are memory-mapped, not loaded.
     """
 
@@ -45,11 +47,14 @@ class ChunkDataset(Dataset):
                  keys: list[str] | None = None, max_charts: int | None = None,
                  window: str = "chunk", fake_mel: bool = False,
                  style: dict[str, tuple[int, int]] | None = None,
-                 null_style: tuple[int, int] = (0, 0)):
+                 null_style: tuple[int, int] = (0, 0),
+                 stats: dict[str, tuple[int, ...]] | None = None,
+                 null_stats: tuple[int, ...] = ()):
         if window not in ("chunk", "bar"):
             raise ValueError(f"unknown window {window!r}")
         self.window = window
         self.style, self.null_style = style, null_style
+        self.stats, self.null_stats = stats, null_stats
         rows = [r for r in read_manifest(manifest) if r["split"] in splits and r["sr"] != ""
                 and r.get("drop", "") == ""]
         if keys is not None:
@@ -122,6 +127,9 @@ class ChunkDataset(Dataset):
             genre, mapper = self.style.get(chart["key"], self.null_style)
             item["genre"] = torch.tensor(genre, dtype=torch.long)
             item["mapper"] = torch.tensor(mapper, dtype=torch.long)
+        if self.stats is not None:
+            item["stats"] = torch.tensor(self.stats.get(chart["key"], self.null_stats),
+                                         dtype=torch.long)
         return item
 
     def __getstate__(self) -> dict:                  # DataLoader workers rebuild the grids

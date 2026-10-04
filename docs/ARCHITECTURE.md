@@ -68,7 +68,7 @@ audio (.mp3)                      chart (.osu)
 - ⏸ **`transformer.py`**: AR-4 / AR-32 baselines (Yi et al. setting): on hold, generator first (DECISIONS 2026-09-30).
 
 ### Training (`scripts/train.py`) ✅
-AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. `--row-mask p`: a share p of chunks is masked by whole rows (all lanes) instead of cell by cell. Plain `argparse`; the Hydra configs are not used.
+AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUDA, validation at fixed mask ratios, `last.pt` / `best.pt`, `--resume`, optional wandb, and `--overfit N` with a rebuild check. `--row-mask p`: a share p of chunks is masked by whole rows (all lanes) instead of cell by cell. `--chart-stats data/chart_stats.csv`: the chart's own long-note share, jack rate and trill rate as inputs (8 train-quantile buckets each, an embedding table per stat summed into the s/b condition, dropped all 0.15 then each 0.15; the edges are saved in the checkpoint as `chart_stats`). Plain `argparse`; the Hydra configs are not used.
 
 ### `src/evaluation/`
 - ✅ **`metrics.py`**: onset F1 at ±20/±50 ms with lanes on or off (greedy one-to-one matching, closest pairs first) and the grammar violation rate.
@@ -129,6 +129,8 @@ python scripts/check_alignment.py      # ✅ notes vs audio onsets, by mp3 tag a
 python scripts/train.py --overfit 10   # ✅ milestone check; drop --overfit for a full run
 python scripts/build_style.py          # ✅ data/style.csv: genre (set) and mapper (beatmap user_id)
                                        #    per chart; train.py --style data/style.csv conditions on them
+python scripts/build_chart_stats.py    # ✅ data/chart_stats.csv: long-note share, jack and trill rate per
+                                       #    chart; train.py --chart-stats conditions on them (chartstats.py)
 python scripts/sample.py --ckpt ... --key ...   # ✅ a dataset song -> .osu, and an .osz with the beatmap's files
 python scripts/generate.py --audio X.mp3 --sr 3.5   # ✅ any audio file -> .osz (--bpm/--offset,
                                        #    --timing X.osu, or a constant tempo estimated from the audio)
@@ -141,13 +143,16 @@ python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, patt
                                        #    --lanes forward [--forward-temp T], --refine N, --order block,
                                        #    --spread, --steps 0, --empty-bias X, --jack-bias X,
                                        #    --copy-bias X (bar copies), --refine-holds / --hold-share
-                                       #    X|oracle (long notes again), --loud-bias X: sampler options;
-                                       #    --style oracle|none (+ --style-guidance W) for a style model;
+                                       #    X|oracle (long notes again), --loud-bias X [--loud-side both]:
+                                       #    sampler options; --style oracle|none (+ --style-guidance W) for
+                                       #    a style model; --stats oracle|sample|ln=X,... for a chart-stats
+                                       #    model;
                                        #    charts.npz keeps the generated tokens, and
                                        #    --from-charts DIR scores those (after --copy-bias) again
 python scripts/rescore.py RUN ...      # ✅ pattern / long-note columns again from a run's charts.npz
 python scripts/compare_runs.py REF RUN ...    # ✅ evaluate runs paired over their songs, 95% intervals
-                                       #    (--by-grade, --by-genre)
+                                       #    (--by-grade, --by-genre); per style number, the correlation
+                                       #    with the human chart over songs and the spread over songs
 python scripts/audio_ablation.py --ckpt ...   # ✅ val CE with the audio replaced (other song, flat, shifted)
 python scripts/pattern_probe.py --ckpt ...    # ✅ lane choice of hidden human rows: full, thinned,
                                        #    and the views of the left-to-right passes (past+rhythm, past)

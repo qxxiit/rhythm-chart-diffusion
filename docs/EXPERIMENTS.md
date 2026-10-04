@@ -785,6 +785,167 @@ Questions and predictions for the runs of 10-04/05, written before them:
    costs the rhythm (cell CE up more than 0.005, F1 down), or jacks stay rare because the
    model is too small for them rather than shown too few.
 
+### 2026-10-05 · Long-note passes, loudness bias, full-v3, and why the style is averaged (240 val songs)
+
+The runs of 10-04/05 (`run_1005.sh`), each paired song by song with `compare_runs.py`:
+`--from-charts` on full-v1's saved fwd + ref2 charts (copies only, `--refine-holds`,
+`--hold-share oracle`, all with `--copy-bias 0`, and rescored as they are);
+`--loud-bias 0.1` sampled again on the first 60 songs; full-v3 trained and evaluated
+with fwd + ref2 on all 240 songs.
+
+**1. Long notes decided again** (predictions 1 of 10-04)
+
+| | long-note share | no-LN charts | share p90 | beats | released on an onset row | ln_f1 | chance at the same counts | over chance |
+|---|---|---|---|---|---|---|---|---|
+| copies only (cp0) | 0.156 | 0.4% | 0.29 | 0.77 | 0.680 | 0.214 | 0.156 | +0.059 |
+| `--refine-holds` + cp0 | 0.147 | 0% | 0.27 | 0.71 | 0.680 | 0.211 | 0.157 | +0.054 |
+| `--hold-share oracle` + cp0 | 0.219 | 4.6% | 0.47 | 0.77 | 0.694 | 0.307 | 0.239 | +0.068 |
+| human | 0.218 | 5.0% | 0.47 | 1.00 | 0.759 | - | - | - |
+
+Chance: the F1 of placing the same number of long notes at random among the onsets
+both charts share, 2ab / (n (a + b)) per song. F1@50 moves by at most 0.0004.
+- refine_holds alone: no change in releases (+0.000) or ln_f1 (-0.003), long notes
+  0.07 beats shorter, and every chart gets long notes (no-LN 0.4% → 0%, p90 0.29 →
+  0.27): it averages the share further. As predicted; not a default.
+- the human share: the per-song distribution follows by construction, releases on
+  onset rows +0.017 [+0.004, +0.030] (predicted within 0.02: at the edge), ln_f1 +0.093
+  [+0.071, +0.114] (predicted no higher: wrong as a number). But chance rises with the
+  amount (0.156 → 0.239); over chance only +0.059 → +0.068. What the share fixes is the
+  amount. Placement stays near chance.
+- The model does know placement in context: refine_holds at the human share on the
+  **human** chart (everything else human; the first 18 of the val songs with cached audio
+  and long notes, full-v1, CPU) gives ln_f1 0.863 (median 0.887, range 0.67-0.96) against
+  chance 0.240, and 80% of the long notes both keep end on the same cell. It fits long notes to the long notes around them. In its own charts
+  those are its own, so its layout agrees with the human one hardly more than chance.
+
+**2. Loudness bias 0.1** (first 60 songs, against fwd + ref2 on the same songs; prediction 2)
+
+| | loud_slope | light bars | density ratio | SR bias | SR error | F1@50 |
+|---|---|---|---|---|---|---|
+| fwd + ref2 | 0.168 | 0.049 | 1.082 | +0.041 | 0.145 | 0.366 |
+| + loud bias 0.1 | 0.200 (+0.032 [+0.022, +0.044]) | 0.062 (+0.012 [+0.004, +0.021]) | 1.100 | +0.134 | 0.194 (+0.049 [+0.008, +0.101]) | 0.370 |
+| human | 0.191 | 0.070 | 1 | - | - | - |
+
+Dynamics as predicted (slope past the human level of these songs), density within 0.02
+(+0.018), F1 +0.003. Missed: SR error +0.049 (predicted within 0.02), SR bias +0.09. On
+the 10 of the 60 songs with audio cached here, by the bar's loudness z: the quietest
+bars (z < -1.5) lose 1.9 notes per bar (9.3 → 7.3; human 6.5), the louder bars (z > 0.5)
+gain 0.3 (19.3 → 19.5; human 18.1). The loud side adds notes where the sampler is
+already denser than human, and SR follows the hardest stretches. → `loud_side="quiet"`.
+
+**3. full-v3: row masks** (prediction 3)
+
+| | full-v1 | full-v3 | predicted | |
+|---|---|---|---|---|
+| val CE (cell by cell) | 0.0717 | 0.0734 | ≤ 0.0745 | hit |
+| probe: full, one row | 0.779 | 0.800 | ≥ 0.82 | miss |
+| probe: jack rows | 0.124 | 0.269 | ≥ 0.25 | hit |
+| 240 songs, move_jack | 0.011 | 0.009 (-0.001 [-0.003, -0.000]) | ≥ 0.02 | miss |
+| move_trill | 0.112 | 0.116 (+0.004, n.s.) | ≥ 0.13 | miss |
+| single notes in same-lane runs of 2 / 3+ | 1.40% / 0.04% | 1.22% / 0.05% | twice as many | miss |
+| F1@50 | 0.373 | 0.380 (+0.006 [+0.002, +0.010]) | within 0.005 | better |
+| SR error | 0.226 | 0.223 (-0.003) | within 0.02 | hit |
+
+Also: chord share 0.331 → 0.352 (human 0.372), lone chords 0.343 → 0.366 (0.413),
+long-note share 0.154 → 0.187 (0.218), ln_f1 +0.013; against: bar rhythm repeats
+0.122 → 0.099 (0.435), light bars 0.050 → 0.044 (0.063), density +2%. full-v2 differed
+from full-v1 by about as much (10-04), so these are partly run-to-run. The model picks
+the human lane on more human jack rows, and the generated charts have no more jacks:
+the failure is neither of the two written down (rhythm cost, model too small).
+
+**Why the jacks do not come, and what "no intent" means** (240 val songs; train split)
+
+Sampled without lane passes, the charts have the human jack rate (move_jack 0.047, human
+0.044); the lane passes take it to a quarter (ref2 at temperature 0.5: 0.012; fwd + ref2
+at 1: 0.021). Single notes in same-lane runs and AABB minijacks (per 1,000 single notes):
+
+| | runs of 2 | 3 | 4+ | AABB | single-note trill runs of 8+ (share of events) |
+|---|---|---|---|---|---|
+| sampled | 5.65% | 0.31% | 0.05% | 1.04 | 0.01% |
+| ref2 at 0.5 | 1.69% | 0.05% | 0.00% | 0.17 | 0.02% |
+| fwd + ref2 at 0.5 | 1.40% | 0.04% | 0.00% | 0.16 | 0.03% |
+| fwd + ref2 at 1 | 2.83% | 0.12% | 0.01% | 0.32 | 0.00% |
+| full-v3 fwd + ref2 | 1.22% | 0.04% | 0.01% | 0.15 | 0.01% |
+| human | 3.97% | 0.39% | 0.48% | 2.28 | 0.20% |
+
+The larger gap is between songs. Human jack rates are skewed: 30% of the songs have
+under 1% jacks and the top tenth of the songs hold 39% of all jack moves (p90 0.109); the
+sampled charts put jacks into every song at about the same rate (p25-p90 0.033-0.073).
+The same holds for every style number except chords. Per song against the human chart
+(`compare_runs.py` now prints this; correlation over songs, and SD over songs relative
+to the human charts'):
+
+| | long-note share | jacks | trills | stairs | chords |
+|---|---|---|---|---|---|
+| sampled | 0.12 / 0.50 | 0.22 / 0.38 | 0.04 / 0.36 | 0.11 / 0.30 | 0.71 / 0.87 |
+| fwd + ref2 | 0.12 / 0.50 | 0.01 / 0.21 | -0.01 / 0.60 | 0.13 / 0.44 | 0.71 / 0.87 |
+| full-v3 fwd + ref2 | 0.13 / 0.50 | 0.02 / 0.18 | 0.00 / 0.58 | 0.04 / 0.49 | 0.73 / 0.92 |
+
+Does the song decide them? Two human charts of the same music, SR within 0.5 of each
+other (train split, all kept charts; jacks as move_jack, trills as three single notes in
+a row within a beat each going there and back):
+
+| pairs | n | long-note share | jacks | trills | chords | long-note placement F1 (chance) |
+|---|---|---|---|---|---|---|
+| same audio, same mapper | 1,219 | 0.73 | 0.47 | 0.42 | 0.70 | 0.588 (0.236) |
+| same audio, another mapper of the mapset | 1,189 | 0.60 | 0.38 | 0.33 | 0.66 | 0.460 (0.244) |
+| same song (artist - title), another mapset | 1,194 | 0.25 | 0.31 | 0.20 | 0.71 | - |
+| the AI (fwd + ref2) and the human chart | 240 | 0.12 | 0.01 | -0.01 | 0.71 | 0.214 (0.156) |
+
+Genre × SR (1-star bins) explain 7% of the variance of the long-note share and 4% of jacks and
+trills (6,000 train charts). Jacks are not cued by the sound either: of two consecutive
+single notes within a beat, the human charts put the second in the same lane 3-6% of
+the time whatever the audio similarity of the two onsets (40 songs, cosine bins from
+below 0.5 to above 0.95).
+
+Readings:
+1. Long-note amount, jack rate and trill rate are mostly a choice of the mapset and the
+   mapper: another mapset's chart of the same song predicts them at 0.2-0.3. Chords
+   follow the music and the SR (0.71, and the AI matches that). The AI does not make
+   the choice: it mixes every style into every song at an average rate, with half the
+   human spread. That is what "no intent in the long notes" and "no ddddffff" say.
+2. Placement follows the choice. Given a committed layout around it (the human chart),
+   the model places long notes at F1 0.86 (chance 0.24); in its own uncommitted charts, barely
+   above chance. Re-deciding afterwards (refine_holds) fixes the amount, not the layout.
+3. The lane passes at temperature 0.5 remove the jacks the sampler had (0.047 → 0.011)
+   and with them the little song dependence they carried (0.22 → 0.01).
+4. full-v3's row masks cost nothing measurable and help rhythm and chords slightly; the
+   default model stays full-v1, and the next run keeps the row masks.
+
+Next, the choice as an input: full-v4 = full-v3 + the chart's own long-note share, jack
+rate and trill rate as inputs (`src/data/chartstats.py`, `train.py --chart-stats`): 8
+quantile buckets of the train charts each, one embedding table per stat summed into the
+s/b condition, dropped in training (all with 0.15, then each with 0.15). Sampling takes
+them from the user (`--stats ln=0.4,jack=0.05`), from a random human train chart of about
+the same SR (`--stats sample`), from the human chart being scored (`--stats oracle`,
+evaluation only, as the SR is), or none. Unlike the mapper labels, these are fixed by
+the answer itself, so a model that ignores them pays for it at every high mask ratio.
+On the 16,454 train charts (`build_chart_stats.py`, 24 s): long-note share median 0.150
+(p10 0.008, p90 0.428), jacks 0.024 (0.000, 0.113; more than an eighth have none, which
+get bucket 0 to themselves), trills 0.136 (0.045, 0.282).
+
+Predictions for the runs of 10-05/06, written before them:
+1. full-v4 training: val_ce (own stats) at least 0.001 below val_ce_null at the end;
+   val_ce_null within 0.002 of full-v3 (0.0734).
+2. full-v4 `--stats oracle`, fwd + ref2, 240 songs, against full-v3 fwd + ref2: per-song
+   correlation with the human chart, long-note share 0.6 or more (0.13), jacks 0.4 or
+   more (0.02), trills 0.3 or more (0.00); SD over songs relative to human 0.8 or more
+   for the long-note share (0.50), 0.5 or more for jacks (0.18); means: move_jack 0.02 or
+   more (0.009), move_trill 0.13 or more (0.116); ln_f1 over chance +0.10 or more
+   (+0.053); same-lane runs of 3+ and AABB twice full-v3's; F1@50 within 0.005 and SR
+   error within 0.02 of full-v3.
+3. `--stats none` (60 songs): as full-v3 on the same songs within run-to-run size (F1
+   within 0.01, long-note share within 0.03).
+4. `--stats sample` (60 songs): SD over songs relative to human 0.8 or more for the
+   long-note share and 0.5 or more for jacks; correlation with the human chart near 0
+   (another human's choice, not this song's); F1 within 0.01 of `--stats none`.
+5. `--loud-bias 0.1` quiet side only (full-v1, 60 songs, against fwd + ref2): light bars
+   +0.008 or more, loud_slope +0.015 or more, SR bias within ±0.03 of fwd + ref2's
+   (+0.04), density down 1-4%, F1@50 within 0.005.
+How 2 could fail: the stats are used (prediction 1 holds) but the lane passes at
+temperature 0.5 squash the jacks again, so correlation rises while the jack mean stays
+under 0.02; or, like the mapper labels, they are ignored (val_ce = val_ce_null).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

@@ -110,6 +110,9 @@ python scripts/preprocess_data.py --mel # log-Mel per audio file (see docs/ARCHI
 python scripts/train.py --overfit 10    # milestone check; drop --overfit for a full run
 python scripts/build_style.py           # data/style.csv: genre and mapper per chart
 python scripts/train.py --steps 60000 --val-every 2000 --style data/style.csv --run full-v2
+python scripts/build_chart_stats.py     # data/chart_stats.csv: long-note share, jack and trill rate per chart
+python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
+    --chart-stats data/chart_stats.csv --run full-v4   # those as inputs, like the SR
 python scripts/sample.py --ckpt outputs/<run>/best.pt --key <key>   # a dataset song -> .osu + .osz
 python scripts/evaluate.py --ckpt outputs/<run>/best.pt --per-song --n 0   # F1, SR error, rho, patterns
 python scripts/compare_runs.py <eval dir> <eval dir> ...   # paired over songs, 95% intervals
@@ -131,6 +134,10 @@ python scripts/generate.py --audio "song.mp3" --sr 3.5 --hold-share 0      # no 
 python scripts/generate.py --ckpt outputs/full-v2/best.pt --list-styles     # genres and mappers it knows
 python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio "song.mp3" --sr 3.5 \
     --genre electronic --mapper <name>  # a model trained with --style
+python scripts/generate.py --ckpt outputs/full-v4/best.pt --audio "song.mp3" --sr 3.5 \
+    --stats ln=0.4,jack=0.02            # a model trained with --chart-stats: a long-note chart, few jacks
+python scripts/generate.py --ckpt outputs/full-v4/best.pt --audio "song.mp3" --sr 3.5 --stats sample
+                                        # the style of a random human chart of about that SR
 ```
 
 Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). By default the lanes are chosen again after sampling (`--lanes forward --refine 2`): a left-to-right pass, then two sweeps with the whole chart in view, which brought pattern clarity on the val songs to the human level (EXPERIMENTS 2026-10-02/03) at about 1.6x the time. Then bars are copied where the audio repeats (`--copy-bias 0`, `--no-copy` to turn it off), which brought whole-bar repetition to the human rate (EXPERIMENTS 2026-10-03, result of 10-04). The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.

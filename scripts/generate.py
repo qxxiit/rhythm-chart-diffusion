@@ -6,6 +6,8 @@
     python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio song.mp3 --bpm 174 \
         --offset 1234 --sr 4 --genre electronic --mapper <name or user id>
     python scripts/generate.py --ckpt outputs/full-v2/best.pt --list-styles
+    python scripts/generate.py --ckpt outputs/full-v4/best.pt --audio song.mp3 --bpm 174 \
+        --offset 1234 --sr 4 --stats ln=0.4,jack=0.02      # a long-note chart, few jacks
 
 The model takes the timing as given (design doc §4.4): it places notes on the
 beat grid, it does not find the beat. Give either
@@ -38,6 +40,14 @@ Style (a model trained with --style, src/data/style.py): --genre (a name or id f
 --list-styles) and --mapper (a name or user id from the model's vocab, or "other")
 choose whose charts to imitate; leave them out for no label. --style-guidance W
 pushes harder towards that style (classifier-free guidance, twice the passes).
+
+Chart stats (a model trained with --chart-stats, src/data/chartstats.py): --stats
+"ln=0.4,jack=0.05,trill=0.15" asks for that long-note share (of the onsets), jack rate
+(of single-note moves within a beat, the same lane again) and trill rate (of two
+lane-changing moves in a row, straight back); names left out are the model's choice.
+--stats sample takes all three from a random human train chart of about the same SR
+(data/chart_stats.csv), printed per SR. Human charts: long-note share median 0.19,
+p90 0.47; jacks median 0.03, p90 0.11; trills median 0.14, p90 0.29 (240 val songs, 10-05).
 """
 
 from __future__ import annotations
@@ -52,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
+from src.data import chartstats
 from src.data.audio import SAMPLE_RATE, load_osu
 from src.data.beat_grid import from_timing_points
 from src.data.chart_parser import _split_sections
@@ -60,7 +71,7 @@ from src.data.mel import FRAMES_PER_CELL, log_mel, on_grid, song_stats
 from src.data.style import GENRES, genre_index, mapper_index
 from src.data.tokenizer import BAR, D, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, ORDERS, generate_song, steps_name
+from src.models.sampler import LANE_PASSES, LOUD_SIDES, ORDERS, generate_song, steps_name
 
 
 def red_lines(osu: Path) -> list[tuple[float, float]]:
@@ -221,7 +232,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="decide tap or long note and the release again with the whole chart "
                          "in view (sampler.refine_holds)")
     ap.add_argument("--loud-bias", type=float, default=0.0,
-                    help="fewer notes in quiet bars, more in loud ones (sampler.loudness_bias)")
+                    help="fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
+                    help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
                     help="this share of the onsets become long notes, where the model expects "
                          "them most (0: no long notes; implies --refine-holds)")
@@ -246,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="style: mapper name or user id from the model's vocab, or other")
     ap.add_argument("--style-guidance", type=float, default=0.0,
                     help="classifier-free guidance towards --genre / --mapper (0 = none)")
+    ap.add_argument("--stats", default=None,
+                    help="chart stats (model trained with --chart-stats): ln=0.4,jack=0.05,"
+                         "trill=0.15, or sample (a human train chart's, by SR)")
+    ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"))
     ap.add_argument("--list-styles", action="store_true",
                     help="print the genres and mappers the model knows, and stop")
     ap.add_argument("--device", default="auto")
@@ -303,6 +320,19 @@ def main(argv: list[str] | None = None) -> int:
                      "style_guidance": a.style_guidance}
         except ValueError as e:
             ap.error(str(e))
+    spec, fixed, table = getattr(model, "chart_stats", None), None, None
+    if a.stats is not None:
+        if spec is None:
+            ap.error(f"{a.ckpt} was trained without --chart-stats: no --stats")
+        if a.stats == "sample":
+            if not a.stats_csv.exists():
+                ap.error(f"--stats sample: no {a.stats_csv} (scripts/build_chart_stats.py)")
+            table = chartstats.read_stats(a.stats_csv)
+        else:
+            try:
+                fixed = chartstats.parse(a.stats)
+            except ValueError as e:
+                ap.error(str(e))
     order = a.order if a.order != "noisy" else f"noisy{a.temperature:g}"
     if a.spread:
         order += "-spread"
@@ -315,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.jack_bias:
         order += f"-jb{a.jack_bias:g}"
     if a.loud_bias:
-        order += f"-lb{a.loud_bias:g}"
+        order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
@@ -326,8 +356,20 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-by-{safe(a.mapper)}"
     if a.style_guidance:
         order += f"-sg{a.style_guidance:g}"
+    if fixed is not None:
+        order += "-" + "".join(f"{chartstats.SHORT[n]}{v:g}" for n, v in fixed.items())
+    elif a.stats == "sample":
+        order += "-stsample"
     written = []
-    for sr in a.sr:
+    for i, sr in enumerate(a.sr):
+        buckets = None
+        if a.stats is not None:
+            wanted = fixed
+            if table is not None:
+                key, wanted = chartstats.sample(table, sr, np.random.default_rng([a.seed, i]))
+                print(f"  s={sr:g}: style of train chart {key}: " + ", ".join(
+                    f"{chartstats.SHORT[n]} {v:.3f}" for n, v in wanted.items()))
+            buckets = chartstats.encode(spec, wanted)
         tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                                order=a.order, mode=a.mode, seed=a.seed,
                                temperature=a.temperature, refine=a.refine,
@@ -337,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
                                empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
-                               **style)
+                               loud_side=a.loud_side, stats=buckets, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name

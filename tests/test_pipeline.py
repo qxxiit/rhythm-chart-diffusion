@@ -230,6 +230,62 @@ def test_style_conditioning_end_to_end(data: Path, tmp_path: Path) -> None:
     assert all(r["mapper_known"] in ("0", "1", "") for r in rows)
 
 
+def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
+    from scripts import build_chart_stats
+    from src.data import chartstats
+    stats_csv = tmp_path / "chart_stats.csv"
+    assert build_chart_stats.main(["--manifest", str(data / "manifest.csv"),
+                                   "--cache", str(data / "cache"), "--out", str(stats_csv)]) == 0
+    table = chartstats.read_stats(stats_csv)
+    assert len(table) == 16
+    assert all(0 < v["hold_share"] < 1 for v in table.values())     # 25% long notes, synthetic
+
+    args = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--out", str(tmp_path), "--run", "cs", "--overfit", "4", "--steps", "30",
+            "--batch-size", "4", "--warmup", "5", "--d-model", "64", "--layers", "2",
+            "--heads", "2", "--d-ff", "128", "--log-every", "10", "--val-every", "30",
+            "--sample-steps", "4", "--fake-mel", "--device", "cpu", "--row-mask", "0.5",
+            "--chart-stats", str(stats_csv), "--stats-drop", "0.3"]
+    assert train.main(args) == 0
+    ckpt = torch.load(tmp_path / "cs" / "best.pt", weights_only=True)
+    spec = ckpt["chart_stats"]
+    assert spec["names"] == list(chartstats.NAMES) and len(spec["edges"]) == 3
+    assert ckpt["config"]["n_stats"] == 3 and ckpt["config"]["stat_bins"] == spec["bins"]
+    with open(tmp_path / "cs" / "val.csv", newline="") as f:
+        assert float(next(csv.DictReader(f))["val_ce_null"]) > 0
+    assert train.main([*args[:-4], "--resume", str(tmp_path / "cs" / "last.pt"),
+                       "--steps", "40"]) == 2               # a stats run resumes with them
+    assert train.main([*args, "--resume", str(tmp_path / "cs" / "last.pt"),
+                       "--steps", "40"]) == 0
+
+    key = json.loads((tmp_path / "cs" / "config.json").read_text())["overfit_keys"][0]
+    common = ["--ckpt", str(tmp_path / "cs" / "best.pt"), "--manifest", str(data / "manifest.csv"),
+              "--root", str(data / "raw"), "--cache", str(data / "cache"), "--fake-mel",
+              "--device", "cpu", "--steps", "4"]
+    assert sample.main([*common, "--key", key, "--stats", "oracle"]) == 0
+    assert sample.main([*common, "--key", key, "--stats", "ln=0.4,jack=0.1"]) == 0
+    assert list((tmp_path / "cs" / "samples").glob("*-stln0.4jack0.1_*.osu"))
+    assert sample.main([*common, "--key", key, "--stats", "bogus=1"]) == 2
+    pytest.importorskip("rosu_pp_py")
+    from scripts import evaluate
+    for mode in ("oracle", "sample"):
+        assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", mode,
+                              "--stats-csv", str(stats_csv)]) == 0
+        run = next((tmp_path / "cs").glob(f"eval_*_st-{mode}"))
+        with open(run / "per_song.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert len(rows) == 2 and all(r["stat_hold_share"] != "" for r in rows)
+        if mode == "oracle":                              # the human chart's own long notes
+            assert all(abs(float(r["stat_hold_share"]) - float(r["human_hold_share"])) < 1e-6
+                       for r in rows)
+        else:
+            assert all(table[r["stat_key"]]["split"] == "train" for r in rows)
+    from scripts import compare_runs
+    runs = sorted((tmp_path / "cs").glob("eval_*_st-*"))
+    assert compare_runs.main([str(r) for r in runs]) == 0
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "jack=x"]) == 2
+
+
 def test_human_baselines(data: Path, tmp_path: Path) -> None:
     from scripts import human_baselines
     assert human_baselines.main(["--manifest", str(data / "manifest.csv"),
@@ -554,6 +610,11 @@ def test_playtest_settings() -> None:
     passes = parse_setting("random:128:continue:fwd+ref2+lb0.2+hr+cp0")
     assert passes["holds"] and passes["loud_bias"] == 0.2 and passes["copy_bias"] == 0
     assert passes["name"] == "ai random T128 continue fwd ref2@0.5 lb0.2 hr cp0"
+    quiet = parse_setting("random:128:continue:fwd+ref2+lbq0.1+st")
+    assert (quiet["loud_bias"], quiet["loud_side"], quiet["stats"]) == (0.1, "quiet", "human")
+    assert quiet["name"] == "ai random T128 continue fwd ref2@0.5 lbq0.1 st"
+    assert parse_setting("random:128:continue:fwd+stsample")["stats"] == "sample"
+    assert passes["loud_side"] == "both"
     copies = parse_setting("random:128:continue:fwd+ref2+cp4")
     assert copies["copy_bias"] == 4 and copies["name"] == "ai random T128 continue fwd ref2@0.5 cp4"
     assert parse_setting("random:128")["copy_bias"] is None

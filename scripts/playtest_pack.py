@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from scripts.preprocess_data import find_audio
+from src.data import chartstats
 from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections
 from src.data.chart_writer import write_osu
@@ -113,7 +114,10 @@ def parse_setting(text: str) -> dict:
     copies with bias X (sampler.copy_bars); style, the human chart's genre and mapper;
     sgW, classifier-free guidance W towards it; hr, long notes decided again
     (sampler.refine_holds); lnX, that share of the onsets as long notes (ln alone: the
-    human chart's share); lbX, loudness bias X (sampler.loudness_bias)."""
+    human chart's share); lbqX, loudness bias X in quiet bars only (sampler.loudness_bias),
+    lbX on both sides; st, the human chart's long-note share, jack and trill rate as chart
+    stats (a model trained with --chart-stats), stsample, those of a random train chart
+    of about the same SR (--stats-csv)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -130,6 +134,7 @@ def parse_setting(text: str) -> dict:
     refine, lane_temp, lanes, spread, empty_bias, jack_bias = 0, 0.5, "sampled", False, 0.0, 0.0
     fwd_temp, copy_bias, style, guidance, holds, loud_bias = None, None, False, 0.0, False, 0.0
     hold_share: float | str | None = None
+    loud_side, stats = "both", None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -152,13 +157,17 @@ def parse_setting(text: str) -> dict:
             holds = True
         elif head.startswith("ln") and not t:
             hold_share = float(head[2:]) if head[2:] else "human"
+        elif head.startswith("lbq") and not t:
+            loud_bias, loud_side = float(head[3:]), "quiet"
         elif head.startswith("lb") and not t:
-            loud_bias = float(head[2:])
+            loud_bias, loud_side = float(head[2:]), "both"
+        elif head in ("st", "stsample") and not t:
+            stats = "human" if head == "st" else "sample"
         elif head.startswith("sg") and not t:
             guidance = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
-                             "jbX, cpX, style, sgW, hr, ln[X], lbX")
+                             "jbX, cpX, style, sgW, hr, ln[X], lbX, lbqX, st, stsample")
     if guidance and not style:
         raise ValueError(f"sgW in {text!r} guides towards a style: add style")
     if lanes == "forward" and not refine and fwd_temp is not None:
@@ -171,18 +180,20 @@ def parse_setting(text: str) -> dict:
         passes[-1] += f"@{lane_temp:g}"
     extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else []) \
         + ([f"jb{jack_bias:g}"] if jack_bias else []) \
-        + ([f"lb{loud_bias:g}"] if loud_bias else []) + (["hr"] if holds else []) \
+        + ([f"lb{'q' if loud_side == 'quiet' else ''}{loud_bias:g}"] if loud_bias else []) \
+        + (["hr"] if holds else []) \
         + ([f"ln{hold_share:g}" if isinstance(hold_share, float) else "ln"]
            if hold_share is not None else []) \
         + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
-        + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else [])
+        + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
+        + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
             "empty_bias": empty_bias, "forward_temperature": fwd_temp, "jack_bias": jack_bias,
             "copy_bias": copy_bias, "style": style, "style_guidance": guidance,
             "holds": holds, "loud_bias": loud_bias, "hold_share": hold_share,
-            "name": name_}
+            "loud_side": loud_side, "stats": stats, "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -248,6 +259,18 @@ def build(a) -> int:
         print("style settings need a model trained with --style and --style-csv",
               file=sys.stderr)
         return 2
+    spec = getattr(model, "chart_stats", None)
+    stat_table = None
+    if any(s["stats"] for s in settings):
+        if spec is None:
+            print("st / stsample need a model trained with --chart-stats", file=sys.stderr)
+            return 2
+        if any(s["stats"] == "sample" for s in settings):
+            if not a.stats_csv.exists():
+                print(f"stsample: no {a.stats_csv} (scripts/build_chart_stats.py)",
+                      file=sys.stderr)
+                return 2
+            stat_table = chartstats.read_stats(a.stats_csv)
     out = a.out or a.ckpt.parent / "playtest"
     pack = out / "pack"
     pack.mkdir(parents=True, exist_ok=True)
@@ -276,6 +299,13 @@ def build(a) -> int:
         human_share = float(human_share) if np.isfinite(human_share) else 0.0
         mel = store.chart(row["key"], tps, offset, (len(z["tokens"]) + 1) * L)
         for s in [settings[(i - 1) % len(settings)]] if a.pairs else settings:
+            buckets = None
+            if s["stats"] == "human":
+                buckets = chartstats.encode(spec, chartstats.chart_stats(
+                    z["tokens"].reshape(-1, z["tokens"].shape[-1])[:n_cells]))
+            elif s["stats"] == "sample":
+                buckets = chartstats.encode(spec, chartstats.sample(
+                    stat_table, sr, np.random.default_rng([a.seed, i]))[1])
             tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=s["steps"],
                                    order=s["order"], mode=s["mode"], seed=a.seed + i,
                                    temperature=s["temperature"], refine=s["refine"],
@@ -286,6 +316,7 @@ def build(a) -> int:
                                    forward_temperature=s["forward_temperature"],
                                    jack_bias=s["jack_bias"], copy_bias=s["copy_bias"],
                                    holds=s["holds"], loud_bias=s["loud_bias"],
+                                   loud_side=s["loud_side"], stats=buckets,
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),
                                    **style_args(s, vocab, style_labels.get(row["key"], {})))
@@ -434,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="two charts per song: the human one and one AI chart, the --settings "
                          "taking turns over the songs")
     ap.add_argument("--split", default="val")
+    ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"),
+                    help="stsample: the charts to draw chart stats from (build_chart_stats.py)")
     ap.add_argument("--style-csv", type=Path, default=Path("data/style.csv"),
                     help="genre and mapper per chart, for the style extra")
     ap.add_argument("--hold-bias", type=float, default=0.0,

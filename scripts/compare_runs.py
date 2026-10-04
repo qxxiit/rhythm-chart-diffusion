@@ -13,7 +13,10 @@ Pattern coverage is also given over its chance level (ratio of means), with an
 interval for the run's ratio over the reference's. Cost (passes, seconds) where
 both runs recorded it. --by-grade adds the mean differences of the main numbers
 per SR grade, --by-genre per genre of the song (evaluate.py's genre column), with
-the human level of each in brackets.
+the human level of each in brackets. Last, per song against its human chart, for the
+style numbers (long-note share, jacks, trills, stairs, chords): the correlation over
+songs (does each song get its own amount?) and the SD over songs relative to the
+human charts' (1 = as varied as human charts; 0.5 = every song about alike).
 Read the intervals over songs, not the means alone: one sampled chart per song
 moves by chance too (--sample-seed replicates show how much).
 """
@@ -47,6 +50,8 @@ METRICS = [
     ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")
+# per-song style: does each song get its own amount, as its human chart has it?
+FOLLOW_METRICS = ("hold_share", "move_jack", "move_trill", "move_stair", "chord_share")
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")
 
 
@@ -117,6 +122,22 @@ def coverage_ratio(run: dict, ref: dict, keys: list[str]) -> dict | None:
             "times": ratio(m), "lo": lo, "hi": hi}
 
 
+def follow(run: dict, keys: list[str], metric: str) -> dict | None:
+    """Per song: correlation of the run's metric with the human chart's (95% interval over
+    songs), and the run's SD over songs relative to the human charts'."""
+    m = np.array([[_num(run[k], metric), _num(run[k], f"human_{metric}")] for k in keys])
+    m = m[np.isfinite(m).all(axis=1)]
+    if len(m) < 3 or m[:, 0].std() == 0 or m[:, 1].std() == 0:
+        return None
+
+    def corr(x: np.ndarray) -> float:
+        return float(np.corrcoef(x[:, 0], x[:, 1])[0, 1]) if x[:, 0].std() and x[:, 1].std() \
+            else float("nan")
+
+    lo, hi = bootstrap(m, corr)
+    return {"corr": corr(m), "lo": lo, "hi": hi, "sd": float(m[:, 0].std() / m[:, 1].std())}
+
+
 def human_level(run: dict, keys: list[str], human) -> float | None:
     if human is None:
         return None
@@ -154,6 +175,18 @@ def compare(run: dict, ref: dict, by_grade: bool, by_genre: bool = False) -> lis
         times = f"x{c['times']:.2f} [{c['lo']:.2f}, {c['hi']:.2f}]"
         lines.append(f"  {'coverage/chance':16s} {c['run']:8.2f} {c['ref']:8.2f}   {times:30s} "
                      f"{'':>5s} {'':>5s} {h:>8s}")
+    rows = []
+    for metric in FOLLOW_METRICS:
+        f_run, f_ref = follow(run, keys, metric), follow(ref, keys, metric)
+        if f_run is None or f_ref is None:
+            continue
+        ci = f"{f_run['corr']:.2f} [{f_run['lo']:.2f}, {f_run['hi']:.2f}]"
+        rows.append(f"  {metric:16s} {ci:>20s} {f_ref['corr']:9.2f} {f_run['sd']:9.2f} "
+                    f"{f_ref['sd']:9.2f}")
+    if rows:
+        lines.append(f"  per song, against the human chart: {'corr run [95% CI]':>20s} "
+                     f"{'corr ref':>9s} {'sd run/h':>9s} {'sd ref/h':>9s}")
+        lines += rows
     if by_grade:
         lines += _groups(run, ref, keys, "grade", list(GRADES))
     if by_genre:

@@ -1,8 +1,8 @@
 """Masked (absorbing-state) discrete diffusion for 4K charts. Design doc §4.7-4.10.
 
-    Denoiser        f(x_t, mel, s, b[, genre, mapper]) -> logits [B, 384, 4, 5] over x0
-    Styled          a Denoiser with a fixed style, called as f(x_t, mel, s, b) by the
-                    sampler; with classifier-free guidance if asked
+    Denoiser        f(x_t, mel, s, b[, genre, mapper, stats]) -> logits [B, 384, 4, 5] over x0
+    Styled          a Denoiser with a fixed style and chart stats, called as f(x_t, mel, s, b)
+                    by the sampler; with classifier-free guidance if asked
     sample_gamma    mask ratios for a batch, stratified over (0, 1]
     mask_tokens     forward process: each non-PAD position becomes MASK with probability gamma
                     (or, for chunks picked by row_mask, each whole row of 4 lanes)
@@ -55,6 +55,8 @@ class DenoiserConfig:
     audio_add: bool = True             # also add memory row i to cell i (see module docstring)
     n_genres: int = 0                  # style inputs (src/data/style.py); 0 = none, as in
     n_mappers: int = 0                 # full-v1. Index n_genres / n_mappers is "no label"
+    n_stats: int = 0                   # chart-stat inputs (src/data/chartstats.py); 0 = none
+    stat_bins: int = 0                 # buckets per stat; index stat_bins is "no value"
 
 
 def sinusoidal(x: torch.Tensor, dim: int) -> torch.Tensor:
@@ -86,7 +88,7 @@ class Block(nn.Module):
 
 
 class Denoiser(nn.Module):
-    """f(x_t, mel, s, b[, genre, mapper]) -> logits over x0.
+    """f(x_t, mel, s, b[, genre, mapper, stats]) -> logits over x0.
 
     x_t  [B, L, K] long     tokens with MASK where the forward process erased them
     mel  [B, L * r, F]      log-Mel frames, r = 4 per cell
@@ -95,6 +97,9 @@ class Denoiser(nn.Module):
     genre, mapper  [B] long style indices (style.encode), only with config.n_genres /
                             n_mappers > 0; None or the index n_genres / n_mappers = no
                             label. Their embeddings join s and b in the per-chunk condition.
+    stats [B, n_stats] long buckets of the chart's stats (chartstats.encode), only with
+                            config.n_stats > 0; None or stat_bins = no value. One embedding
+                            table per stat, summed into the condition as well.
     ->   [B, L, K, 5]
     There is no time input: the fraction of MASK tokens already says how far
     along the reverse process is (design doc §4.10).
@@ -120,13 +125,19 @@ class Denoiser(nn.Module):
         if c.n_mappers:
             self.mapper_emb = nn.Embedding(c.n_mappers + 1, d)
             nn.init.normal_(self.mapper_emb.weight, std=0.02)
+        if c.n_stats:
+            if c.stat_bins < 1:
+                raise ValueError("n_stats needs stat_bins >= 1")
+            self.stat_emb = nn.Embedding(c.n_stats * (c.stat_bins + 1), d)   # + "no value"
+            nn.init.normal_(self.stat_emb.weight, std=0.02)
         self.blocks = nn.ModuleList(Block(c) for _ in range(c.n_layers))
         self.out_norm = nn.LayerNorm(d)
         self.head = nn.Linear(d, K * N_CLASSES)
 
     def forward(self, x_t: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
                 b: torch.Tensor, genre: torch.Tensor | None = None,
-                mapper: torch.Tensor | None = None) -> torch.Tensor:
+                mapper: torch.Tensor | None = None,
+                stats: torch.Tensor | None = None) -> torch.Tensor:
         batch = x_t.shape[0]
         pad = (x_t == PAD).all(dim=-1)                           # [B, L] whole PAD rows
         pad[:, 0] &= ~pad.all(dim=1)                             # never mask every key
@@ -142,6 +153,15 @@ class Denoiser(nn.Module):
                 cond = cond + getattr(self, f"{name}_emb")(idx)
             elif idx is not None:
                 raise ValueError(f"this model has no {name} input (trained without --style)")
+        c = self.config
+        if c.n_stats:
+            if stats is None:
+                stats = torch.full((batch, c.n_stats), c.stat_bins, dtype=torch.long,
+                                   device=x_t.device)
+            offset = torch.arange(c.n_stats, device=x_t.device) * (c.stat_bins + 1)
+            cond = cond + self.stat_emb(stats.long() + offset).sum(dim=1)
+        elif stats is not None:
+            raise ValueError("this model has no chart-stat input (trained without --chart-stats)")
         h = h + cond[:, None, :]
 
         mem = self.audio_conv(mel.transpose(1, 2)).transpose(1, 2)   # [B, L, d]
@@ -158,15 +178,27 @@ class Styled(nn.Module):
     """A Denoiser with a fixed style for sampling: forward(x_t, mel, s, b), as sampler calls it.
 
     genre, mapper   vocab indices (style.encode), None = no label
+    stats           chart-stat buckets (chartstats.encode), one per stat; None = none given
     guidance        classifier-free guidance w: logits = c + w * (c - u), c with the style
-                    and u without (both None): two forward passes per call. w = 0: c alone.
+                    and stats and u without any: two forward passes per call. w = 0: c alone.
     """
 
     def __init__(self, model: Denoiser, genre: int | None = None, mapper: int | None = None,
-                 guidance: float = 0.0):
+                 guidance: float = 0.0, stats=None):
         super().__init__()
         self.model, self.config = model, model.config
         self.genre, self.mapper, self.guidance = genre, mapper, guidance
+        if stats is not None and not self.config.n_stats:
+            raise ValueError("this model has no chart-stat input (trained without --chart-stats)")
+        if stats is not None and len(stats) != self.config.n_stats:
+            raise ValueError(f"{len(stats)} chart stats for a model with {self.config.n_stats}")
+        self.stats = None if stats is None else tuple(int(v) for v in stats)
+
+    def _stats(self, stats, like: torch.Tensor) -> torch.Tensor | None:
+        if not self.config.n_stats:
+            return None
+        row = stats if stats is not None else (self.config.stat_bins,) * self.config.n_stats
+        return torch.tensor(row, dtype=torch.long, device=like.device).expand(like.shape[0], -1)
 
     def _idx(self, v: int | None, n: int, like: torch.Tensor) -> torch.Tensor | None:
         if not n:
@@ -179,10 +211,12 @@ class Styled(nn.Module):
     def forward(self, x_t, mel, s, b):
         c = self.config
         out = self.model(x_t, mel, s, b, genre=self._idx(self.genre, c.n_genres, x_t),
-                         mapper=self._idx(self.mapper, c.n_mappers, x_t))
+                         mapper=self._idx(self.mapper, c.n_mappers, x_t),
+                         stats=self._stats(self.stats, x_t))
         if self.guidance:
             free = self.model(x_t, mel, s, b, genre=self._idx(None, c.n_genres, x_t),
-                              mapper=self._idx(None, c.n_mappers, x_t))
+                              mapper=self._idx(None, c.n_mappers, x_t),
+                              stats=self._stats(None, x_t))
             out = out + self.guidance * (out - free)
         return out
 
@@ -230,7 +264,8 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
                    b: torch.Tensor, gamma: torch.Tensor | None = None,
                    generator: torch.Generator | None = None,
                    row_mask: float = 0.0, genre: torch.Tensor | None = None,
-                   mapper: torch.Tensor | None = None) -> tuple[torch.Tensor, dict]:
+                   mapper: torch.Tensor | None = None,
+                   stats: torch.Tensor | None = None) -> tuple[torch.Tensor, dict]:
     """L = E_gamma[ (1/gamma) * sum over masked positions of -log p(x0) ] / N   (§4.9).
 
     The 1/gamma weight makes every mask ratio count equally: a chunk masked at
@@ -238,7 +273,8 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
     an upper bound on the per-position NLL.
     row_mask: share of chunks masked row by row (mask_tokens rows=); the 1/gamma
     weight stays right, since every position is still masked with probability gamma.
-    genre, mapper: style indices for a model with style inputs (None: not passed).
+    genre, mapper: style indices for a model with style inputs (None: not passed);
+    stats: chart-stat buckets for a model with chart-stat inputs (None: not passed).
     Returns (loss, info) where info holds unweighted diagnostics.
     """
     if gamma is None:
@@ -249,7 +285,8 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
                           device=generator.device if generator is not None else x0.device)
         rows = rows < row_mask
     x_t, masked = mask_tokens(x0, gamma, generator, rows)
-    style = {k: v for k, v in (("genre", genre), ("mapper", mapper)) if v is not None}
+    style = {k: v for k, v in (("genre", genre), ("mapper", mapper), ("stats", stats))
+             if v is not None}
     logits = model(x_t, mel, s, b, **style).float()
     target = torch.where(x0 == PAD, torch.zeros_like(x0), x0)       # PAD is never scored
     ce = F.cross_entropy(logits.reshape(-1, N_CLASSES), target.reshape(-1),
@@ -267,11 +304,13 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
 
 def load_denoiser(path, device="cpu") -> Denoiser:
     """Model from a checkpoint written by scripts/train.py, in eval mode. model.style is
-    the style vocab it was trained with (style.py), None for a model without style inputs."""
+    the style vocab it was trained with (style.py), None for a model without style inputs;
+    model.chart_stats the chart-stat spec (chartstats.py), None without chart-stat inputs."""
     ckpt = torch.load(path, map_location=device, weights_only=True)
     model = Denoiser(DenoiserConfig(**ckpt["config"])).to(device)
     model.load_state_dict(ckpt["model"])
     model.style = ckpt.get("style")
+    model.chart_stats = ckpt.get("chart_stats")
     return model.eval()
 
 
