@@ -132,7 +132,7 @@ python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio "song.mp3" --s
     --genre electronic --mapper <name>  # a model trained with --style
 ```
 
-Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). By default the lanes are chosen again after sampling (`--lanes forward --refine 2`): a left-to-right pass, then two sweeps with the whole chart in view, which brought pattern clarity on the val songs to the human level (EXPERIMENTS 2026-10-02/03) at about 1.6x the time. The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.
+Writes one 4K difficulty per star rating and an `.osz` under `outputs/generated/`; open it with osu! (lazer: double-click). By default the lanes are chosen again after sampling (`--lanes forward --refine 2`): a left-to-right pass, then two sweeps with the whole chart in view, which brought pattern clarity on the val songs to the human level (EXPERIMENTS 2026-10-02/03) at about 1.6x the time. Then bars are copied where the audio repeats (`--copy-bias 0`, `--no-copy` to turn it off), which brought whole-bar repetition to the human rate (EXPERIMENTS 2026-10-03, result of 10-04). The model places notes on the beat grid it is given: the estimate assumes one constant tempo, so for songs whose tempo changes, time the song in the osu! editor and pass `--timing`.
 
 ## Repository Structure
 

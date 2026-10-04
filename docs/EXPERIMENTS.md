@@ -5,6 +5,8 @@
 
 | Date | Run ID | Phase | Model | Key Config | Val F1 | Test F1 | wandb | Notes |
 |------|--------|-------|-------|------------|--------|---------|-------|-------|
+| 2026-10-04 | full-v2 | 2 | D-32 + genre / mapper embeddings, 6.93M | full-v1's recipe, labels dropped 0.1 / 0.1, `--style data/style.csv`, MPS, ~3.5 h | F1@50 0.377 (240 val songs, fwd + ref2, own labels) | - | - | val CE 0.0732 with labels = 0.0732 without (full-v1 0.0717): the labels go unused; differences to full-v1 not attributable to them |
+| 2026-10-04 | full-v1 + lane passes + bar copies | 2 | D-32, 6.87M | `--copy-bias 0` on the saved fwd + ref2 charts (no training) | F1@50 0.375 (+0.001) | - | - | whole-bar copies about 15% of bars (human 14.5%), rho_in 0.219 → 0.231 (human 0.228) |
 | 2026-10-03 | full-v1 + lane passes | 2 | D-32, 6.87M, audio_add | sampler: random T128, then forward_lanes and refine_lanes 2 at lane temperature 0.5 (no training) | F1@50 0.373 (240 val songs) | - | - | pattern coverage 0.047 (human 0.042), runs 7.6 (7.5), motion_pred 0.122 (0.132); jacks a quarter of the human rate |
 | 2026-09-29 | full-v1 | 2 | D-32, 6.87M, audio_add | all train songs (16,410 charts, 218,142 chunks), 60k steps (4.4 epochs), batch 16, MPS, ~3 h | F1@50 0.373 (240 val songs, random T128) | - | - | val CE 0.072; vs subset: F1 same, SR error 0.375→0.236, rho at the human level, pattern coverage still 2x chance; sampler fixed to random T128 |
 | 2026-09-27 | subset600-v1 | 2 | D-32, 6.87M, audio_add | 600 train songs (2,110 charts, 28,004 chunks), 20k steps, batch 16, MPS, 1 h | F1@50 0.37 (240 val songs, every sampler) | - | - | val CE 0.087, no overfitting; sampler moves density 0.81-1.16; without audio onset CE +79% |
@@ -604,6 +606,29 @@ new lanes. To check on 240 songs without sampling again: `evaluate.py
 --from-charts <fwd + ref2 run> --copy-bias 0` (and 4), minutes instead of hours.
 Off by default until then.
 
+Result, 240 val songs (2026-10-04, `evaluate.py --from-charts`, full-v1 on MPS, 36
+forward passes and 0.4 s per song), paired against the fwd + ref2 charts:
+
+| | fwd + ref2 | + copies, bias 0 | + copies, bias 4 | human |
+|---|---|---|---|---|
+| F1@50 | 0.373 | 0.375 (+0.001 [+0.000, +0.002]) | 0.375 (+0.001 [+0.000, +0.003]) | - |
+| density ratio | 1.065 | 1.061 | 1.062 | 1 |
+| SR error | 0.226 | 0.227 (+0.000 [-0.005, +0.005]) | 0.229 | - |
+| rho_in | 0.219 | **0.231** (+0.012 [+0.006, +0.018]) | 0.237 | 0.228 |
+| bar_rhythm_repeat | 0.122 | 0.228 | 0.295 | 0.435 |
+| bar_lane_repeat | 0.111 | 0.659 | 0.765 | 0.334 |
+| whole-bar copies (product) | 1.4% | **15.0%** | 22.6% | 14.5% |
+| coverage | 0.047 | 0.055 | 0.058 | 0.042 |
+| motion_pred | 0.122 | 0.128 | 0.137 | 0.132 |
+| trill / jack | 0.112 / 0.011 | 0.116 / 0.013 | 0.119 / 0.013 | 0.153 / 0.044 |
+
+Readings: bias 0 brings whole-bar repetition to the human rate and rho_in, which
+measures whether the chart repeats where the audio does, to the human level, with
+F1 slightly up and SR unchanged; bias 4 overshoots both (23% of bars copied, rho_in
+and motion_pred above the human charts). The rhythm alone still repeats half as
+often as in human charts (rhythm repeats with new lanes are not made). Decision:
+playable charts copy at bias 0 (DECISIONS 2026-10-04).
+
 ### 2026-10-03 · full-v2: genre and mapper as inputs (prediction, written before the run)
 
 Why: mappers differ (1,146 made the train charts; 215 with 20+ train charts made
@@ -650,6 +675,50 @@ How it could fail: the model ignores the labels (val_ce = val_ce_null within
 0.001), because the audio already tells the genre and a mapper's charts are few;
 or a mapper stands for a difficulty band, and SR error moves instead of the
 patterns. Expected time: about 3.5 h on the MacBook (validation runs twice).
+
+Result (2026-10-04, `overnight_1004.log`): 6,928,340 parameters; 12,079 of 16,410
+train charts by a mapper in the vocab.
+
+| step | val CE (own labels) | val CE (no labels) | @0.1 | @0.5 | @0.9 | full-v1 val CE |
+|---|---|---|---|---|---|---|
+| 2,000 | 0.2293 | 0.2293 | 0.154 | 0.222 | 0.320 | 0.231 |
+| 20,000 | 0.0884 | 0.0885 | 0.030 | 0.066 | 0.199 | 0.086 |
+| 40,000 | 0.0764 | 0.0763 | 0.023 | 0.056 | 0.176 | 0.076 |
+| 60,000 | 0.0732 | 0.0732 | 0.021 | 0.054 | 0.171 | 0.0717 |
+
+The labels change nothing in val CE at any point of the run. Probe on 71 val
+windows (full-v2, CPU): with the window fully MASK the own labels move the cell
+distributions by KL 0.001 nats per cell from no labels (an SR change of 0.3 moves
+them by 0.002) and lower CE by 1.9% for charts by a known mapper; at mask 0.9 by
+0.0005 and 0.2%, at 0.5 by nothing. The learned embeddings (norm about 0.8) are
+small next to the SR condition (about 10). The model reads the style from the
+visible part of the chart; labels matter only while almost nothing is visible.
+
+`evaluate.py --lanes forward --refine 2 --style oracle`, 240 songs, paired against
+full-v1's fwd + ref2: F1@50 +0.004 [+0.001, +0.008] (any lane +0.004), density
+1.077 (+0.012), SR error +0.017 [-0.010, +0.043], SR bias +0.052 [+0.022, +0.085],
+rho_in -0.013 [-0.026, +0.000], coverage 0.039 (-0.008), motion_pred 0.107 (-0.014
+[-0.018, -0.011]), stair 0.174 (-0.018), trill 0.137 (+0.025 [+0.018, +0.032]),
+long-note share 0.186 (+0.032; human 0.218), bar_rhythm_repeat 0.105 (-0.016).
+
+Predictions: 1 wrong (val CE 0.0732, not 0.066-0.070, and equal without labels:
+the stated failure mode). 3 wrong (F1 +0.004 is below the range, SR error went up,
+the per-song distance to the human pattern numbers did not fall: coverage -7%
+[-19%, +5%], motion_pred +6%). 4 wrong: coverage fell in every genre, also where
+it was below the human level (electronic, video game), so pop's and rock's move
+towards their human level is a global shift. 5 reversed (charts by "other" mappers
+changed more than charts by known ones). 7 right (bar_rhythm_repeat within 0.02).
+2 and 6 not run.
+
+Readings: the style inputs as built go unused, so the differences above cannot be
+credited to them; they are what a second training run with other random draws
+gives (val CE 2% higher, more trills and long notes, less predictable motion, SR
+higher). The size of run-to-run differences was not known before and is now a
+reference for any retraining. full-v1 stays the default model. If style is tried
+again, the label has to matter where it can: classifier-free guidance on full-v2
+(cheap: `--style-guidance 3` on 60 songs), or conditioning in every block (adaLN)
+with more training on high mask ratios; a run with `--style none` would show what
+the labels do at generation at all.
 
 ## Phase 3 Ablation A: Diffusion Design
 

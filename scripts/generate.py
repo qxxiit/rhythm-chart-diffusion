@@ -213,9 +213,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="--lanes forward: its own lane temperature (default: --lane-temp)")
     ap.add_argument("--jack-bias", type=float, default=0.0,
                     help="lane passes: log-score bonus for repeating the previous onset's lanes")
-    ap.add_argument("--copy-bias", type=float, default=None,
+    ap.add_argument("--copy-bias", type=float, default=0.0,   # 2026-10-04
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
+    ap.add_argument("--no-copy", action="store_true", help="no bar copies")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -241,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="print the genres and mappers the model knows, and stop")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
+    if a.no_copy:
+        a.copy_bias = None
     if a.list_styles:
         return list_styles(load_denoiser(a.ckpt, "cpu"))
     if a.audio is None:

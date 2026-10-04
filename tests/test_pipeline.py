@@ -306,9 +306,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5_T4_*.osu"))
+    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-cp0_T4_*.osu"))
     import zipfile
-    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5_T4_*.osz"))
+    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-cp0_T4_*.osz"))
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
@@ -327,9 +327,11 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
+    assert all("-cp0]" in p.name for p in charts)                    # bar copies by default
     assert generate.main([*common, "--timing", str(folder / "v0.osu"), "--mode", "independent",
-                          "--order", "confidence", "--out", str(tmp_path / "gen2")]) == 0
-    assert len(list((tmp_path / "gen2").glob("*independent-confidence*.osu"))) == 1
+                          "--order", "confidence", "--no-copy", "--out", str(tmp_path / "gen2")]) == 0
+    made = list((tmp_path / "gen2").glob("*independent-confidence*.osu"))
+    assert len(made) == 1 and "-cp" not in made[0].name
     # the model input from the audio file equals the one training read from the cache
     with open(data / "manifest.csv", newline="") as f:
         key = next(r["key"] for r in csv.DictReader(f)
