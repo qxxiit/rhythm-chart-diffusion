@@ -225,3 +225,19 @@ def test_bar_repeats_count_copies_and_mirrors() -> None:
     assert r["bar_lane_repeat"] == pytest.approx(2 / 4)            # a again, mirrored a
     none = bar_repeats(*song([[0, 1, 2]] * 3))                       # under 4 onsets: not counted
     assert np.isnan(none["bar_rhythm_repeat"]) and np.isnan(none["bar_lane_repeat"])
+
+
+def test_dynamics_follow_loudness() -> None:
+    from src.data.tokenizer import BAR, EMPTY, TAP
+    from src.evaluation.structure import dynamics
+    n_bars = 16
+    mel = np.zeros((n_bars * BAR * 4, 80))
+    mel[:8 * BAR * 4] = -1.0                                         # 8 quiet bars, 8 loud
+    mel[8 * BAR * 4:] = 1.0
+    x = np.full((n_bars * BAR, 4), EMPTY)
+    x[:8 * BAR:24, 0] = TAP                                         # quiet: 2 notes per bar
+    x[8 * BAR::6, 1] = TAP                                          # loud: 8 notes per bar
+    d = dynamics(x, mel, n_bars * BAR)
+    assert d["loud_slope"] == pytest.approx(0.6)                    # 0.4 -> 1.6 of the mean
+    assert d["light_bars"] == pytest.approx(0.5)                    # 2 <= 0.3 * 8
+    assert np.isnan(dynamics(x[:5 * BAR], mel, 5 * BAR)["loud_slope"])

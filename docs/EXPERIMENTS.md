@@ -720,6 +720,71 @@ again, the label has to matter where it can: classifier-free guidance on full-v2
 with more training on high mask ratios; a run with `--style none` would show what
 the labels do at generation at all.
 
+### 2026-10-04 · Blind pairs playtest and what it found (16 songs; 240 val songs measured)
+
+`playtest_pack.py --pairs --songs 16 --settings random:128:continue:fwd+ref2+cp0`
+(full-v1; val songs, SR 1.5-4.5). One player (a rhythm-game player) picked the human
+chart in 16 of 16 pairs: AI taken for human 0/16, 95% Wilson interval [0%, 19%].
+
+Comments, and what the 240 val songs say (fwd + ref2 + copies against the human charts):
+
+| comment | measured | |
+|---|---|---|
+| dense chord streams a little better | - | |
+| no single-lane runs (ddddffff), no minijacks (11332244) | single notes in same-lane runs of 4+: 0% (human 0.41%); AABB minijacks 0.15 per 1,000 single notes (2.28) | confirmed |
+| no simple repeated patterns (1313131324242424) | single-note trill runs of 8+: a seventh of human (10-03) | confirmed |
+| long-note releases vague | releases on a row where another lane has an onset: 68% (77%) | confirmed |
+| no intent in long-note placement | lengths and snaps as human (median 0.5 beat both; release snaps within 1 pp); the amount per song is not: charts without long notes 0.4% (5.0%), long-note share p75 / p90 0.21 / 0.29 (0.31 / 0.47) | the amount per song |
+| difficulty flat over the song | 40 songs: bar density on bar loudness slope 0.20 (0.22); quietest bars (z < -1.5) 17% more notes than human; SR 4+: light bars 6.5% (8.2%), first 8 bars at 0.73 of the mean (0.65) | confirmed, moderate |
+| not concise; sometimes only the beat would be better | onsets on the beat / half beat 32.0% / 25.6% (33.7% / 27.2%); 1/12 positions 9.1% (6.9%) | small |
+| rightmost lane a little much | lane shares within 0.3 pp of human; outer lanes 0.3 pp more, 1-4 leaps 0.141 (0.122) | not as such |
+
+Hypothesis "charts with many short long notes spoil the model", train split: 67% of all
+long notes are at most half a beat (28% at most a quarter); 3,331 charts (20%) have
+short long notes as 20%+ of their onsets, by 824 mappers; the top 10% of charts hold
+55% of the short long notes. A common style, not a few bad charts: dropping them would
+drop a fifth of the data. What the model gets wrong is choosing the style per song: it
+mixes long notes into every song at about the same rate (table above).
+
+Long notes decided again with the whole chart in view (`sampler.refine_holds`), first
+check on 8 val songs (saved fwd + ref2 charts, full-v1 on CPU):
+
+| | long-note share | beats | released on an onset row | ln_f1 vs human |
+|---|---|---|---|---|
+| sampled | 0.257 | 0.82 | 0.584 | 0.312 |
+| scoring whole paths (dropped) | 0.16 (-40%) | - | - | - |
+| refine_holds (p(START) vs p(TAP), then p(END)) | 0.232 | 0.76 | 0.564 | 0.266 |
+| refine_holds, the human chart's share | 0.190 | 0.84 | 0.550 | 0.304 |
+| human | 0.189 | 1.33 | 0.513 | - |
+
+ln_f1: of the onsets both charts have, F1 of the AI's long notes against the human's.
+Asking the model again with full context does not place long notes more like the
+human charts or release them more on other notes: the model's own preference is the
+limit, not the context it had when sampling. The share option gives each song its
+amount (and lets a user ask for rice or a long-note chart).
+
+Questions and predictions for the runs of 10-04/05, written before them:
+1. `--from-charts <fwd + ref2> --refine-holds --copy-bias 0` and `--hold-share oracle
+   --copy-bias 0` (240 songs): releases on onset rows within 0.02 of the copies-only run
+   (0.68) in both; ln_f1 no higher than the copies-only run; with the oracle share the
+   per-song long-note share equals the human one and its distribution (no-LN charts,
+   p90) follows; F1@50 unchanged (onsets do not move).
+2. `--loud-bias 0.1` (first 60 songs, paired with fwd + ref2): loud_slope up by 0.015 or
+   more (towards the human 0.22), light_bars up, density ratio and SR error within 0.02,
+   F1@50 within 0.005.
+3. full-v3, the full-v1 recipe with `--row-mask 0.5` (half of the chunks masked by whole
+   rows). The lane passes ask for whole rows with everything else visible, which cell-by-
+   cell masking almost never shows the model (all four cells of a row masked at mask
+   ratio 0.1: 1 in 10,000), and with the other lanes of a row visible the lane of a single
+   note is given away; jacks are where that matters most (the model picks the human
+   lane on 12% of human jack rows, against 73-86% for other moves). Predictions:
+   val CE (cell by cell) at most 0.0745 (full-v1 0.0717); probe full (1 row) 0.82 or more
+   (0.78), jack rows 0.25 or more (0.12); 240 songs with fwd + ref2: move_jack 0.02 or more
+   (0.011; human 0.044), move_trill 0.13 or more (0.112; 0.153), same-lane runs twice as
+   common; F1@50 within 0.005, SR error within 0.02. How it could fail: whole-row masking
+   costs the rhythm (cell CE up more than 0.005, F1 down), or jacks stay rare because the
+   model is too small for them rather than shown too few.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

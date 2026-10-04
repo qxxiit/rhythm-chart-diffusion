@@ -10,6 +10,12 @@
         far    j - i >= k bars (k: where the adjacency effect fades in human charts,
                see lag_profile and scripts/human_baselines.py)
     lag_profile(S)               mean similarity of bar pairs at each distance
+    dynamics(tokens, mel, n)     how the chart's density follows the music's loudness:
+        loud_slope   slope of each bar's onsets / the song's mean bar on the bar's
+                     loudness z-score (mean of the song-standardized log-Mel, z over the
+                     song's bars); 40 val songs: human 0.22, fwd + ref2 + copies 0.20
+        light_bars   share of the bars with notes that have at most 30% of the song's
+                     90th-percentile bar: the rests inside a song
 
 Bars are 48 cells (4/4). Row 0 of the token grid is a bar line (tokenizer), so
 bar m is rows 48m..48m+47 and mel frames 192m..192m+191, and chunk c is bars
@@ -117,6 +123,25 @@ def structure_scores(tokens: np.ndarray, mel: np.ndarray, n_cells: int, *,
         out[f"rho_{name}"] = rho(s_a, s_c, mask)
         out[f"pairs_{name}"] = int(mask.sum())
     return out
+
+
+def dynamics(tokens: np.ndarray, mel: np.ndarray, n_cells: int) -> dict:
+    """loud_slope and light_bars (module docstring); nan for songs under 8 bars."""
+    n_bars = n_whole_bars(n_cells)
+    nan = {"loud_slope": float("nan"), "light_bars": float("nan")}
+    if n_bars < 8:
+        return nan
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])[:n_bars * BAR]
+    per_bar = np.isin(x, (TAP, HOLD_START)).reshape(n_bars, -1).sum(axis=1).astype(np.float64)
+    frames = np.asarray(mel[:n_bars * BAR * FRAMES_PER_CELL], dtype=np.float64)
+    loud = frames.reshape(n_bars, BAR * FRAMES_PER_CELL, -1).mean(axis=(1, 2))
+    if per_bar.mean() == 0 or loud.std() == 0:
+        return nan
+    z = (loud - loud.mean()) / loud.std()
+    slope = float(np.polyfit(z, per_bar / per_bar.mean(), 1)[0])
+    full = per_bar[per_bar > 0]
+    light = float(np.mean(full <= 0.3 * np.percentile(full, 90))) if len(full) else float("nan")
+    return {"loud_slope": slope, "light_bars": light}
 
 
 def lag_profile(s: np.ndarray, max_lag: int) -> np.ndarray:

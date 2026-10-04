@@ -140,7 +140,8 @@ python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, patt
                                        #    --sample-seed N: same charts, other sampler draws (replicate)
                                        #    --lanes forward [--forward-temp T], --refine N, --order block,
                                        #    --spread, --steps 0, --empty-bias X, --jack-bias X,
-                                       #    --copy-bias X (bar copies): sampler options;
+                                       #    --copy-bias X (bar copies), --refine-holds / --hold-share
+                                       #    X|oracle (long notes again), --loud-bias X: sampler options;
                                        #    --style oracle|none (+ --style-guidance W) for a style model;
                                        #    charts.npz keeps the generated tokens, and
                                        #    --from-charts DIR scores those (after --copy-bias) again

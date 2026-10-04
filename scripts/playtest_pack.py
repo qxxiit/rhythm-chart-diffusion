@@ -60,6 +60,7 @@ from src.data.chart_writer import write_osu
 from src.data.mel import open_mel
 from src.data.style import encode, read_style
 from src.data.tokenizer import L, decode, make_metas
+from src.evaluation.holds import hold_stats
 from src.models.sampler import ORDERS, steps_name
 
 CREATOR = "playtest"
@@ -110,7 +111,9 @@ def parse_setting(text: str) -> dict:
     temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes)
     at T (default: refinement's); spread; ebX, EMPTY bias X; jbX, jack bias X; cpX, bar
     copies with bias X (sampler.copy_bars); style, the human chart's genre and mapper;
-    sgW, classifier-free guidance W towards it."""
+    sgW, classifier-free guidance W towards it; hr, long notes decided again
+    (sampler.refine_holds); lnX, that share of the onsets as long notes (ln alone: the
+    human chart's share); lbX, loudness bias X (sampler.loudness_bias)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -125,7 +128,8 @@ def parse_setting(text: str) -> dict:
     if mode not in ("continue", "independent"):
         raise ValueError(f"unknown mode in {text!r}")
     refine, lane_temp, lanes, spread, empty_bias, jack_bias = 0, 0.5, "sampled", False, 0.0, 0.0
-    fwd_temp, copy_bias, style, guidance = None, None, False, 0.0
+    fwd_temp, copy_bias, style, guidance, holds, loud_bias = None, None, False, 0.0, False, 0.0
+    hold_share: float | str | None = None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -144,11 +148,17 @@ def parse_setting(text: str) -> dict:
             copy_bias = float(head[2:])
         elif head == "style" and not t:
             style = True
+        elif head == "hr" and not t:
+            holds = True
+        elif head.startswith("ln") and not t:
+            hold_share = float(head[2:]) if head[2:] else "human"
+        elif head.startswith("lb") and not t:
+            loud_bias = float(head[2:])
         elif head.startswith("sg") and not t:
             guidance = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
-                             "jbX, cpX, style, sgW")
+                             "jbX, cpX, style, sgW, hr, ln[X], lbX")
     if guidance and not style:
         raise ValueError(f"sgW in {text!r} guides towards a style: add style")
     if lanes == "forward" and not refine and fwd_temp is not None:
@@ -161,6 +171,9 @@ def parse_setting(text: str) -> dict:
         passes[-1] += f"@{lane_temp:g}"
     extras = (["spread"] if spread else []) + passes + ([f"eb{empty_bias:g}"] if empty_bias else []) \
         + ([f"jb{jack_bias:g}"] if jack_bias else []) \
+        + ([f"lb{loud_bias:g}"] if loud_bias else []) + (["hr"] if holds else []) \
+        + ([f"ln{hold_share:g}" if isinstance(hold_share, float) else "ln"]
+           if hold_share is not None else []) \
         + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
@@ -168,6 +181,7 @@ def parse_setting(text: str) -> dict:
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
             "empty_bias": empty_bias, "forward_temperature": fwd_temp, "jack_bias": jack_bias,
             "copy_bias": copy_bias, "style": style, "style_guidance": guidance,
+            "holds": holds, "loud_bias": loud_bias, "hold_share": hold_share,
             "name": name_}
 
 
@@ -258,6 +272,8 @@ def build(a) -> int:
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(row["sr"])
         metas = make_metas(tps, offset, len(z["tokens"]), sr)
         charts = [("human", decode(z["tokens"], metas))]
+        human_share = hold_stats(z["tokens"].reshape(-1, z["tokens"].shape[-1])[:n_cells])["hold_share"]
+        human_share = float(human_share) if np.isfinite(human_share) else 0.0
         mel = store.chart(row["key"], tps, offset, (len(z["tokens"]) + 1) * L)
         for s in [settings[(i - 1) % len(settings)]] if a.pairs else settings:
             tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=s["steps"],
@@ -269,6 +285,9 @@ def build(a) -> int:
                                    spread=s["spread"], empty_bias=s["empty_bias"],
                                    forward_temperature=s["forward_temperature"],
                                    jack_bias=s["jack_bias"], copy_bias=s["copy_bias"],
+                                   holds=s["holds"], loud_bias=s["loud_bias"],
+                                   hold_share=(human_share if s["hold_share"] == "human"
+                                               else s["hold_share"]),
                                    **style_args(s, vocab, style_labels.get(row["key"], {})))
             charts.append((s["name"], decode(tokens, make_metas(tps, offset, len(tokens), sr))))
 

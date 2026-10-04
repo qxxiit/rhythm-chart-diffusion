@@ -70,6 +70,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
+    ap.add_argument("--refine-holds", action="store_true",
+                    help="decide tap or long note and the release again with the whole chart "
+                         "in view (sampler.refine_holds)")
+    ap.add_argument("--loud-bias", type=float, default=0.0,
+                    help="fewer notes in quiet bars, more in loud ones (sampler.loudness_bias)")
+    ap.add_argument("--hold-share", type=float, default=None,
+                    help="this share of the onsets become long notes, where the model expects "
+                         "them most (0: no long notes; implies --refine-holds)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--hold-bias", type=float, default=0.0,
@@ -130,7 +138,9 @@ def main(argv: list[str] | None = None) -> int:
                            hold_bias=a.hold_bias, min_hold=a.min_hold,
                            release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                            empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
-                           jack_bias=a.jack_bias, copy_bias=a.copy_bias, **style)
+                           jack_bias=a.jack_bias, copy_bias=a.copy_bias,
+                           holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
+                           **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -150,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-eb{a.empty_bias:g}"
     if a.jack_bias:
         order += f"-jb{a.jack_bias:g}"
+    if a.loud_bias:
+        order += f"-lb{a.loud_bias:g}"
+    if a.refine_holds or a.hold_share is not None:
+        order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
     if style:

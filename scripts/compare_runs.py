@@ -41,7 +41,10 @@ METRICS = [
     ("move_leap", "human_move_leap"), ("chord_share", "human_chord_share"),
     ("lone_chord", "human_lone_chord"), ("bar_rhythm_repeat", "human_bar_rhythm_repeat"),
     ("bar_lane_repeat", "human_bar_lane_repeat"),
-    ("hold_share", "human_hold_share"), ("passes", None), ("seconds", None),
+    ("hold_share", "human_hold_share"), ("hold_beats", "human_hold_beats"),
+    ("release_on_onset", "human_release_on_onset"), ("ln_f1", None),
+    ("loud_slope", "human_loud_slope"), ("light_bars", "human_light_bars"),
+    ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")

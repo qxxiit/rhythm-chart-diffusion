@@ -127,6 +127,7 @@ python scripts/generate.py --audio "song.mp3" --sr 2 3.5 5          # tempo and 
 python scripts/generate.py --audio "song.mp3" --bpm 174 --offset 1234 --sr 3.5
 python scripts/generate.py --audio "song.mp3" --timing timed.osu --sr 3.5   # red lines of an .osu
 python scripts/generate.py --audio "song.mp3" --sr 3.5 --lanes sampled --refine 0   # raw sampler output
+python scripts/generate.py --audio "song.mp3" --sr 3.5 --hold-share 0      # no long notes (0.3: a long-note chart)
 python scripts/generate.py --ckpt outputs/full-v2/best.pt --list-styles     # genres and mappers it knows
 python scripts/generate.py --ckpt outputs/full-v2/best.pt --audio "song.mp3" --sr 3.5 \
     --genre electronic --mapper <name>  # a model trained with --style

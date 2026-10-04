@@ -43,12 +43,18 @@ human chart's SR with the song's real timing, then score:
                           earlier bar's rhythm / also its lanes (patterns.py)
     passes, seconds       forward passes and wall time spent on the song (the cost)
     copied_bars           with --copy-bias: bars the copy pass replaced (sampler.copy_bars)
+    changed_holds         with --refine-holds: onsets whose tap / long note changed
+    ln_f1                 of the onsets both charts have, how well the generated chart's
+                          long notes match the human chart's (holds.ln_agreement)
+    loud_slope, light_bars
+                          how density follows loudness, and the light bars (structure.dynamics)
     genre, mapper_known   the song's genre (data/style.csv, if there) and, for a model with
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
-sampling, after the copy pass if --copy-bias is given (sampler.copy_song): minutes
+sampling, after --refine-holds and the copy pass if asked (sampler.post_song): minutes
 instead of hours. Use the same --per-song / --n / --seed as that run; the sampler
-options are ignored, and passes / seconds are the copy pass's. Writes to DIR_cp<bias>.
+options are ignored, and passes / seconds are those of the passes run here. Writes to
+DIR_hr_cp<bias> (the parts asked for).
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
 --style-guidance W adds classifier-free guidance towards that style.
@@ -74,13 +80,13 @@ from src.data.chart_parser import parse_osu
 from src.data.mel import open_mel
 from src.data.style import GENRES, encode, read_style
 from src.data.tokenizer import HOLD_START, TAP, K, L, decode, make_metas
-from src.evaluation.holds import hold_stats
+from src.evaluation.holds import hold_stats, ln_agreement
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
-from src.evaluation.structure import structure_scores
+from src.evaluation.structure import dynamics, structure_scores
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, ORDERS, STATS, copy_song, generate_song, steps_name
+from src.models.sampler import LANE_PASSES, ORDERS, STATS, generate_song, post_song, steps_name
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
@@ -99,6 +105,9 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         p = summarize(flat, chance_seeds=3)
         row.update({f"{who}{k}": p[k] for k in PATTERN_KEYS})
         row.update({f"{who}{k}": v for k, v in hold_stats(flat).items()})
+        row.update({f"{who}{k}": v for k, v in dynamics(flat, mel, n_cells).items()})
+    row.update(ln_agreement(gen_tokens.reshape(-1, gen_tokens.shape[-1])[:n_cells],
+                            human_tokens.reshape(-1, human_tokens.shape[-1])[:n_cells]))
     return row
 
 
@@ -175,6 +184,15 @@ def main(argv: list[str] | None = None) -> int:
                          "(sampler.copy_bars); default: no copies")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
+    ap.add_argument("--loud-bias", type=float, default=0.0,
+                    help="EMPTY bias of -X times each bar's loudness z-score while sampling: "
+                         "fewer notes in quiet bars, more in loud ones (sampler.loudness_bias)")
+    ap.add_argument("--refine-holds", action="store_true",
+                    help="after the lane passes, decide tap or long note and the release "
+                         "again with the whole chart in view (sampler.refine_holds)")
+    ap.add_argument("--hold-share", default=None,
+                    help="with --refine-holds: this share of the onsets become long notes, or "
+                         "'oracle' for the human chart's share")
     ap.add_argument("--min-hold", type=int, default=None,
                     help="long notes shorter than this many cells (1/12 beat) become taps; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
@@ -242,6 +260,10 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_eb{a.empty_bias:g}"
     if a.jack_bias:
         tag += f"_jb{a.jack_bias:g}"
+    if a.loud_bias:
+        tag += f"_lb{a.loud_bias:g}"
+    if a.refine_holds or a.hold_share is not None:
+        tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}"
     if a.style == "oracle":
@@ -261,8 +283,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{a.from_charts}: no saved chart for {len(missing)} of the {len(rows)} charts "
                   "(use that run's --per-song / --n / --seed)", file=sys.stderr)
             return 2
-        out_dir = a.from_charts.parent / (a.from_charts.name + (
-            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "_rescored"))
+        suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
+                  if a.refine_holds or a.hold_share is not None else "") + (
+            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "")
+        out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results, charts = [], {}
@@ -278,12 +302,20 @@ def main(argv: list[str] | None = None) -> int:
             if a.style == "oracle":
                 style = {"genre": g, "mapper": m, "style_guidance": a.style_guidance}
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
+        holds0 = STATS["changed_holds"]
+        share = None
+        if a.hold_share == "oracle":
+            share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
+            share = 0.0 if not np.isfinite(share) else share
+        elif a.hold_share is not None:
+            share = float(a.hold_share)
         if saved is not None:
             tokens = saved[r["key"]]
-            if a.copy_bias is not None:
-                tokens = copy_song(model, tokens, mel, sr, tps, offset, n_cells,
-                                   copy_bias=a.copy_bias, min_hold=a.min_hold,
-                                   release_gap=a.release_gap,
+            if a.copy_bias is not None or a.refine_holds or share is not None:
+                tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
+                                   holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
+                                   min_hold=a.min_hold, release_gap=a.release_gap,
+                                   seed=sample_seed + i,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
             tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
@@ -293,11 +325,15 @@ def main(argv: list[str] | None = None) -> int:
                                    hold_bias=a.hold_bias, min_hold=a.min_hold,
                                    release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                                    empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
-                                   jack_bias=a.jack_bias, copy_bias=a.copy_bias, **style)
+                                   jack_bias=a.jack_bias, copy_bias=a.copy_bias,
+                                   holds=a.refine_holds, hold_share=share,
+                                   loud_bias=a.loud_bias, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
         if a.copy_bias is not None:
             cost["copied_bars"] = STATS["copied_bars"] - copies0
+        if a.refine_holds or share is not None:
+            cost["changed_holds"] = STATS["changed_holds"] - holds0
         charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
@@ -334,6 +370,9 @@ def main(argv: list[str] | None = None) -> int:
                "steps": a.steps, "spread": a.spread, "lanes": a.lanes, "refine": a.refine,
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
+               "refine_holds": a.refine_holds, "hold_share": a.hold_share,
+               "loud_bias": a.loud_bias,
+               "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,
                "forward_temp": fwd_temp if a.lanes == "forward" else None,

@@ -639,3 +639,122 @@ def test_generate_song_with_style_and_guidance() -> None:
     assert p2 - p1 == 2 * (p1 - p0)                         # guidance: two passes for one
     with pytest.raises(ValueError):
         generate_song(Denoiser(TINY), *args, steps=6, genre=0)
+
+
+def _holds_to_taps(song: np.ndarray) -> np.ndarray:
+    """Same onsets; every long note made a tap (its body and release emptied)."""
+    out = song.copy()
+    out[out == 2] = TAP
+    out[np.isin(out, (3, 4))] = EMPTY
+    return out
+
+
+def test_refine_holds_restores_the_long_notes_a_model_knows() -> None:
+    from src.models.sampler import refine_holds
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    taps = _holds_to_taps(song)
+    assert not np.array_equal(taps, song) and (song == 2).sum() > 10
+    out = taps.copy()
+    changed = refine_holds(Oracle(tokens), out, torch.as_tensor(mel[:len(song) * 4]), 3.0,
+                           lambda row0: 400.0, stats.n_cells, temperature=0.0,
+                           release_temperature=0.0, min_hold=1, release_gap=0)
+    assert np.array_equal(out, song) and changed == int((song == 2).sum())
+
+
+def test_refine_holds_keeps_onsets_and_rules() -> None:
+    from src.evaluation.holds import hold_spans, release_gaps
+    from src.models.sampler import refine_holds
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    torch.manual_seed(0)
+    out = song.copy()
+    refine_holds(Denoiser(TINY), out, torch.as_tensor(mel[:len(song) * 4], dtype=torch.float32),
+                 3.0, lambda row0: 400.0, stats.n_cells, min_hold=3, release_gap=2,
+                 rng=np.random.default_rng(1))
+    onset = np.isin(song, (TAP, 2))
+    assert np.array_equal(np.isin(out, (TAP, 2)), onset)            # onsets never move
+    assert len(grammar_violations(out[:stats.n_cells], closed=False)) == 0
+    spans = hold_spans(out[:stats.n_cells])
+    assert all(e - s >= 3 for _, s, e in spans)                      # min_hold
+    gaps = release_gaps(out[:stats.n_cells], spans)
+    assert not np.any((gaps > 0) & (gaps <= 2))                      # release_gap
+
+
+def test_loudness_bias_thins_quiet_bars() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import loudness_bias
+    mel = np.zeros((8 * BAR * 4, 80))
+    mel[:4 * BAR * 4] = -1.0                                        # four quiet bars, four loud
+    mel[4 * BAR * 4:] = 1.0
+    bias = loudness_bias(mel, 8 * BAR, 9 * BAR, 0.5)
+    assert np.all(bias[:4 * BAR] > 0) and np.all(bias[4 * BAR:8 * BAR] < 0)
+    assert np.all(bias[8 * BAR:] == 0) and not loudness_bias(mel, 8 * BAR, 9 * BAR, 0.0).any()
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    loud = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    loud[:4 * BAR * 4] -= 2.0                                       # a quiet first part
+    args = (model, loud, 3.0, chart.timing_points, metas[0].cell_offset, L)
+
+    def quiet_onsets(**kw):
+        x = generate_song(*args, steps=6, seed=2, **kw).reshape(-1, K)
+        return int(np.isin(x[:4 * BAR], (TAP, 2)).sum())
+
+    assert quiet_onsets(loud_bias=2.0) < quiet_onsets()
+
+
+def test_release_on_onset() -> None:
+    from src.evaluation.holds import hold_stats
+    x = np.full((48, K), EMPTY, dtype=np.int64)
+    x[0, 0], x[1:5, 0], x[5, 0] = 2, 3, 4                           # released on row 5 ...
+    x[5, 2] = TAP                                                   # ... where lane 3 has a note
+    x[10, 1], x[11:13, 1], x[13, 1] = 2, 3, 4                       # released on an empty row
+    assert hold_stats(x)["release_on_onset"] == pytest.approx(0.5)
+
+
+def test_refine_holds_leaves_long_notes_past_its_reach() -> None:
+    from src.models.sampler import HOLD_REACH, refine_holds
+    song = np.full((2 * L, K), EMPTY, dtype=np.int64)
+    song[L + 100:] = PAD
+    end = 10 + HOLD_REACH + 20
+    song[10, 0], song[11:end, 0], song[end, 0] = 2, 3, 4            # 9+ beats long
+    song[5:L + 100:24, 2] = TAP
+    torch.manual_seed(0)
+    out = song.copy()
+    refine_holds(Denoiser(TINY), out, torch.zeros(len(song) * 4, 80), 3.0, lambda row0: 400.0,
+                 L + 100, rng=np.random.default_rng(0))
+    assert np.array_equal(out[:, 0], song[:, 0])
+    assert len(grammar_violations(out[:L + 100], closed=False)) == 0
+
+
+def test_refine_holds_to_a_long_note_share() -> None:
+    from src.evaluation.holds import hold_stats
+    from src.models.sampler import refine_holds
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    frames = torch.as_tensor(mel[:len(song) * 4], dtype=torch.float32)
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    for share in (0.0, 0.3):
+        out = song.copy()
+        refine_holds(model, out, frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                     hold_share=share, min_hold=1, release_gap=0)
+        got = hold_stats(out[:stats.n_cells])["hold_share"]
+        assert abs(got - share) < 0.02, (share, got)
+        assert np.array_equal(np.isin(out, (TAP, 2)), np.isin(song, (TAP, 2)))
+
+
+def test_ln_agreement() -> None:
+    from src.evaluation.holds import ln_agreement
+    human = np.full((24, K), EMPTY, dtype=np.int64)
+    human[0, 0], human[1:3, 0], human[3, 0] = 2, 3, 4                # a long note ...
+    human[6, 1] = 2
+    human[7, 1] = 4                                                 # ... and another
+    gen = human.copy()
+    gen[6, 1], gen[7, 1] = TAP, EMPTY                               # the second one as a tap
+    assert ln_agreement(gen, human)["ln_f1"] == pytest.approx(2 / 3)   # P 1, R 1/2
+    assert np.isnan(ln_agreement(np.where(gen == 2, TAP, gen), human)["ln_f1"])

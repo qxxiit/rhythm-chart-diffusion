@@ -495,6 +495,16 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert copied["songs"] == 2 and copied["mean_violation_rate"] == 0
     assert "mean_copied_bars" in copied and copied["copy_bias"] == 0
     assert evaluate.main([*common, "--n", "3", "--from-charts", str(run_dir)]) == 2   # not saved
+    assert evaluate.main([*common, "--n", "2", "--refine-holds", "--copy-bias", "0",
+                          "--from-charts", str(run_dir)]) == 0
+    both = json.loads((run_dir.parent / (run_dir.name + "_hr_cp0") / "summary.json").read_text())
+    assert both["refine_holds"] and "mean_changed_holds" in both and both["mean_violation_rate"] == 0
+    assert "mean_release_on_onset" in both or "mean_human_release_on_onset" in both
+    assert evaluate.main([*common, "--n", "2", "--hold-share", "oracle",
+                          "--from-charts", str(run_dir)]) == 0
+    oracle = json.loads((run_dir.parent / (run_dir.name + "_hr-oracle") / "summary.json").read_text())
+    assert oracle["hold_share"] == "oracle" and abs(oracle["mean_hold_share"]
+                                                   - oracle["mean_human_hold_share"]) < 0.05
     assert evaluate.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
                           "--per-song", "--n", "0", "--steps", "4", "--order", "noisy",
                           "--sample-seed", "1",
@@ -539,6 +549,11 @@ def test_playtest_settings() -> None:
     assert alone["lane_temperature"] == 0.3 and alone["forward_temperature"] is None
     assert alone["spread"] and alone["empty_bias"] == 0.2 and alone["steps"] == 0
     assert alone["name"] == "ai random Tseq continue spread fwd@0.3 eb0.2"
+    assert parse_setting("random:128:continue:fwd+ln")["hold_share"] == "human"
+    assert parse_setting("random:128:continue:fwd+ln0.2")["name"].endswith("fwd@0.5 ln0.2")
+    passes = parse_setting("random:128:continue:fwd+ref2+lb0.2+hr+cp0")
+    assert passes["holds"] and passes["loud_bias"] == 0.2 and passes["copy_bias"] == 0
+    assert passes["name"] == "ai random T128 continue fwd ref2@0.5 lb0.2 hr cp0"
     copies = parse_setting("random:128:continue:fwd+ref2+cp4")
     assert copies["copy_bias"] == 4 and copies["name"] == "ai random T128 continue fwd ref2@0.5 cp4"
     assert parse_setting("random:128")["copy_bias"] is None
