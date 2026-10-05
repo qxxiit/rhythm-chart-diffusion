@@ -155,3 +155,4 @@ core.*
 
 # patch files handed around for review (keep them out of commits)
 /*.patch
+blog.html
