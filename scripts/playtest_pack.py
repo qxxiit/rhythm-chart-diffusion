@@ -47,6 +47,7 @@ import argparse
 import csv
 import re
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -280,9 +281,10 @@ def build(a) -> int:
     out = a.out or a.ckpt.parent / "playtest"
     pack = out / "pack"
     pack.mkdir(parents=True, exist_ok=True)
+    tag = a.tag or time.strftime("%m%d")
     answers, ratings = [], []
     for i, row in enumerate(songs, 1):
-        song = f"PT{i:02d}"
+        song = f"{tag}-PT{i:02d}"
         src = a.root / row["path"]
         text = src.read_text(encoding="utf-8-sig", errors="replace")
         sec = _split_sections(text)
@@ -365,11 +367,53 @@ def build(a) -> int:
         w = csv.DictWriter(f, fieldnames=list(answers[0]))
         w.writeheader()
         w.writerows(answers)
-    with zipfile.ZipFile(out / "playtest_pack.zip", "w", zipfile.ZIP_DEFLATED) as zf:
-        for p in sorted(pack.iterdir()):
-            zf.write(p, f"playtest/{p.name}")
+    zip_pack(out)
     print(f"{len(songs)} songs x {len(labels)} charts -> {out / 'playtest_pack.zip'} "
           f"(send this); answers in {out / 'answers.csv'} (keep it)")
+    return 0
+
+
+def zip_pack(out: Path) -> None:
+    with zipfile.ZipFile(out / "playtest_pack.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted((out / "pack").iterdir()):
+            zf.write(p, f"playtest/{p.name}")
+
+
+def retag(out: Path, tag: str) -> int:
+    """Give an existing pack (made before --tag) the tag: PT02 -> <tag>-PT02 in the .osz
+    names, the titles inside them, answers.csv and ratings.csv, so packs made on different
+    days do not share titles in osu!'s song list. Packs already tagged are left alone."""
+    pack, n = out / "pack", 0
+    for osz in sorted(pack.glob("PT[0-9][0-9] *.osz")):
+        song = osz.name[:4]
+        new = pack / f"{tag}-{osz.name}"
+        with zipfile.ZipFile(osz) as src, zipfile.ZipFile(new, "w", zipfile.ZIP_DEFLATED) as dst:
+            for info in src.infolist():
+                data = src.read(info)
+                name = info.filename
+                if name.endswith(".osu"):
+                    text = data.decode("utf-8-sig")
+                    for key in ("Title:", "TitleUnicode:"):
+                        text = text.replace(f"\n{key}{song} ", f"\n{key}{tag}-{song} ")
+                    data = text.encode("utf-8")
+                    name = name.replace(f" - {song} ", f" - {tag}-{song} ", 1)
+                dst.writestr(name, data)
+        osz.unlink()
+        n += 1
+    for path in (out / "answers.csv", pack / "ratings.csv"):
+        if not path.exists():
+            continue
+        rows = read_csv(path)
+        for r in rows:
+            if r.get("song", "").startswith("PT"):
+                r["song"] = f"{tag}-{r['song']}"
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["song"])
+            w.writeheader()
+            w.writerows(rows)
+    zip_pack(out)
+    print(f"{out}: {n} songs retagged as {tag}-PTxx; delete the old PTxx sets in osu! "
+          "and import the new .osz files")
     return 0
 
 
@@ -492,10 +536,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--tag", default=None,
+                    help="prefix of the song names (default: today, MMDD): 1006-PT01 ..., so "
+                         "packs of different days do not share titles in osu!")
+    ap.add_argument("--retag", type=Path, default=None,
+                    help="give the existing pack in this directory (its --out) the --tag "
+                         "(default today) instead of making a new one")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--score", type=Path, nargs="+", default=None,
                     help="answers.csv, then the players' ratings files")
     a = ap.parse_args(argv)
+    if a.retag:
+        return retag(a.retag, a.tag or time.strftime("%m%d"))
     if a.score:
         if len(a.score) < 2:
             ap.error("--score answers.csv ratings.csv [ratings.csv ...]")

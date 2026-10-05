@@ -6,6 +6,7 @@ alignment end to end. Without PyAV's mp3 encoder those tests are skipped."""
 
 import csv
 import json
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -649,3 +650,40 @@ def test_playtest_settings() -> None:
     assert parse_setting("random:128")["copy_bias"] is None
     with pytest.raises(ValueError):
         parse_setting("random:128:continue:bogus")
+
+
+def test_playtest_retag(tmp_path: Path) -> None:
+    from scripts import playtest_pack
+    out = tmp_path / "playtest"
+    (out / "pack").mkdir(parents=True)
+    chart = Chart(4, "audio.mp3", [(0.0, 500.0)], [Note(0, 0, None), Note(500, 1, 1000)])
+    osu = tmp_path / "x.osu"
+    write_osu(osu, chart, title="PT01 Song", artist="Artist", version="A", creator="playtest")
+    with zipfile.ZipFile(out / "pack" / "PT01 Artist - Song.osz", "w") as zf:
+        zf.writestr("audio.mp3", b"")
+        zf.write(osu, "Artist - PT01 Song (playtest) [A].osu")
+    for path, row in ((out / "answers.csv", {"song": "PT01", "label": "A", "source": "human"}),
+                      (out / "pack" / "ratings.csv", {"song": "PT01", "human": "", "better": ""})):
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(row))
+            w.writeheader()
+            w.writerow(row)
+    assert playtest_pack.main(["--retag", str(out), "--tag", "1004"]) == 0
+    packs = sorted((out / "pack").glob("*.osz"))
+    assert [p.name for p in packs] == ["1004-PT01 Artist - Song.osz"]
+    with zipfile.ZipFile(packs[0]) as zf:
+        names = zf.namelist()
+        text = zf.read("Artist - 1004-PT01 Song (playtest) [A].osu").decode()
+    assert "audio.mp3" in names and "Title:1004-PT01 Song" in text
+    assert "TitleUnicode:1004-PT01 Song" in text
+    assert parse_osu_text_notes(text) == 2
+    for path in (out / "answers.csv", out / "pack" / "ratings.csv"):
+        with open(path, encoding="utf-8-sig") as f:
+            assert next(csv.DictReader(f))["song"] == "1004-PT01"
+    assert (out / "playtest_pack.zip").exists()
+    assert playtest_pack.main(["--retag", str(out), "--tag", "1005"]) == 0     # already tagged
+    assert [p.name for p in (out / "pack").glob("*.osz")] == ["1004-PT01 Artist - Song.osz"]
+
+
+def parse_osu_text_notes(text: str) -> int:
+    return len(text.split("[HitObjects]")[1].strip().splitlines())
