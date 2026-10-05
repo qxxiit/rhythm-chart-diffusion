@@ -146,7 +146,8 @@ python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, patt
                                        #    X|oracle (long notes again), --loud-bias X [--loud-side both]:
                                        #    sampler options; --style oracle|none (+ --style-guidance W) for
                                        #    a style model; --stats oracle|sample|ln=X,... for a chart-stats
-                                       #    model;
+                                       #    model (+ --style-guidance W, --lane-guidance W: guidance in
+                                       #    the lane passes only);
                                        #    charts.npz keeps the generated tokens, and
                                        #    --from-charts DIR scores those (after --copy-bias) again
 python scripts/rescore.py RUN ...      # ✅ pattern / long-note columns again from a run's charts.npz

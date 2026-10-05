@@ -59,7 +59,8 @@ options are ignored, and passes / seconds are those of the passes run here. Writ
 DIR_hr_cp<bias> (the parts asked for).
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
---style-guidance W adds classifier-free guidance towards that style (and the stats).
+--style-guidance W adds classifier-free guidance towards that style and / or the chart
+stats (logits c + W (c - u), u without either; twice the passes).
 --stats (a model trained with --chart-stats): oracle generates every chart with the
 long-note share, jack and trill rate of the human chart it is scored against; sample
 with those of a random train chart within 0.3 SR (data/chart_stats.csv; seeded by
@@ -236,6 +237,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="genre and mapper per chart (scripts/build_style.py)")
     ap.add_argument("--style-guidance", type=float, default=0.0,
                     help="--style oracle: classifier-free guidance weight (0 = none)")
+    ap.add_argument("--lane-guidance", type=float, default=None,
+                    help="the lane passes' own guidance weight towards the style / chart stats "
+                         "(default: --style-guidance); long notes are decided before them")
     ap.add_argument("--stats", default="none",
                     help="chart stats for a model trained with --chart-stats: none, oracle, "
                          "sample, or values like ln=0.3,jack=0.05,trill=0.15")
@@ -266,9 +270,9 @@ def main(argv: list[str] | None = None) -> int:
         print("--style oracle needs a model trained with --style and --style-csv",
               file=sys.stderr)
         return 2
-    if a.style_guidance and a.style == "none":
-        print("--style-guidance guides towards a style: use it with --style oracle",
-              file=sys.stderr)
+    if (a.style_guidance or a.lane_guidance) and a.style == "none" and a.stats == "none":
+        print("--style-guidance guides towards a style or chart stats: use it with --style "
+              "oracle or --stats", file=sys.stderr)
         return 2
     spec = getattr(model, "chart_stats", None)
     fixed_stats, table = None, None
@@ -314,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.style == "oracle":
         tag += "_style" + (f"_sg{a.style_guidance:g}" if a.style_guidance else "")
     tag += stats_tag
+    if a.style_guidance and a.style != "oracle":
+        tag += f"_sg{a.style_guidance:g}"
+    if a.lane_guidance is not None:
+        tag += f"_lg{a.lane_guidance:g}"
     if a.min_hold is not None or a.release_gap is not None:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
@@ -347,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
             g, m = encode(vocab, label.get("genre_id"), label.get("mapper_id"))
             if a.style == "oracle":
                 style = {"genre": g, "mapper": m, "style_guidance": a.style_guidance}
+        if not style and a.stats != "none" and a.style_guidance:
+            style = {"style_guidance": a.style_guidance}           # guidance towards the stats
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
         holds0 = STATS["changed_holds"]
         share = None
@@ -382,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
-                                   **style)
+                                   lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
         if a.copy_bias is not None:
@@ -431,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
-               "stats": a.stats,
+               "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,

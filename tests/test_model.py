@@ -740,6 +740,8 @@ def test_chart_stat_inputs_and_guidance() -> None:
         Styled(Denoiser(TINY), stats=(0, 1, 2))
     with pytest.raises(ValueError):
         Styled(model, stats=(0, 1))                           # one bucket per stat
+    with pytest.raises(ValueError):
+        Styled(model, stats=(0, 1, 5))                        # buckets 0..4 (4 = none)
     loss, _ = diffusion_loss(model, x0, mel, s, b, stats=torch.tensor([[0, 4, 2], [4, 4, 4]]))
     assert torch.isfinite(loss)
 
@@ -757,6 +759,18 @@ def test_generate_song_with_chart_stats() -> None:
     assert np.array_equal(plain, generate_song(model, *args, steps=6, seed=2, stats=None))
     with pytest.raises(ValueError):
         generate_song(Denoiser(TINY), *args, steps=6, stats=(0, 0, 0))
+    from src.models.sampler import STATS
+    kw = dict(steps=6, seed=2, stats=(3, 3, 3), lanes="forward", refine=1)
+    p0 = STATS["passes"]
+    base = generate_song(model, *args, **kw)
+    p1 = STATS["passes"]
+    guided = generate_song(model, *args, **kw, lane_guidance=3.0)
+    p2 = STATS["passes"]
+    onsets = lambda x: np.isin(x, (TAP, 2)).sum(axis=-1)                # noqa: E731
+    assert np.array_equal(onsets(base), onsets(guided))   # sampling unguided: same rhythm
+    assert np.array_equal((base == 2).sum(axis=-1), (guided == 2).sum(axis=-1))   # long notes
+    assert p2 - p1 > p1 - p0                              # only the lane passes run twice
+    assert len(grammar_violations(guided)) == 0
 
 
 def test_drop_stats() -> None:

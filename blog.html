@@ -3,9 +3,9 @@
 <p data-ke-size="size16">GitHub: <a href="https://github.com/qxxiit/rhythm-chart-diffusion">https://github.com/qxxiit/rhythm-chart-diffusion</a></p>
 <p data-ke-size="size16">리듬게임 차트를 오디오로부터 자동 생성하는 모델을 만들 것임.</p>
 <p data-ke-size="size16">이 글은 새로 알게 된 것이 있을 때마다 갱신하고 있다.</p>
-<p data-ke-size="size16">최종 수정: 2026. 10. 5.</p>
+<p data-ke-size="size16">최종 수정: 2026. 10. 6.</p>
 <blockquote data-ke-style="style2">
-<p data-ke-size="size16">[Note] 10/3 &ndash; 10/5 Update (9/30 ver 대비)</p>
+<p data-ke-size="size16">[Note] 10/3 &ndash; 10/6 Update (9/30 ver 대비)</p>
 <ul style="list-style-type: disc;" data-ke-list-type="disc">
 <li>모델은 레인 패턴을 안다: 나머지 채보가 보이면 사람의 레인 조합을 78% 맞힘. 패턴이 흐렸던 건 무작위 순서가 문맥이 거의 없을 때 레인부터 정해 버리기 때문 (6장 실험 7)</li>
 <li>샘플링 뒤에 레인을 다시 고르는 패스 (왼쪽부터 한 번 + 전체를 보고 두 번): 재학습 없이 패턴 명확성이 사람 수준 (패턴 비율 0.9% &rarr; 4.7%, 사람 4.2%). 플레이용 채보의 기본값 (4.8, 실험 7)</li>
@@ -20,6 +20,7 @@
 <li>10/5 결과: 롱노트를 다시 정하는 패스는 양만 고치고 위치는 못 고침. 음량 바이어스는 기복을 사람 수준으로 만들지만 SR 이 0.09 오름 (조용한 쪽만 덜어내게 바꿈). 줄 단위 마스킹 학습 (full-v3) 은 잭을 못 늘림 (실험 12)</li>
 <li>10/5 발견: AI 는 곡마다 스타일을 고르지 않고 평균을 섞음. 곡별 롱노트 &middot; 잭 &middot; 트릴 비율이 그 곡의 사람 채보와 거의 상관이 없고 (0.12 / 0.01 / 0.00, 동시치기는 0.71) 곡 사이 편차는 사람의 절반 이하. 사람끼리도 다른 맵셋이면 0.2 &ndash; 0.3 이라 곡이 아니라 매퍼가 고르는 것 (실험 13)</li>
 <li>다음 학습 full-v4: 채보 자체의 롱노트 &middot; 잭 &middot; 트릴 비율을 SR 처럼 입력으로. 생성 때는 사용자가 고르거나 사람 채보 분포에서 뽑음 (4.10, 실험 13)</li>
+<li>10/6 결과: full-v4 에서 곡별 롱노트 비율이 사람 채보를 따라감 (상관 0.13 &rarr; 0.75). 잭 &middot; 트릴은 레인 패스가 다시 고르면서 거의 사라짐 &rarr; 레인 패스에만 guidance 를 걸면 돌아옴 (8마디 창). 조용한 마디만 덜어내는 음량 바이어스는 SR 을 안 건드리고 기복을 사람 수준으로 &rarr; 플레이용 기본값 (실험 14)</li>
 </ul>
 </blockquote>
 <blockquote data-ke-style="style2">
@@ -1341,7 +1342,7 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 <li>짝 비교 (10/3 부터): 곡마다 사람 1 + AI 1 만 넣고 "어느 쪽이 사람인가" (헷갈려도 하나를 고름) 와 "어느 쪽이 더 재밌었나" 를 물음. AI 를 사람으로 고른 비율이 50% 면 구별 못 한 것이고, Wilson 95% 구간을 붙임. 처음엔 사람 1 + AI 2 로 했는데 AI 둘이 닮아서, 구별을 못 해도 "다른 하나" 를 골라 사람 채보를 찾는 경우가 있었음</li>
 </ul>
 <h2 data-ke-size="size26">5. Progress</h2>
-<p data-ke-size="size16">10/5 기준. 레인 패턴 (실험 7) 과 마디 반복 (실험 10) 은 샘플러로 사람 수준이 됨. 짝 비교에서는 16곡 모두 사람 채보가 들킴 (실험 12). 남은 큰 문제는 곡마다 스타일을 고르지 않는 것 (롱노트 양 &middot; 잭 &middot; 트릴, 실험 13) &rarr; full-v4.</p>
+<p data-ke-size="size16">10/6 기준. 레인 패턴 (실험 7) 과 마디 반복 (실험 10) 은 샘플러로 사람 수준이 됨. 짝 비교에서는 16곡 모두 사람 채보가 들킴 (실험 12). 곡마다 스타일을 고르지 않는 문제 (실험 13) 는 full-v4 로 롱노트 양까지 풀림. 잭 &middot; 트릴은 레인 패스 guidance 로 보는 중 (실험 14).</p>
 <table data-ke-align="alignLeft">
 <thead>
 <tr>
@@ -1423,8 +1424,8 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 </tr>
 <tr>
 <td>롱노트 다시 정하기 &middot; 음량 바이어스 (샘플러)</td>
-<td>옵션</td>
-<td>롱노트는 양만 고쳐짐, 음량은 기복 &uarr; SR &uarr; (조용한 쪽만으로 바꿔 다시 봄). 기본값 아님 (실험 12)</td>
+<td>음량: 기본값</td>
+<td>롱노트 다시 정하기는 양만 고쳐져 옵션. 음량은 조용한 마디만 덜어내니 기복이 사람 수준, SR 그대로 &rarr; 10/6 부터 플레이용 기본값 (실험 12 &middot; 14)</td>
 </tr>
 <tr>
 <td>줄 단위 마스킹 (full-v3)</td>
@@ -1433,8 +1434,8 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 </tr>
 <tr>
 <td>채보 스타일 조건 (full-v4)</td>
-<td>학습</td>
-<td>롱노트 &middot; 잭 &middot; 트릴 비율을 입력으로 (4.10, 실험 13)</td>
+<td>진행</td>
+<td>롱노트 비율은 곡마다 따라감 (상관 0.75). 잭 &middot; 트릴은 레인 패스 guidance 로 확인 중. 기본 모델은 짝 비교 뒤에 결정 (실험 14)</td>
 </tr>
 <tr>
 <td>평가 코드</td>
@@ -2589,6 +2590,48 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 </ol>
 <p data-ke-size="size16">실패한다면: 값은 쓰이는데 레인 패스 (온도 0.5) 가 잭을 다시 눌러서 상관만 오르고 잭 평균은 그대로. 또는 매퍼 라벨처럼 무시됨 (두 val CE 가 같음).</p>
 <p data-ke-size="size16">&nbsp;</p>
+<p data-ke-size="size18"><b>실험 14: full-v4, 채보 스타일 수치를 입력으로</b> (10/5 &ndash; 10/6, val 240곡)</p>
+<p data-ke-size="size16">full-v3 (줄 단위 마스킹) 에 채보 자체의 롱노트 비율 &middot; 잭 비율 &middot; 트릴 비율을 입력으로 더해 6만 step (3.3시간). 평가는 forward + refine 2 로, 맞출 사람 채보의 값을 넣은 것 (oracle, 240곡), 값 없이, 비슷한 SR 의 사람 채보에서 뽑은 값 (각 60곡). full-v3 와 같은 곡끼리 짝지어 봄.</p>
+<table data-ke-align="alignLeft">
+<thead>
+<tr>
+<th>곡별 사람 채보와의 상관 (곡 사이 편차 / 사람)</th>
+<th>full-v3</th>
+<th>full-v4 (사람 값)</th>
+<th>예측</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>롱노트 비율</td>
+<td>0.13 (0.50)</td>
+<td>0.75 (0.71)</td>
+<td>0.6 이상: 맞음</td>
+</tr>
+<tr>
+<td>잭</td>
+<td>0.02 (0.18)</td>
+<td>0.42 (0.34)</td>
+<td>0.4 이상: 겨우 맞음 (평균은 0.009 &rarr; 0.010 그대로)</td>
+</tr>
+<tr>
+<td>트릴</td>
+<td>0.00 (0.58)</td>
+<td>0.07 (0.72)</td>
+<td>0.3 이상: 틀림</td>
+</tr>
+</tbody>
+</table>
+<ul style="list-style-type: disc;" data-ke-list-type="disc">
+<li>F1 &minus;0.001, SR 오차 +0.019 (예측 안). 값 없이 생성하면 full-v3 와 같음. 사람 분포에서 뽑아 넣으면 곡 사이 롱노트 편차가 사람의 0.95</li>
+<li>val CE 는 값이 있든 없든 0.0740 / 0.0741. 검증의 마스크 비율에서는 보이는 채보로 스타일을 알 수 있어서 이 차이가 안 보임. 생성은 빈 채보에서 시작하니 값을 따라감</li>
+<li>값별로 보면 롱노트는 0.2 까지 그대로 따라가고 그 위에서 모자람 (0.54 를 달라면 0.34). 잭 &middot; 트릴은 거의 안 움직임 (잭 0.15 를 달라면 0.02)</li>
+<li>어디서 없어지나 (8마디 창 10곡, 셋 다 낮게 / 높게): 샘플링은 셋 다 따라감 (롱노트 0.02 / 0.45, 트릴 0.15 / 0.22). 레인 패스가 나머지 채보를 다 보고 다시 고르면서 트릴 차이가 0.03 으로 줄어듦. 문맥이 값보다 세기 때문</li>
+<li>classifier-free guidance ($\ell = c + w (c - u)$, u 는 값 없이) 를 전체에 걸면 롱노트가 넘침 (0.40 을 달라면 0.69). 레인 패스에만 걸면 (w = 1) 롱노트는 샘플링한 그대로 두고 트릴 차이가 +0.12 로 돌아옴</li>
+<li>음량 바이어스를 조용한 마디에만 (60곡): 가벼운 마디 0.049 &rarr; 0.062 (사람 0.070), 음량 기울기 0.168 &rarr; 0.193 (사람 0.191), SR 은 그대로 (+0.01). 예측 5개 다 맞음 &rarr; 플레이용 기본값</li>
+</ul>
+<p data-ke-size="size16">다음 (10/6 밤): full-v4 로 짝 비교 팩 16곡 (10/4 와 다른 곡, 레인 패스 guidance 1, 사람 값 / 뽑은 값 번갈아) 을 먼저 만들고, 레인 패스 guidance 1 &middot; 2 를 60곡 전체 곡으로 확인. 예측: 트릴 상관 0.3 이상, 롱노트는 그대로, motion_pred 는 0.01 이상 안 떨어짐. 짝 비교에서 AI 를 사람으로 고르는 곡 1 &ndash; 4개.</p>
+<p data-ke-size="size16">&nbsp;</p>
 <p data-ke-size="size16"><b>실험 큐</b> (우선순위 순)</p>
 <table data-ke-align="alignLeft">
 <thead>
@@ -2690,14 +2733,14 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 <td>짝 비교 플레이 테스트</td>
 <td>AI 채보를 사람 것으로 고르는 비율 (50% = 구별 못 함), 어느 쪽이 더 재밌나</td>
 <td>사람으로 고른 비율 (95% 구간)</td>
-<td>10/4 16곡: 0/16 [0%, 19%] (실험 12). full-v4 로 다시</td>
+<td>10/4 16곡: 0/16 [0%, 19%] (실험 12). 10/7 full-v4 로 다시 (실험 14)</td>
 </tr>
 <tr>
 <td>16</td>
 <td>채보 스타일 조건 (full-v4)</td>
 <td>롱노트 &middot; 잭 &middot; 트릴 비율을 입력으로 주면 곡마다 스타일이 생기고 사람 채보를 따라가는가</td>
 <td>곡별 상관 &middot; 곡 사이 편차, 잭 &middot; 트릴 평균, ln_f1 (무작위 대비), F1, SR 오차, 짝 비교</td>
-<td>10/5 학습 (실험 13)</td>
+<td>롱노트는 됨, 잭 &middot; 트릴은 레인 패스 guidance 로 (실험 14)</td>
 </tr>
 <tr>
 <td>4 &ndash; 8, 10, 11</td>
@@ -2775,6 +2818,7 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 <li>사람 채보는 마디의 17% 를 앞 마디에서 그대로 (또는 좌우 반전해) 베끼고, 원본은 대부분 오디오가 가장 비슷한 앞 마디임 (71%, 상위 3개 85%). AI 채보는 1.4% 였는데, 그 규칙대로 베끼는 패스를 얹으니 재학습 없이 15% 로 사람 수준이 되고 &rho;_in 도 사람 수준이 됨 (실험 9 &middot; 10)</li>
 <li>매퍼 &middot; 장르를 라벨로 넣어도 마스크 확산 모델은 거의 안 씀. 보이는 채보에서 스타일을 읽기 때문이고, 라벨은 창이 거의 다 가려졌을 때만 예측을 조금 움직임 (실험 11)</li>
 <li>롱노트 양 &middot; 잭 &middot; 트릴 비율은 곡보다 매퍼가 고름 (같은 곡이라도 다른 맵셋의 사람 채보끼리 상관 0.2 &ndash; 0.3, 동시치기는 0.7). AI 는 이 선택을 안 하고 모든 곡에 평균을 섞어서, 곡별 비율이 사람 채보와 거의 상관이 없고 (0.12 / 0.01 / 0.00) 곡 사이 편차는 절반 이하. 사람 채보를 문맥으로 주면 롱노트 자리를 F1 0.86 로 맞히므로, 모르는 건 자리가 아니라 선택 (실험 12 &middot; 13)</li>
+<li>그 선택을 입력으로 주면 (full-v4) 롱노트 양은 따라가지만, 잭 &middot; 트릴처럼 레인 패스가 다시 고르는 것은 문맥에 묻힘. 모델이 빈 채보에서 시작할 때만 조건이 이기고, 나머지가 다 보이면 문맥이 이김. 같은 이유로 val CE 로는 조건이 쓰이는지 알 수 없음 (실험 11 &middot; 14)</li>
 </ol>
 <h2 data-ke-size="size26">#. Notes</h2>
 <p data-ke-size="size16">+++++++++++++++</p>

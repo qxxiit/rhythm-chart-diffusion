@@ -117,7 +117,7 @@ def parse_setting(text: str) -> dict:
     human chart's share); lbqX, loudness bias X in quiet bars only (sampler.loudness_bias),
     lbX on both sides; st, the human chart's long-note share, jack and trill rate as chart
     stats (a model trained with --chart-stats), stsample, those of a random train chart
-    of about the same SR (--stats-csv)."""
+    of about the same SR (--stats-csv); lgW, the lane passes' own guidance weight."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -134,7 +134,7 @@ def parse_setting(text: str) -> dict:
     refine, lane_temp, lanes, spread, empty_bias, jack_bias = 0, 0.5, "sampled", False, 0.0, 0.0
     fwd_temp, copy_bias, style, guidance, holds, loud_bias = None, None, False, 0.0, False, 0.0
     hold_share: float | str | None = None
-    loud_side, stats = "both", None
+    loud_side, stats, lane_guidance = "both", None, None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -165,11 +165,14 @@ def parse_setting(text: str) -> dict:
             stats = "human" if head == "st" else "sample"
         elif head.startswith("sg") and not t:
             guidance = float(head[2:])
+        elif head.startswith("lg") and not t:
+            lane_guidance = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
-                             "jbX, cpX, style, sgW, hr, ln[X], lbX, lbqX, st, stsample")
-    if guidance and not style:
-        raise ValueError(f"sgW in {text!r} guides towards a style: add style")
+                             "jbX, cpX, style, sgW, lgW, hr, ln[X], lbX, lbqX, st, stsample")
+    if (guidance or lane_guidance) and not style and not stats:
+        raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
+                         "st or stsample")
     if lanes == "forward" and not refine and fwd_temp is not None:
         lane_temp, fwd_temp = fwd_temp, None              # one lane pass: one temperature
     if fwd_temp == lane_temp:
@@ -186,20 +189,23 @@ def parse_setting(text: str) -> dict:
            if hold_share is not None else []) \
         + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
-        + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else [])
+        + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
+        + ([f"lg{lane_guidance:g}"] if lane_guidance is not None else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
             "empty_bias": empty_bias, "forward_temperature": fwd_temp, "jack_bias": jack_bias,
             "copy_bias": copy_bias, "style": style, "style_guidance": guidance,
             "holds": holds, "loud_bias": loud_bias, "hold_share": hold_share,
-            "loud_side": loud_side, "stats": stats, "name": name_}
+            "loud_side": loud_side, "stats": stats, "lane_guidance": lane_guidance,
+            "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
-    """generate_song's style arguments for a setting with "style": the human chart's labels."""
+    """generate_song's style arguments for a setting with "style": the human chart's labels;
+    for one with chart stats only, the guidance towards them."""
     if not setting["style"]:
-        return {}
+        return {"style_guidance": setting["style_guidance"]} if setting["stats"] else {}
     genre, mapper = encode(vocab, label.get("genre_id"), label.get("mapper_id"))
     return {"genre": genre, "mapper": mapper, "style_guidance": setting["style_guidance"]}
 
@@ -317,6 +323,7 @@ def build(a) -> int:
                                    jack_bias=s["jack_bias"], copy_bias=s["copy_bias"],
                                    holds=s["holds"], loud_bias=s["loud_bias"],
                                    loud_side=s["loud_side"], stats=buckets,
+                                   lane_guidance=s["lane_guidance"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),
                                    **style_args(s, vocab, style_labels.get(row["key"], {})))

@@ -266,6 +266,8 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert sample.main([*common, "--key", key, "--stats", "ln=0.4,jack=0.1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob("*-stln0.4jack0.1_*.osu"))
     assert sample.main([*common, "--key", key, "--stats", "bogus=1"]) == 2
+    assert sample.main([*common, "--key", key, "--stats", "ln=0.4", "--style-guidance", "1"]) == 0
+    assert list((tmp_path / "cs" / "samples").glob("*-sg1-stln0.4_*.osu"))
     pytest.importorskip("rosu_pp_py")
     from scripts import evaluate
     for mode in ("oracle", "sample"):
@@ -280,10 +282,30 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                        for r in rows)
         else:
             assert all(table[r["stat_key"]]["split"] == "train" for r in rows)
+    if can_write_mp3():                       # the meeting pack of 10-06: stats + lane guidance
+        from scripts import playtest_pack
+        pp = tmp_path / "cs_pairs"
+        assert playtest_pack.main([
+            "--ckpt", str(tmp_path / "cs" / "best.pt"), "--split", "train", "--songs", "2",
+            "--sr-range", "0", "10", "--pairs", "--stats-csv", str(stats_csv),
+            "--settings", "random:4:continue:fwd+ref1+cp0+lbq0.1+st+lg1",
+            "random:4:continue:fwd+ref1+cp0+lbq0.1+stsample+lg1",
+            "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+            "--cache", str(data / "cache"), "--out", str(pp), "--device", "cpu"]) == 0
+        with open(pp / "answers.csv", encoding="utf-8-sig") as f:
+            sources = {r["source"] for r in csv.DictReader(f)}
+        assert sources == {"human", "ai random T4 continue fwd ref1@0.5 lbq0.1 cp0 st lg1",
+                           "ai random T4 continue fwd ref1@0.5 lbq0.1 cp0 stsample lg1"}
     from scripts import compare_runs
     runs = sorted((tmp_path / "cs").glob("eval_*_st-*"))
     assert compare_runs.main([str(r) for r in runs]) == 0
     assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "jack=x"]) == 2
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--style-guidance", "1"]) == 2
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--style-guidance", "1"]) == 0
+    summary = json.loads(next((tmp_path / "cs").glob("eval_*_st-oracle_sg1/summary.json"))
+                         .read_text())
+    assert summary["style_guidance"] == 1 and summary["mean_passes"] > 0
 
 
 def test_human_baselines(data: Path, tmp_path: Path) -> None:
@@ -362,9 +384,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-cp0_T4_*.osu"))
+    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-cp0_T4_*.osu"))
     import zipfile
-    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-cp0_T4_*.osz"))
+    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-cp0_T4_*.osz"))
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
@@ -383,7 +405,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-cp0]" in p.name for p in charts)                    # bar copies by default
+    assert all("-lbq0.1-cp0]" in p.name for p in charts)    # quiet bars thinned, bar copies: defaults
     assert generate.main([*common, "--timing", str(folder / "v0.osu"), "--mode", "independent",
                           "--order", "confidence", "--no-copy", "--out", str(tmp_path / "gen2")]) == 0
     made = list((tmp_path / "gen2").glob("*independent-confidence*.osu"))
@@ -614,6 +636,13 @@ def test_playtest_settings() -> None:
     assert (quiet["loud_bias"], quiet["loud_side"], quiet["stats"]) == (0.1, "quiet", "human")
     assert quiet["name"] == "ai random T128 continue fwd ref2@0.5 lbq0.1 st"
     assert parse_setting("random:128:continue:fwd+stsample")["stats"] == "sample"
+    guided = parse_setting("random:128:continue:fwd+ref2+st+sg1.5")
+    assert guided["style_guidance"] == 1.5 and guided["name"].endswith("sg1.5 st")
+    from scripts.playtest_pack import style_args
+    assert style_args(guided, None, {}) == {"style_guidance": 1.5}     # towards the stats
+    assert style_args(passes, None, {}) == {}
+    with pytest.raises(ValueError):
+        parse_setting("random:128:continue:fwd+sg1")                  # guidance towards nothing
     assert passes["loud_side"] == "both"
     copies = parse_setting("random:128:continue:fwd+ref2+cp4")
     assert copies["copy_bias"] == 4 and copies["name"] == "ai random T128 continue fwd ref2@0.5 cp4"

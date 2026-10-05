@@ -26,11 +26,14 @@ at each target SR (--sr, several allowed), or chunk by chunk with --mode
 independent (no context across chunks: the ablation of queue 3c). Writes to --out (default
 outputs/generated/<audio stem>/): the audio, one .osu per SR, and <stem>.osz.
 Open the .osz with osu! (lazer: double-click or drag onto the window; stable:
-put it in Songs/ and press F5).
+put it in Songs/ and press F5). Quiet bars are thinned by default (--loud-bias 0.1,
+quiet side; 0 turns it off), which brought the loudness dynamics of 60 val songs to
+the human level with the SR unchanged (EXPERIMENTS 2026-10-06).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
-chart or a long-note chart, so --hold-bias sets how readily long notes start
-(-1: about a third as often, -inf: none). Holds shorter than --min-hold cells
+chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
+full-v4, --stats ln=X asks for that share; with any model --hold-bias sets how
+readily long notes start (-1: about a third as often, -inf: none). Holds shorter than --min-hold cells
 become taps and releases keep --release-gap empty cells before the next press
 in their lane (sampler.clean_holds); by default both follow the target SR as in
 human charts (sampler.HOLD_RULES: Easy 6 / 5 cells, Normal 5 / 2, Hard and up
@@ -46,7 +49,8 @@ Chart stats (a model trained with --chart-stats, src/data/chartstats.py): --stat
 (of single-note moves within a beat, the same lane again) and trill rate (of two
 lane-changing moves in a row, straight back); names left out are the model's choice.
 --stats sample takes all three from a random human train chart of about the same SR
-(data/chart_stats.csv), printed per SR. Human charts: long-note share median 0.19,
+(data/chart_stats.csv), printed per SR. --style-guidance W pushes towards the stats
+as well (classifier-free guidance, twice the passes; EXPERIMENTS 2026-10-06). Human charts: long-note share median 0.19,
 p90 0.47; jacks median 0.03, p90 0.11; trills median 0.14, p90 0.29 (240 val songs, 10-05).
 """
 
@@ -231,8 +235,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--refine-holds", action="store_true",
                     help="decide tap or long note and the release again with the whole chart "
                          "in view (sampler.refine_holds)")
-    ap.add_argument("--loud-bias", type=float, default=0.0,
-                    help="fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
+                    help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
@@ -263,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="chart stats (model trained with --chart-stats): ln=0.4,jack=0.05,"
                          "trill=0.15, or sample (a human train chart's, by SR)")
     ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"))
+    ap.add_argument("--lane-guidance", type=float, default=None,
+                    help="the lane passes' own guidance weight towards the style / chart stats "
+                         "(default: --style-guidance); long notes are decided before them")
     ap.add_argument("--list-styles", action="store_true",
                     help="print the genres and mappers the model knows, and stop")
     ap.add_argument("--device", default="auto")
@@ -310,16 +317,20 @@ def main(argv: list[str] | None = None) -> int:
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
     style = {}
-    if a.genre is not None or a.mapper is not None or a.style_guidance:
+    if a.genre is not None or a.mapper is not None:
         vocab = getattr(model, "style", None)
         if vocab is None:
             ap.error(f"{a.ckpt} was trained without --style: no --genre / --mapper")
         try:
             style = {"genre": None if a.genre is None else genre_index(vocab, a.genre),
-                     "mapper": None if a.mapper is None else mapper_index(vocab, a.mapper),
-                     "style_guidance": a.style_guidance}
+                     "mapper": None if a.mapper is None else mapper_index(vocab, a.mapper)}
         except ValueError as e:
             ap.error(str(e))
+    if (a.style_guidance or a.lane_guidance) and not style and a.stats is None:
+        ap.error("guidance goes towards a style or chart stats: add --genre / --mapper or "
+                 "--stats")
+    if a.style_guidance:
+        style["style_guidance"] = a.style_guidance
     spec, fixed, table = getattr(model, "chart_stats", None), None, None
     if a.stats is not None:
         if spec is None:
@@ -356,6 +367,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-by-{safe(a.mapper)}"
     if a.style_guidance:
         order += f"-sg{a.style_guidance:g}"
+    if a.lane_guidance is not None:
+        order += f"-lg{a.lane_guidance:g}"
     if fixed is not None:
         order += "-" + "".join(f"{chartstats.SHORT[n]}{v:g}" for n, v in fixed.items())
     elif a.stats == "sample":
@@ -379,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
                                empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
-                               loud_side=a.loud_side, stats=buckets, **style)
+                               loud_side=a.loud_side, stats=buckets,
+                               lane_guidance=a.lane_guidance, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
         chart.audio_filename = audio_name

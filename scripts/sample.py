@@ -75,8 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--refine-holds", action="store_true",
                     help="decide tap or long note and the release again with the whole chart "
                          "in view (sampler.refine_holds)")
-    ap.add_argument("--loud-bias", type=float, default=0.0,
-                    help="fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
+                    help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
@@ -109,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stats", default=None,
                     help="chart stats (model trained with --chart-stats): oracle (this chart's "
                          "own), or values like ln=0.4,jack=0.05,trill=0.15")
+    ap.add_argument("--lane-guidance", type=float, default=None,
+                    help="the lane passes' own guidance weight towards the style / chart stats "
+                         "(default: --style-guidance); long notes are decided before them")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
     if a.no_copy:
@@ -155,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         buckets = chartstats.encode(spec, wanted)
         print("chart stats: " + ", ".join(f"{chartstats.SHORT[n]} {v:.3f}"
                                           for n, v in wanted.items()))
+        if a.style_guidance and not style:
+            style = {"style_guidance": a.style_guidance}          # guidance towards the stats
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                            order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
@@ -163,7 +168,8 @@ def main(argv: list[str] | None = None) -> int:
                            empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                            jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
-                           loud_side=a.loud_side, stats=buckets, **style)
+                           loud_side=a.loud_side, stats=buckets,
+                           lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
 
@@ -189,8 +195,12 @@ def main(argv: list[str] | None = None) -> int:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
-    if style:
-        order += "-style" + (f"-sg{a.style_guidance:g}" if a.style_guidance else "")
+    if "genre" in style:
+        order += "-style"
+    if style.get("style_guidance"):
+        order += f"-sg{a.style_guidance:g}"
+    if a.lane_guidance is not None:
+        order += f"-lg{a.lane_guidance:g}"
     if a.stats is not None:
         order += "-st" + "".join(ch for ch in a.stats.replace("=", "").replace(",", "")
                                  if ch.isalnum() or ch in ".-")

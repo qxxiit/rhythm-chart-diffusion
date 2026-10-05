@@ -946,6 +946,109 @@ How 2 could fail: the stats are used (prediction 1 holds) but the lane passes at
 temperature 0.5 squash the jacks again, so correlation rises while the jack mean stays
 under 0.02; or, like the mapper labels, they are ignored (val_ce = val_ce_null).
 
+### 2026-10-06 · full-v4: chart stats as inputs; the quiet-side loudness bias (240 / 60 val songs)
+
+`run_1006.sh`: `build_chart_stats.py` (18,191 charts, 24 s); full-v4 = the full-v3 recipe
+(row masks 0.5) + `--chart-stats` (60,000 steps, 3.3 h); evaluated with fwd + ref2 on the
+240 val songs with `--stats oracle`, and on the first 60 with none and with `sample`;
+full-v1 fwd + ref2 with `--loud-bias 0.1` on the quiet side (first 60). Paired song by
+song with `compare_runs.py` against full-v3 fwd + ref2 (or the run named).
+
+**Predictions of 10-05, checked**
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | val_ce (own stats) ≥ 0.001 below val_ce_null | 0.0740 vs 0.0741 (gap 0.0001 at every check from 8k steps) | miss |
+| 1 | val_ce_null within 0.002 of full-v3 (0.0734) | 0.0741 | hit |
+| 2 | per-song correlation with the human chart: long-note share ≥ 0.6 | 0.75 [0.68, 0.81] (full-v3 0.13) | hit |
+| 2 | jacks ≥ 0.4 | 0.42 [0.09, 0.65] (0.02) | hit, barely |
+| 2 | trills ≥ 0.3 | 0.07 [-0.05, 0.21] (0.00) | miss |
+| 2 | SD over songs / human: long-note share ≥ 0.8, jacks ≥ 0.5 | 0.71 (0.50), 0.34 (0.18) | miss, miss |
+| 2 | move_jack ≥ 0.02, move_trill ≥ 0.13 | 0.0098 (0.0092), 0.132 (+0.017 [+0.008, +0.025]) | miss, hit |
+| 2 | ln_f1 over chance ≥ +0.10 | +0.062 (0.250 vs chance 0.188; full-v3 +0.053) | miss |
+| 2 | same-lane runs of 3+ and AABB twice full-v3's | 0.09% (0.05%), AABB 0.20 (0.15) per 1,000 | miss |
+| 2 | F1@50 within 0.005, SR error within 0.02 | -0.001, +0.019 | hit |
+| 3 | `--stats none` as full-v3 (F1 within 0.01, long-note share within 0.03) | F1 -0.004, share -0.027 | hit |
+| 4 | `--stats sample`: SD / human ≥ 0.8 (long notes), ≥ 0.5 (jacks) | 0.95, 0.17 | hit, miss |
+| 4 | correlation with the human chart near 0; F1 within 0.01 of none | 0.09 / 0.16; -0.010 [-0.018, -0.003] | hit, at the edge |
+| 5 | quiet-side loud bias: light bars ≥ +0.008, loud_slope ≥ +0.015 | +0.013 [+0.004, +0.021] (0.062; human 0.070), +0.025 [+0.015, +0.037] (0.193; human 0.191) | hit, hit |
+| 5 | SR bias within ±0.03, density -1 to -4%, F1 within 0.005 | +0.010, -1.2%, +0.001 | hit |
+
+The val CE gap says nothing here: every validation ratio leaves enough of the chart in
+view to read its style from (the mapper labels looked the same, 10-04), while generation,
+which starts from nothing, follows the stats (below).
+
+**How far each stat moves the charts** (the oracle run: the AI's value by the bucket of
+the value it was given, 240 songs)
+
+| bucket | long-note share: asked → AI | jacks: asked → AI | trills: asked → AI |
+|---|---|---|---|
+| 0 | 0.004 → 0.013 | 0.000 → 0.007 | 0.022 → 0.156 |
+| 2 | 0.082 → 0.084 | 0.009 → 0.007 | 0.098 → 0.114 |
+| 4 | 0.178 → 0.162 | 0.031 → 0.008 | 0.149 → 0.128 |
+| 6 | 0.326 → 0.262 | 0.074 → 0.009 | 0.228 → 0.148 |
+| 7 | 0.537 → 0.337 | 0.154 → 0.020 | 0.324 → 0.144 |
+
+Long notes follow up to about 0.2 and fall short above it. Jacks and trills hardly move.
+
+**Where the stats get lost** (CPU, one 8-bar window from the middle of each of 10 val
+songs; the same window and seed with all three stats low (long notes 0.03, jacks 0,
+trills 0.06) or high (0.40, 0.11, 0.28); counts pooled over the songs)
+
+| | long-note share low / high | jacks low / high | trills low / high |
+|---|---|---|---|
+| sampled (no lane passes) | 0.022 / 0.454 | 0.027 / 0.069 | 0.149 / 0.219 |
+| fwd + ref2 | 0.022 / 0.454 | 0.000 / 0.114 | 0.140 / 0.170 |
+| fwd + ref2, guidance 2 throughout (`--style-guidance 2`) | 0.001 / 0.688 | 0.000 / 0.060 | 0.032 / 0.210 |
+| fwd + ref2, guidance 1 in the lane passes only (`--lane-guidance 1`) | 0.022 / 0.454 | 0.000 / 0.136 | 0.076 / 0.195 |
+| fwd + ref2, guidance 2 in the lane passes only | 0.022 / 0.454 | 0.000 / 0.170 | 0.099 / 0.246 |
+| human (the same windows) | 0.191 | 0.030 | 0.070 |
+
+296-317 single-note moves and 140-200 move pairs per cell.
+
+Sampling follows all three (long notes 0.02 vs 0.45, trills 0.15 vs 0.22). The lane
+passes keep the long notes (they keep the rhythm and the holds) and halve what is left
+of the trill difference (0.03). Guidance throughout overshoots the long notes (0.001 /
+0.69 for 0.03 / 0.40). Guidance in the lane passes only leaves the long notes as sampled
+and brings the trill difference back (+0.12 at 1, +0.15 at 2). Jacks separate in these
+windows even without guidance, unlike in the full songs; with all three stats high
+together, part of it may come with the long notes (repeated long notes in one lane).
+
+Readings:
+1. The chart stats work for what sampling decides: the long-note share follows the
+   chart's value (correlation 0.75, a human spread with `sample`), as the SR does. For
+   long notes the AI now has an amount per song; where they go is still near chance
+   (+0.06 over chance at the right amount).
+2. Jacks and trills are decided again by the lane passes, which ask with the rest of the
+   chart in view; there the context outweighs the stats, and the passes at temperature
+   0.5 pick the likeliest lanes. Guidance only in the lane passes
+   (`generate_song(lane_guidance=)`, `--lane-guidance`: logits c + w (c - u) towards the
+   stats, u without them) restores the trill difference in windows without touching the
+   long notes. To be checked on whole songs.
+3. The quiet-side loudness bias does what the two-sided one did for the dynamics without
+   the SR: playable charts use it from now on (`generate.py`, `sample.py`:
+   `--loud-bias 0.1`, 0 turns it off).
+
+Next (`run_1007.sh`): a pairs playtest pack with full-v4 for the 10-07 meeting
+(16 val songs, `--seed 1`: none of the 10-04 songs; settings in turn: fwd + ref2 + copies
++ quiet-side loudness + lane guidance 1, with the human chart's stats (`st`) or a random
+train chart's of that SR (`stsample`)), then full-v4 `--stats oracle --lane-guidance 1`
+and `2` on the first 60 songs against `--stats oracle` alone on the same songs
+(correlation with the human chart: long notes 0.79, jacks 0.60 [-0.10, 0.84], trills 0.00;
+move_jack 0.012, move_trill 0.142, motion_pred 0.123, F1@50 0.373).
+
+Predictions, written before the runs:
+1. Lane guidance 1: per-song correlation of trills with the human chart 0.3 or more
+   (0.00); move_jack 0.015 or more; long-note share and its correlation within 0.01 /
+   0.05 (they are decided before the passes); F1@50 within 0.005, SR error within 0.02;
+   motion_pred down by at most 0.01; forward passes 1.4-1.7 times.
+2. Lane guidance 2: trills 0.35 or more; motion_pred down by at most 0.02, F1 within 0.01.
+3. Playtest (one player, forced choice): AI taken for human 1-4 of 16 (0 of 16 on
+   10-04); fewer comments on long notes without intent; jacks and minijacks still named.
+How it could fail: guidance drags the lanes to the stat at the cost of the patterns
+the passes were for (motion_pred and coverage down by more than 0.02), or whole songs
+behave unlike the windows (trills stay flat).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

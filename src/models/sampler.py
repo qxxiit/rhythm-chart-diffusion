@@ -783,7 +783,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   genre: int | None = None, mapper: int | None = None,
                   style_guidance: float = 0.0, holds: bool = False,
                   hold_share: float | None = None, loud_bias: float = 0.0,
-                  loud_side: str = "quiet", stats=None) -> np.ndarray:
+                  loud_side: str = "quiet", stats=None,
+                  lane_guidance: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -815,6 +816,11 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     stats         chart-stat buckets (chartstats.encode: long-note share, jack rate, trill
                   rate) for a model trained with --chart-stats; None = none given, which
                   is what that model samples when no one chooses
+    lane_guidance the lane passes' own guidance weight towards the style and stats (None:
+                  style_guidance). The lane passes ask with the rest of the chart in view,
+                  where the context outweighs the stats; the long notes are already decided
+                  by then, so guidance there moves the lanes (jacks, trills) without
+                  overshooting the long-note share (EXPERIMENTS 2026-10-06)
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
@@ -826,8 +832,12 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
         raise ValueError(f"unknown mode {mode!r}")
     if lanes not in LANE_PASSES:
         raise ValueError(f"unknown lanes {lanes!r}")
+    lane_model = None
+    if lane_guidance is not None and lane_guidance != style_guidance:
+        lane_model = Styled(model, genre, mapper, lane_guidance, stats=stats)
     if genre is not None or mapper is not None or style_guidance or stats is not None:
         model = Styled(model, genre, mapper, style_guidance, stats=stats)
+    lane_model = lane_model or model
     r = model.config.frames_per_cell
     n_chunks = -(-n_cells // L)
     song = np.full(((n_chunks + 1) * L, K), PAD, dtype=np.int64)   # +1 chunk for overhang
@@ -862,12 +872,13 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if min_hold > 0 or release_gap > 0:
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
     if lanes == "forward":
-        forward_lanes(model, song, frames, s, beat_len, n_cells, rng=rng, release_gap=release_gap,
+        forward_lanes(lane_model, song, frames, s, beat_len, n_cells, rng=rng,
+                      release_gap=release_gap,
                       jack_bias=jack_bias,
                       temperature=lane_temperature if forward_temperature is None
                       else forward_temperature)
     if refine:
-        refine_lanes(model, song, frames, s, beat_len, n_cells, sweeps=refine,
+        refine_lanes(lane_model, song, frames, s, beat_len, n_cells, sweeps=refine,
                      temperature=lane_temperature, rng=rng, release_gap=release_gap,
                      jack_bias=jack_bias)
     if holds or hold_share is not None:

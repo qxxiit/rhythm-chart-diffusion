@@ -193,6 +193,8 @@ class Styled(nn.Module):
         if stats is not None and len(stats) != self.config.n_stats:
             raise ValueError(f"{len(stats)} chart stats for a model with {self.config.n_stats}")
         self.stats = None if stats is None else tuple(int(v) for v in stats)
+        if self.stats is not None and not all(0 <= v <= self.config.stat_bins for v in self.stats):
+            raise ValueError(f"chart-stat buckets {self.stats} outside 0..{self.config.stat_bins}")
 
     def _stats(self, stats, like: torch.Tensor) -> torch.Tensor | None:
         if not self.config.n_stats:
