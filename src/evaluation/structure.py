@@ -16,6 +16,16 @@
                      song's bars); 40 val songs: human 0.22, fwd + ref2 + copies 0.20
         light_bars   share of the bars with notes that have at most 30% of the song's
                      90th-percentile bar: the rests inside a song
+    quiet_rhythm(gen, human, mel, n)   against the human chart, by the bar's loudness z
+                 (as in dynamics), EXPERIMENTS 2026-10-06 (quiet sections):
+        off_rhythm_quiet, off_rhythm_rest
+                     of the generated onset rows in quiet bars (z < -1) / in the other
+                     bars, the share with no human onset row within one cell (1/12 beat);
+                     fwd + ref2 on 40 val songs: 30% in quiet bars, 7% in the loudest
+        empty_bar_fill
+                     of the bars between the human chart's first and last onset where the
+                     human chart has none, the share where the generated chart has one
+                     (1.2% of the bars; the sampled charts fill 83-92% of them)
 
 Bars are 48 cells (4/4). Row 0 of the token grid is a bar line (tokenizer), so
 bar m is rows 48m..48m+47 and mel frames 192m..192m+191, and chunk c is bars
@@ -142,6 +152,50 @@ def dynamics(tokens: np.ndarray, mel: np.ndarray, n_cells: int) -> dict:
     full = per_bar[per_bar > 0]
     light = float(np.mean(full <= 0.3 * np.percentile(full, 90))) if len(full) else float("nan")
     return {"loud_slope": slope, "light_bars": light}
+
+
+QUIET_Z = -1.0                  # quiet_rhythm: bars this far below the song's mean loudness
+
+
+def quiet_rhythm(gen: np.ndarray, human: np.ndarray, mel: np.ndarray, n_cells: int,
+                 quiet_z: float = QUIET_Z) -> dict:
+    """off_rhythm_quiet, off_rhythm_rest, empty_bar_fill (module docstring); nan for songs
+    under 8 bars, or where a part has no generated onsets / the human chart no empty bar."""
+    keys = ("off_rhythm_quiet", "off_rhythm_rest", "empty_bar_fill")
+    out = dict.fromkeys(keys, float("nan"))
+    n_bars = n_whole_bars(n_cells)
+    if n_bars < 8:
+        return out
+    rows = n_bars * BAR
+
+    def onset_rows(x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x).reshape(-1, np.asarray(x).shape[-1])[:rows]
+        return np.isin(x, (TAP, HOLD_START)).any(axis=1)
+
+    g, h = onset_rows(gen), onset_rows(human)
+    frames = np.asarray(mel[:rows * FRAMES_PER_CELL], dtype=np.float64)
+    if len(frames) < rows * FRAMES_PER_CELL:
+        return out
+    loud = frames.reshape(n_bars, BAR * FRAMES_PER_CELL, -1).mean(axis=(1, 2))
+    if loud.std() == 0:
+        return out
+    quiet = np.repeat((loud - loud.mean()) / loud.std() < quiet_z, BAR)
+    near = h.copy()
+    near[1:] |= h[:-1]
+    near[:-1] |= h[1:]
+    off = g & ~near
+    for key, part in (("off_rhythm_quiet", quiet), ("off_rhythm_rest", ~quiet)):
+        if (g & part).any():
+            out[key] = float((off & part).sum() / (g & part).sum())
+    hb, gb = h.reshape(n_bars, BAR).any(axis=1), g.reshape(n_bars, BAR).any(axis=1)
+    full = np.flatnonzero(hb)
+    if len(full) >= 2:
+        inside = np.zeros(n_bars, dtype=bool)
+        inside[full[0]:full[-1] + 1] = True
+        empty = inside & ~hb
+        if empty.any():
+            out["empty_bar_fill"] = float((empty & gb).sum() / empty.sum())
+    return out
 
 
 def lag_profile(s: np.ndarray, max_lag: int) -> np.ndarray:

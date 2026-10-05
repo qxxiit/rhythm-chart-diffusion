@@ -47,6 +47,7 @@ METRICS = [
     ("hold_share", "human_hold_share"), ("hold_beats", "human_hold_beats"),
     ("release_on_onset", "human_release_on_onset"), ("ln_f1", None),
     ("loud_slope", "human_loud_slope"), ("light_bars", "human_light_bars"),
+    ("off_rhythm_quiet", None), ("off_rhythm_rest", None), ("empty_bar_fill", None),
     ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")

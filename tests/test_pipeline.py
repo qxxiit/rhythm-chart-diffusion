@@ -637,6 +637,9 @@ def test_playtest_settings() -> None:
     assert (quiet["loud_bias"], quiet["loud_side"], quiet["stats"]) == (0.1, "quiet", "human")
     assert quiet["name"] == "ai random T128 continue fwd ref2@0.5 lbq0.1 st"
     assert parse_setting("random:128:continue:fwd+stsample")["stats"] == "sample"
+    gated = parse_setting("random:128:continue:fwd+ref2+st+lg2+ob1")
+    assert gated["onset_bias"] == 1 and gated["name"].endswith("st lg2 ob1")
+    assert parse_setting("random:128")["onset_bias"] == 0
     guided = parse_setting("random:128:continue:fwd+ref2+st+sg1.5")
     assert guided["style_guidance"] == 1.5 and guided["name"].endswith("sg1.5 st")
     from scripts.playtest_pack import style_args

@@ -1087,6 +1087,69 @@ Readings:
    + copies + quiet bars, the stats from `--stats sample` or the user. To be playtested
    against the lane-guidance-1 pack of 10-06.
 
+### 2026-10-06 · Playtest of full-v4 (10 of 16 songs) and the quiet sections
+
+The pairs pack of `run_1007.sh` (full-v4, fwd + ref2 + copies + quiet bars + lane guidance
+1; the human chart's stats (`st`) and a random train chart's (`stsample`) in turn; 16 val
+songs, seed 1), one player, 10 songs played: the human chart found in 10 of 10 (AI taken for
+human 0 of 10, 95% Wilson [0%, 28%]). Confidence (1-5) 5, 5, 2, 4, 3, 4, 4, 4 on the 8
+songs rated; with the human chart's stats 3.5 on average (4 songs), with a random chart's
+4.25 (4). On PT13 the player would have taken the AI chart (st) for human if it had been
+alone ("the long-note intent improved, confusing"); the human chart gave itself away by
+its committed long-note style.
+
+Comments, and what the numbers say:
+- "off the beat in quiet parts, fatal", "notes where the song is really quiet (34-44 s),
+  where the human chart is empty": confirmed and large. Of the AI onset rows with no human
+  onset row within one cell (1/12 beat), by the bar's loudness z (40 val songs, full-v4
+  oracle): z < -1 30%, -1..0 20%, 0..1 14%, > 1 6%. Bars inside the song that the human
+  chart leaves empty (1.2% of the bars, 55% of them at loudness z < -1.5 against 8% of all
+  bars): the AI puts notes in 83% (full-v1 fwd + ref2) to 92% (full-v4) of them; the
+  quiet-side loudness bias 0.1 does not change that (84%). Odd snaps (1/6, 1/12) in quiet
+  bars 14% (human 10%).
+- "the long-note intent improved but is not there yet; long notes cut by taps (PT14)", "the
+  speed of the song not handled (완급)", "steady-rhythm mash (PT15)", "phrases come in 4 / 8
+  bars": not measured yet.
+
+Where the off-rhythm notes land (40 val songs; the audio's onset strength per row: spectral
+flux of the song-standardized log-Mel, the largest of the row's frames and of the next
+row's, as audio onsets peak about 18 ms after note times; ranked within the song):
+
+| onset rows | below the song's median onset strength | in its bottom quarter |
+|---|---|---|
+| human | 26% | 9% |
+| AI, on the human rhythm (within a cell) | 22% | 8% |
+| AI, off it | 62% | 31% |
+
+(The previous row instead of the next one separates them less: 60% / 29% against 33% /
+14%.) The AI's off-rhythm onsets sit where nothing in the music starts; the model's own
+audio reading has not kept them out there.
+
+`sampler.onset_gate` / `--onset-bias X`: while sampling, an EMPTY bias per row of
+X * clip((0.5 - q) / 0.4, 0, 1), q the share of the song's rows with weaker onsets: 0 at
+the median and above, X at the 10th percentile and below (silence included); it adds to the
+loudness bias. New columns (`structure.quiet_rhythm`, also in `compare_runs.py`):
+off_rhythm_quiet, off_rhythm_rest and empty_bar_fill as above.
+
+Predictions for the night of 10-06 (`run_quiet.sh`; full-v4, fwd + ref2, oracle stats, lane
+guidance 2, the first 60 val songs, against the same without the gate, rescored for the new
+columns; that one is expected near off_rhythm_quiet 0.30, off_rhythm_rest 0.15,
+empty_bar_fill 0.90):
+1. `--onset-bias 1`: off_rhythm_quiet down by 0.03 or more, off_rhythm_rest by 0.02 or
+   more, empty_bar_fill by 0.10 or more; F1@50 up by 0.005 or more (precision); density
+   down 3-8%, SR bias down 0.05-0.2; motion_pred, move_jack, move_trill within 0.01.
+2. `--onset-bias 2`: about twice that: off_rhythm_quiet down 0.06, F1 +0.01, density
+   down 6-15%.
+3. `--loud-bias 0.3` (quiet side): light bars up 0.02 or more, empty_bar_fill down 0.10 or
+   more, off_rhythm_quiet down 0.02 or more (fewer notes there); density down 2-5%, SR bias
+   within 0.05.
+4. Both (1 and 3): the gains add up roughly; density down 5-12%.
+How it could fail: the notes taken away come back elsewhere in the same window (the SR
+condition holds the density), so the off-rhythm shares stay; or the gate thins every
+quiet part alike and recall falls more than precision rises (F1 down).
+Also in the run: a second pairs pack with lane guidance 2 (16 new songs, seed 81, tag
+1006g).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

@@ -613,6 +613,44 @@ def loudness_bias(mel: np.ndarray, n_cells: int, n_rows: int, loud_bias: float,
     return out
 
 
+def onset_strength(mel: np.ndarray, n_rows: int) -> np.ndarray:
+    """[n_rows] the audio's onset strength per token row: spectral flux (the positive
+    differences of the song-standardized log-Mel between frames, summed over bands), the
+    largest over the row's frames, then the larger of the row and the next one (audio
+    onsets peak about 18 ms after the note times, DECISIONS 2026-09-27); 0 past the audio."""
+    fpc = 4
+    x = np.asarray(mel, dtype=np.float64)
+    m = min(n_rows, len(x) // fpc)
+    out = np.zeros(n_rows)
+    if m < 2:
+        return out
+    x = x[:m * fpc]
+    d = np.maximum(np.diff(x, axis=0, prepend=x[:1]), 0.0).sum(axis=1)
+    f = d.reshape(m, fpc).max(axis=1)
+    out[:m] = np.maximum(f, np.append(f[1:], f[-1]))
+    return out
+
+
+ONSET_FULL = 0.1                # onset_gate: rows at or below this flux quantile get all of it
+
+
+def onset_gate(mel: np.ndarray, n_cells: int, n_rows: int, beta: float) -> np.ndarray:
+    """[n_rows] log bias on EMPTY per row from the audio's onset strength (onset_strength),
+    ranked within the song: 0 for rows at or above the median, rising to beta at the
+    ONSET_FULL quantile and below (silence included); 0 past n_cells. On 40 val songs
+    (EXPERIMENTS 2026-10-06, quiet sections) the sampled onsets that miss the human rhythm
+    by more than a cell lie below the song's median onset strength 62% of the time (in its
+    bottom quarter 31%), the human onsets 26% (9%): the bias takes notes away where the
+    music gives them nothing to land on, more off the rhythm than on it."""
+    out = np.zeros(n_rows)
+    if beta == 0 or n_cells < 2:
+        return out
+    f = onset_strength(mel, n_cells)
+    q = np.searchsorted(np.sort(f), f, side="left") / len(f)   # share of rows strictly weaker
+    out[:n_cells] = beta * np.clip((0.5 - q) / (0.5 - ONSET_FULL), 0.0, 1.0)
+    return out
+
+
 # Bar copies. Human charts repeat whole bars where the music repeats; on the 240 val
 # charts (EXPERIMENTS 2026-10-03) 17% of the bars with 4+ onsets copy an earlier bar,
 # as it is or mirrored, and the source is the earlier bar whose audio is most similar
@@ -784,7 +822,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   style_guidance: float = 0.0, holds: bool = False,
                   hold_share: float | None = None, loud_bias: float = 0.0,
                   loud_side: str = "quiet", stats=None,
-                  lane_guidance: float | None = None) -> np.ndarray:
+                  lane_guidance: float | None = None, onset_bias: float = 0.0) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -810,6 +848,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     loud_bias     while sampling, log bias on EMPTY of -loud_bias * the bar's loudness
                   z-score (loudness_bias): fewer notes where the music is quiet; loud_side
                   "quiet" (only there) or "both" (also more where it is loud)
+    onset_bias    while sampling, log bias on EMPTY of up to onset_bias on the rows where
+                  the audio's onset strength is below the song's median (onset_gate; the
+                  two biases add up): fewer notes where nothing in the music starts
     genre, mapper style indices (style.encode) for a model trained with --style; None =
                   no label. style_guidance w > 0: classifier-free guidance towards the
                   style and stats (diffusion.Styled), two forward passes for every one
@@ -845,7 +886,10 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None else 0)
     beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
-    row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) if loud_bias else None
+    row_bias = None
+    if loud_bias or onset_bias:
+        row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) \
+            + onset_gate(mel, n_cells, len(song), onset_bias)
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(

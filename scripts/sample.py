@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
                          "in view (sampler.refine_holds)")
     ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
                     help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
+    ap.add_argument("--onset-bias", type=float, default=0.0,
+                    help="fewer notes where nothing in the music starts: EMPTY bias of up to X "
+                         "on rows with weak audio onsets (sampler.onset_gate); 0 = off")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
@@ -168,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                            empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                            jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
-                           loud_side=a.loud_side, stats=buckets,
+                           loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -191,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-jb{a.jack_bias:g}"
     if a.loud_bias:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
+    if a.onset_bias:
+        order += f"-ob{a.onset_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:

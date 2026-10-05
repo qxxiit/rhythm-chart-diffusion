@@ -784,6 +784,37 @@ def test_drop_stats() -> None:
     assert torch.equal(drop_stats(stats, 8, 0.0), stats)
 
 
+def test_onset_gate_follows_the_audio() -> None:
+    from src.models.sampler import onset_gate, onset_strength
+    rows = 96
+    mel = np.zeros((rows * 4, 80))
+    clicks = list(range(10, 96, 10))
+    for r in clicks:
+        mel[4 * r + 1] = 5.0                                      # an onset inside row r
+    f = onset_strength(mel, rows + 8)
+    assert f[10] > 0 and f[9] > 0 and f[15] == 0               # the row and the one before
+    assert not f[rows:].any()                                  # past the audio
+    gate = onset_gate(mel, rows, rows + 8, 1.5)
+    assert gate[10] == 0 and gate[9] == 0                      # strong onsets: no bias
+    assert gate[15] == 1.5 and not gate[rows:].any()           # nothing starts: all of it
+    assert not onset_gate(mel, rows, rows, 0.0).any()
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    audio = np.zeros((len(tokens) * L * 4, 80))
+    audio[4 * np.arange(0, len(tokens) * L, 6) + 1] = 5.0     # an onset every half beat
+    args = (model, audio, 3.0, chart.timing_points, metas[0].cell_offset, L)
+
+    def off_onsets(**kw):
+        x = generate_song(*args, steps=6, seed=2, **kw).reshape(-1, K)[:L]
+        on = np.isin(x, (TAP, 2)).any(axis=1)
+        near = np.zeros(L, dtype=bool)
+        near[0::6] = near[5::6] = True                          # the onset rows and the row before
+        return int((on & ~near).sum())
+
+    assert off_onsets(onset_bias=3.0) < off_onsets()
+
+
 def test_release_on_onset() -> None:
     from src.evaluation.holds import hold_stats
     x = np.full((48, K), EMPTY, dtype=np.int64)

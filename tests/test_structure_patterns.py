@@ -241,3 +241,28 @@ def test_dynamics_follow_loudness() -> None:
     assert d["loud_slope"] == pytest.approx(0.6)                    # 0.4 -> 1.6 of the mean
     assert d["light_bars"] == pytest.approx(0.5)                    # 2 <= 0.3 * 8
     assert np.isnan(dynamics(x[:5 * BAR], mel, 5 * BAR)["loud_slope"])
+
+
+def test_quiet_rhythm() -> None:
+    from src.evaluation.structure import quiet_rhythm
+    n_bars, bar = 10, 48
+    mel = np.ones((n_bars * bar * 4, 8))
+    mel[:2 * bar * 4] = -3.0                            # bars 0-1 quiet (z = -2), the rest z 0.5
+    human = np.full((n_bars * bar, 4), EMPTY)
+    gen = human.copy()
+    for b in range(n_bars):
+        if b != 5:                                      # bar 5: empty in the human chart
+            for r in (0, 12, 24, 36):
+                human[b * bar + r, r // 12] = TAP
+                gen[b * bar + r, r // 12] = TAP
+            gen[b * bar + 6, 0] = TAP                   # one note off the human rhythm per bar
+    gen[5 * bar, 1] = gen[5 * bar + 6, 2] = TAP         # notes where the human chart has none
+    out = quiet_rhythm(gen, human, mel, n_bars * bar)
+    assert out["off_rhythm_quiet"] == pytest.approx(2 / 10)
+    assert out["off_rhythm_rest"] == pytest.approx((7 + 2) / (7 * 5 + 2))
+    assert out["empty_bar_fill"] == 1.0
+    gen[5 * bar] = gen[5 * bar + 6] = EMPTY
+    assert quiet_rhythm(gen, human, mel, n_bars * bar)["empty_bar_fill"] == 0.0
+    assert quiet_rhythm(human, human, mel, n_bars * bar)["off_rhythm_rest"] == 0.0
+    short = quiet_rhythm(gen[:4 * bar], human[:4 * bar], mel, 4 * bar)
+    assert all(np.isnan(v) for v in short.values())

@@ -50,6 +50,10 @@ human chart's SR with the song's real timing, then score:
                           long notes match the human chart's (holds.ln_agreement)
     loud_slope, light_bars
                           how density follows loudness, and the light bars (structure.dynamics)
+    off_rhythm_quiet, off_rhythm_rest, empty_bar_fill
+                          onset rows off the human rhythm in quiet / other bars, and the
+                          human chart's empty bars that the generated chart fills
+                          (structure.quiet_rhythm)
     genre, mapper_known   the song's genre (data/style.csv, if there) and, for a model with
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
@@ -94,7 +98,7 @@ from src.evaluation.holds import hold_stats, ln_agreement
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
-from src.evaluation.structure import dynamics, structure_scores
+from src.evaluation.structure import dynamics, quiet_rhythm, structure_scores
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import (
     LANE_PASSES,
@@ -126,6 +130,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}{k}": v for k, v in dynamics(flat, mel, n_cells).items()})
     row.update(ln_agreement(gen_tokens.reshape(-1, gen_tokens.shape[-1])[:n_cells],
                             human_tokens.reshape(-1, human_tokens.shape[-1])[:n_cells]))
+    row.update(quiet_rhythm(gen_tokens, human_tokens, mel, n_cells))
     return row
 
 
@@ -205,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--loud-bias", type=float, default=0.0,
                     help="EMPTY bias of -X times each bar's loudness z-score while sampling: "
                          "fewer notes in quiet bars (sampler.loudness_bias)")
+    ap.add_argument("--onset-bias", type=float, default=0.0,
+                    help="EMPTY bias of up to X on the rows where the audio's onset strength "
+                         "is below the song's median, while sampling (sampler.onset_gate)")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only (default), or both: also more notes in "
                          "loud bars (the 10-04 runs, tag _lb; quiet is _lbq)")
@@ -311,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_jb{a.jack_bias:g}"
     if a.loud_bias:
         tag += f"_lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
+    if a.onset_bias:
+        tag += f"_ob{a.onset_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
@@ -392,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
+                                   onset_bias=a.onset_bias,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -441,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
+               "onset_bias": a.onset_bias,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
