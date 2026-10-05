@@ -1049,6 +1049,44 @@ How it could fail: guidance drags the lanes to the stat at the cost of the patte
 the passes were for (motion_pred and coverage down by more than 0.02), or whole songs
 behave unlike the windows (trills stay flat).
 
+### 2026-10-06/07 · Lane guidance towards the chart stats (full-v4, first 60 val songs)
+
+`run_1007.sh`: full-v4 fwd + ref2 `--stats oracle` with `--lane-guidance 1` and `2`,
+paired with `--stats oracle` alone on the same 60 songs. The playtest pack of that run
+(16 songs, lane guidance 1) waits for its ratings.
+
+| | no guidance | lane guidance 1 | lane guidance 2 | human |
+|---|---|---|---|---|
+| trills, per-song correlation with the human chart | 0.00 | 0.13 [-0.16, 0.40] | 0.32 [0.02, 0.57] | - |
+| jacks, correlation | 0.60 | 0.60 | 0.60 [0.21, 0.82] | - |
+| move_jack | 0.012 | 0.019 (+0.008 [+0.001, +0.017]) | 0.034 (+0.023 [+0.007, +0.042]) | 0.055 |
+| move_trill | 0.142 | 0.147 | 0.162 (+0.020 [+0.004, +0.038]) | 0.160 |
+| jacks asked 0.124 (buckets 6-7, 21 songs) → got | 0.019 | 0.040 | 0.085 | - |
+| jacks asked 0.004 (buckets 0-2, 20 songs) → got | 0.010 | 0.011 | 0.009 | - |
+| trills asked 0.299 / 0.074 (buckets 6-7 / 0-2) → got | 0.163 / 0.144 | 0.184 / 0.136 | 0.248 / 0.133 | - |
+| single notes in same-lane runs of 3 / 4+ | 0.05% / 0.17% | 0.33% / 0.47% | 0.81% / 0.87% | 0.61% / 1.01% |
+| AABB minijacks per 1,000 single notes | 0.39 | 1.61 | 2.41 | 3.08 |
+| motion_pred | 0.123 | 0.123 | 0.122 | 0.129 |
+| F1@50 / SR bias | 0.373 / +0.064 | 0.375 / +0.077 | 0.373 / +0.097 (+0.033 [+0.004, +0.073]) | - |
+| forward passes | 4,051 | 5,444 | 5,444 | - |
+
+Long-note share, chords and rhythm are the same in all three (decided before the passes).
+Predictions: 1 (lane guidance 1) trills ≥ 0.3 miss (0.13), move_jack ≥ 0.015 hit, long
+notes unchanged hit, F1 / SR hit, motion_pred hit, passes 1.4-1.7x miss (1.34x); 2 (lane
+guidance 2) trills ≥ 0.35 miss narrowly (0.32), motion_pred and F1 hit.
+
+Readings:
+1. With guidance 2 in the lane passes the jacks come back where the chart asks for them
+   and only there: jack-heavy songs 0.019 → 0.085, jack-free ones stay at 0.009.
+   Same-lane runs and AABB minijacks reach the human rate (2.41 vs 3.08 per 1,000),
+   which no sampler setting had done (jack bias 1: 0.89, at the cost of motion_pred).
+   motion_pred and F1 do not move; SR rises by 0.03 (jacks are hard).
+2. Trills follow halfway: songs asking for many get more (0.16 → 0.25), songs asking for
+   few do not get fewer (0.13 for 0.07): below the model's habit the stat does not pull.
+3. Next default candidate for playable charts with full-v4: fwd + ref2 + lane guidance 2
+   + copies + quiet bars, the stats from `--stats sample` or the user. To be playtested
+   against the lane-guidance-1 pack of 10-06.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

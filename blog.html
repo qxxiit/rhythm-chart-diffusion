@@ -3,7 +3,7 @@
 <p data-ke-size="size16">GitHub: <a href="https://github.com/qxxiit/rhythm-chart-diffusion">https://github.com/qxxiit/rhythm-chart-diffusion</a></p>
 <p data-ke-size="size16">리듬게임 차트를 오디오로부터 자동 생성하는 모델을 만들 것임.</p>
 <p data-ke-size="size16">이 글은 새로 알게 된 것이 있을 때마다 갱신하고 있다.</p>
-<p data-ke-size="size16">최종 수정: 2026. 10. 6.</p>
+<p data-ke-size="size16">최종 수정: 2026. 10. 7.</p>
 <blockquote data-ke-style="style2">
 <p data-ke-size="size16">[Note] 10/3 &ndash; 10/6 Update (9/30 ver 대비)</p>
 <ul style="list-style-type: disc;" data-ke-list-type="disc">
@@ -21,6 +21,7 @@
 <li>10/5 발견: AI 는 곡마다 스타일을 고르지 않고 평균을 섞음. 곡별 롱노트 &middot; 잭 &middot; 트릴 비율이 그 곡의 사람 채보와 거의 상관이 없고 (0.12 / 0.01 / 0.00, 동시치기는 0.71) 곡 사이 편차는 사람의 절반 이하. 사람끼리도 다른 맵셋이면 0.2 &ndash; 0.3 이라 곡이 아니라 매퍼가 고르는 것 (실험 13)</li>
 <li>다음 학습 full-v4: 채보 자체의 롱노트 &middot; 잭 &middot; 트릴 비율을 SR 처럼 입력으로. 생성 때는 사용자가 고르거나 사람 채보 분포에서 뽑음 (4.10, 실험 13)</li>
 <li>10/6 결과: full-v4 에서 곡별 롱노트 비율이 사람 채보를 따라감 (상관 0.13 &rarr; 0.75). 잭 &middot; 트릴은 레인 패스가 다시 고르면서 거의 사라짐 &rarr; 레인 패스에만 guidance 를 걸면 돌아옴 (8마디 창). 조용한 마디만 덜어내는 음량 바이어스는 SR 을 안 건드리고 기복을 사람 수준으로 &rarr; 플레이용 기본값 (실험 14)</li>
+<li>10/7 결과: 레인 패스에 guidance 2 를 걸면 잭이 많은 곡에서만 잭이 돌아와 단레인 연타 &middot; 미니잭이 처음으로 사람 수준 (1,000 단타당 2.41, 사람 3.08). 패턴 지표 &middot; F1 은 그대로 (실험 14)</li>
 </ul>
 </blockquote>
 <blockquote data-ke-style="style2">
@@ -2630,6 +2631,7 @@ L &larr; (1/&gamma;) &middot; &Sigma;_{n: x_t[n]=MASK, &ne;PAD} &minus;log softm
 <li>classifier-free guidance ($\ell = c + w (c - u)$, u 는 값 없이) 를 전체에 걸면 롱노트가 넘침 (0.40 을 달라면 0.69). 레인 패스에만 걸면 (w = 1) 롱노트는 샘플링한 그대로 두고 트릴 차이가 +0.12 로 돌아옴</li>
 <li>음량 바이어스를 조용한 마디에만 (60곡): 가벼운 마디 0.049 &rarr; 0.062 (사람 0.070), 음량 기울기 0.168 &rarr; 0.193 (사람 0.191), SR 은 그대로 (+0.01). 예측 5개 다 맞음 &rarr; 플레이용 기본값</li>
 </ul>
+<p data-ke-size="size16"><b>레인 패스 guidance 결과</b> (10/6 밤, 60곡 전체): guidance 2 에서 잭이 많은 채보를 달라는 곡은 잭 0.019 &rarr; 0.085, 잭이 없는 곡은 0.009 그대로. 같은 레인 3연속 이상 &middot; AABB 미니잭이 사람 수준 (1,000 단타당 2.41, 사람 3.08). 트릴은 절반만 따라감 (상관 0.32, 많이 달라는 곡 0.16 &rarr; 0.25, 적게 달라는 곡은 안 줄어듦). motion_pred &middot; F1 &middot; 롱노트는 그대로, SR +0.03. 다음 플레이용 후보: full-v4 + 레인 패스 guidance 2.</p>
 <p data-ke-size="size16">다음 (10/6 밤): full-v4 로 짝 비교 팩 16곡 (10/4 와 다른 곡, 레인 패스 guidance 1, 사람 값 / 뽑은 값 번갈아) 을 먼저 만들고, 레인 패스 guidance 1 &middot; 2 를 60곡 전체 곡으로 확인. 예측: 트릴 상관 0.3 이상, 롱노트는 그대로, motion_pred 는 0.01 이상 안 떨어짐. 짝 비교에서 AI 를 사람으로 고르는 곡 1 &ndash; 4개.</p>
 <p data-ke-size="size16">&nbsp;</p>
 <p data-ke-size="size16"><b>실험 큐</b> (우선순위 순)</p>
