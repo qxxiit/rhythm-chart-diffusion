@@ -1150,6 +1150,60 @@ quiet part alike and recall falls more than precision rises (F1 down).
 Also in the run: a second pairs pack with lane guidance 2 (16 new songs, seed 81, tag
 1006g).
 
+### 2026-10-06/07 · The onset gate and a stronger quiet-bar bias (60 val songs), and a fix
+
+`run_quiet.sh`, full-v4 fwd + ref2, oracle stats, lane guidance 2, first 60 val songs,
+paired with the same run without them (rescored for the new columns). `--onset-bias` was
+then an EMPTY bias (`_ob` directories).
+
+| | reference | onset gate 1 | gate 2 | quiet bars 0.3 | gate 1 + quiet 0.3 | human |
+|---|---|---|---|---|---|---|
+| off the human rhythm, quiet bars | 0.293 | 0.256 (-0.036 [-0.058, -0.017]) | 0.236 (-0.057) | 0.225 (-0.067) | 0.202 (-0.090) | - |
+| off the human rhythm, other bars | 0.204 | 0.161 (-0.043 [-0.051, -0.035]) | 0.139 (-0.064) | 0.193 (-0.010) | 0.151 (-0.053) | - |
+| human-empty bars filled | 0.907 | 0.689 (-0.22) | 0.531 (-0.38) | 0.735 (-0.17) | 0.600 (-0.31) | - |
+| F1@50 | 0.373 | 0.377 (+0.004 [-0.002, +0.010]) | 0.379 (+0.006 [+0.000, +0.012]) | 0.372 | 0.373 | - |
+| density ratio | 1.114 | 1.028 | 0.982 | 1.044 | 0.972 | 1 |
+| SR bias | +0.097 | -0.091 | -0.157 | +0.035 | -0.113 | - |
+| long-note share | 0.157 | **0.098** | **0.074** | 0.145 | 0.088 | 0.190 |
+| light bars / loud_slope | 0.046 / 0.167 | 0.065 / 0.184 | 0.075 / 0.189 | 0.077 / **0.247** | 0.088 / 0.259 | 0.070 / 0.191 |
+| motion_pred / move_jack | 0.122 / 0.034 | 0.130 / 0.053 | 0.131 / 0.048 | 0.120 / 0.034 | 0.129 / 0.048 | 0.129 / 0.055 |
+| chord share | 0.353 | 0.374 | 0.396 | 0.348 | 0.372 | 0.367 |
+
+Predictions: 1 (gate 1) off-rhythm in quiet bars and elsewhere, empty bars: hit (-0.036,
+-0.043, -0.22); F1 +0.005: miss (+0.004); density -3 to -8%: miss (-8.6%, but from 11%
+over the human count to 3%); SR bias -0.05 to -0.2: hit (-0.19); motion_pred within 0.01:
+hit; jacks and trills within 0.01: miss (+0.019, +0.016, towards human). 2 (gate 2):
+off-rhythm -0.06 hit (-0.057), F1 +0.01 miss (+0.006), density hit. 3 (quiet bars 0.3):
+light bars, empty bars, off-rhythm in quiet bars hit; density -2 to -5% and SR bias within
+0.05 miss (-7%, -0.06); it overshoots the dynamics (loud_slope 0.247 against 0.191). 4:
+the gains add up (off-rhythm in quiet bars -0.090), density miss (-14%).
+
+Readings:
+1. The gate does what it was for, in quiet and loud parts alike (the loudness bias only
+   in quiet parts), with F1 a little up, density from 11% over the human count to 3%,
+   and pattern numbers (motion_pred, jacks, chord share) moving towards human.
+2. It also cost a third of the long notes (0.157 → 0.098; ln_f1 -0.069), not predicted:
+   as an EMPTY bias it acts on every cell of a weak-onset row, and the body of a long
+   note sits on weak onsets by nature (nothing starts while it is held). Fix: the gate is
+   now a penalty on starting a note (TAP and HOLD_START) only; a body or release decides
+   as before (`_open_cells(row_onset=)`, `sample_window(row_onset_bias=)`; the tag is
+   `_og` now, playtest `ogX`).
+3. Quiet bars at 0.3 overshoot the dynamics; the playable default stays at 0.1.
+
+Predictions for the night of 10-06/07 (`run_gate.sh`), written before it:
+1. Gate 1 as a start penalty (same 60 songs, against the reference): the off-rhythm and
+   empty-bar gains within 0.02 / 0.02 / 0.05 of the EMPTY form's (-0.036 / -0.043 /
+   -0.22); long-note share within 0.02 of the reference (0.157; the EMPTY form 0.098) and
+   ln_f1 within 0.02; density down 5-10%; F1 up 0.003 or more.
+2. Gate 1.5: off-rhythm gains between gate 1's and gate 2's; long notes within 0.03.
+3. The candidate for playable charts on all 240 songs (oracle stats, lane guidance 2,
+   gate 1, quiet bars 0.1), against full-v4 oracle without them (rescored): off-rhythm in
+   quiet bars 0.25 or less, human-empty bars filled 0.75 or less, move_jack 0.04 or more,
+   per-song correlation of the long-note share 0.7 or more, F1 within 0.005, SR error
+   within 0.03.
+4. A pairs pack of that candidate (16 songs none of the earlier packs had, tag 1007):
+   AI taken for human 1-4 of 16; fewer comments on quiet parts.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

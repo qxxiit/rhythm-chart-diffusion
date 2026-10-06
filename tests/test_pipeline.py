@@ -490,6 +490,18 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
             ai = next(lb for lb, src in labels.items() if src != "human")
             w.writerow({"song": song, "human": ai, "better": "="})       # fooled every time
     assert playtest_pack.main(["--score", str(pp / "answers.csv"), str(filled)]) == 0
+    px = tmp_path / "pairs_exclude"                    # a later pack leaves those songs out
+    assert playtest_pack.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
+                               "--songs", "2", "--sr-range", "0", "10", "--pairs",
+                               "--settings", "random:4", "--exclude", str(pp / "answers.csv"),
+                               "--manifest", str(data / "manifest.csv"),
+                               "--root", str(data / "raw"), "--cache", str(data / "cache"),
+                               "--out", str(px), "--device", "cpu"]) == 0
+    folders = []
+    for run in (pp, px):
+        with open(run / "answers.csv", encoding="utf-8-sig") as f:
+            folders.append({r["path"].split("/")[0] for r in csv.DictReader(f)})
+    assert folders[1] and not folders[0] & folders[1]
 
     from scripts import audio_ablation
     assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",
@@ -637,8 +649,8 @@ def test_playtest_settings() -> None:
     assert (quiet["loud_bias"], quiet["loud_side"], quiet["stats"]) == (0.1, "quiet", "human")
     assert quiet["name"] == "ai random T128 continue fwd ref2@0.5 lbq0.1 st"
     assert parse_setting("random:128:continue:fwd+stsample")["stats"] == "sample"
-    gated = parse_setting("random:128:continue:fwd+ref2+st+lg2+ob1")
-    assert gated["onset_bias"] == 1 and gated["name"].endswith("st lg2 ob1")
+    gated = parse_setting("random:128:continue:fwd+ref2+st+lg2+og1")
+    assert gated["onset_bias"] == 1 and gated["name"].endswith("st lg2 og1")
     assert parse_setting("random:128")["onset_bias"] == 0
     guided = parse_setting("random:128:continue:fwd+ref2+st+sg1.5")
     assert guided["style_guidance"] == 1.5 and guided["name"].endswith("sg1.5 st")

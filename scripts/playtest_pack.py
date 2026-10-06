@@ -118,7 +118,7 @@ def parse_setting(text: str) -> dict:
     human chart's share); lbqX, loudness bias X in quiet bars only (sampler.loudness_bias),
     lbX on both sides; st, the human chart's long-note share, jack and trill rate as chart
     stats (a model trained with --chart-stats), stsample, those of a random train chart
-    of about the same SR (--stats-csv); lgW, the lane passes' own guidance weight; obX, the
+    of about the same SR (--stats-csv); lgW, the lane passes' own guidance weight; ogX, the
     onset-strength gate (sampler.onset_gate)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
@@ -169,11 +169,11 @@ def parse_setting(text: str) -> dict:
             guidance = float(head[2:])
         elif head.startswith("lg") and not t:
             lane_guidance = float(head[2:])
-        elif head.startswith("ob") and not t:
+        elif head.startswith("og") and not t:
             onset = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
-                             "jbX, cpX, style, sgW, lgW, hr, ln[X], lbX, lbqX, obX, st, "
+                             "jbX, cpX, style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, st, "
                              "stsample")
     if (guidance or lane_guidance) and not style and not stats:
         raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
@@ -196,7 +196,7 @@ def parse_setting(text: str) -> dict:
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
         + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
         + ([f"lg{lane_guidance:g}"] if lane_guidance is not None else []) \
-        + ([f"ob{onset:g}"] if onset else [])
+        + ([f"og{onset:g}"] if onset else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
@@ -252,8 +252,14 @@ def build(a) -> int:
             print(f"not usable (no SR, tokens or mel): {sorted(missing)}", file=sys.stderr)
             return 2
     else:
-        songs = pick_songs([r for r in rows if r["split"] == a.split], a.songs, a.seed,
-                           a.sr_range, a.max_seconds)
+        seen = set()                                       # songs of earlier packs (--exclude)
+        for path in a.exclude or []:
+            keys = {r["key"] for r in read_csv(path)}
+            seen |= {r["audio_key"] for r in rows if r["key"] in keys}
+        pool = [r for r in rows if r["split"] == a.split and r["audio_key"] not in seen]
+        if seen:
+            print(f"--exclude: {len(seen)} songs of earlier packs left out")
+        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds)
     if not songs:
         print("no songs to pack", file=sys.stderr)
         return 2
@@ -514,6 +520,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ckpt", type=Path, default=Path("outputs/full-v1/best.pt"))
     ap.add_argument("--songs", type=int, default=8)
     ap.add_argument("--keys", nargs="+", default=None, help="pack these charts' songs instead")
+    ap.add_argument("--exclude", type=Path, nargs="+", default=None,
+                    help="answers.csv of earlier packs: leave their songs out (players have "
+                         "seen those human charts)")
     ap.add_argument("--settings", nargs="+", default=["random:128", "confidence:128"],
                     help="AI charts per song (--pairs: one per song, in turn): "
                          "order:steps[:mode[:extras]], extras refN[@T], fwd[@T], spread, ebX, "

@@ -133,10 +133,13 @@ def _spread(cells: np.ndarray, count: int, group: np.ndarray,
 
 def _open_cells(x: np.ndarray, pick: np.ndarray, probs: np.ndarray, rng: np.random.Generator,
                 left_closed: bool, right_closed: bool, weight: np.ndarray | None,
-                row_bias: np.ndarray | None = None) -> None:
+                row_bias: np.ndarray | None = None,
+                row_onset: np.ndarray | None = None) -> None:
     """Draw the picked cells from probs under the grammar; cells of one step go lane by
     lane, left to right, so each sees the neighbours opened before it. row_bias [L]: an
-    extra log bias on EMPTY per row (sample_window's row_empty_bias)."""
+    extra log bias on EMPTY per row (sample_window's row_empty_bias); row_onset [L]: a log
+    penalty on the onset classes (TAP, HOLD_START) per row (row_onset_bias), which leaves
+    the body and release of a long note as they were."""
     for c, k in pick[np.lexsort((pick[:, 0], pick[:, 1]))]:
         left = _neighbour(x[c - 1, k]) if c > 0 else (EMPTY if left_closed else None)
         right = _neighbour(x[c + 1, k]) if c + 1 < L else (EMPTY if right_closed else None)
@@ -147,6 +150,9 @@ def _open_cells(x: np.ndarray, pick: np.ndarray, probs: np.ndarray, rng: np.rand
         if row_bias is not None and row_bias[c] != 0:
             p = p.copy()
             p[EMPTY] *= float(np.exp(min(row_bias[c], 20.0)))
+        if row_onset is not None and row_onset[c] != 0:
+            p = p.copy()
+            p[[TAP, HOLD_START]] *= float(np.exp(-min(row_onset[c], 20.0)))
         p = p / p.sum() if p.sum() > 0 else ok / ok.sum()
         x[c, k] = rng.choice(N_CLASSES, p=p)
 
@@ -155,7 +161,8 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
                   steps: int = 32, order: str = "random", rng: np.random.Generator | None = None,
                   left_closed: bool = True, right_closed: bool = True,
                   temperature: float = 1.0, hold_bias: float = 0.0, empty_bias: float = 0.0,
-                  spread: bool = False, row_empty_bias: np.ndarray | None = None) -> np.ndarray:
+                  spread: bool = False, row_empty_bias: np.ndarray | None = None,
+                  row_onset_bias: np.ndarray | None = None) -> np.ndarray:
     """Fill the MASK cells of one window. Cells that are not MASK are kept as they are.
 
     x      [L, K] tokens: MASK where to generate, PAD past the end of the song
@@ -186,6 +193,9 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
            becomes, never which cells open (the confidence score is unbiased).
     row_empty_bias: [L] more of the same per row, on top of empty_bias (generate_song's
            loud_bias: fewer notes where the music is quiet)
+    row_onset_bias: [L] subtracted from the log probability of TAP and HOLD_START per row
+           (generate_song's onset_bias): fewer notes start there, while long notes that
+           pass through go on (an EMPTY bias would also cut their bodies)
     """
     if order not in ORDERS:
         raise ValueError(f"unknown order {order!r}")
@@ -194,7 +204,7 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
     weight = _class_weight(hold_bias, empty_bias)
     if order == "block":
         _sample_blocks(model, x, mel, s, b, steps, rng, left_closed, right_closed, weight, spread,
-                       row_empty_bias)
+                       row_empty_bias, row_onset_bias)
         return x
     sequential = steps <= 0
     if sequential:
@@ -218,7 +228,8 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
             if order == "noisy" and temperature > 0:
                 score = score + temperature * (t / steps) * rng.gumbel(size=len(todo))
             pick = todo[np.argsort(-score, kind="stable")[:max(1, round(len(todo) / t))]]
-        _open_cells(x, pick, probs, rng, left_closed, right_closed, weight, row_empty_bias)
+        _open_cells(x, pick, probs, rng, left_closed, right_closed, weight, row_empty_bias,
+                    row_onset_bias)
     return x
 
 
@@ -235,7 +246,8 @@ def _block_steps(counts: np.ndarray, steps: int) -> np.ndarray:
 def _sample_blocks(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, steps: int,
                    rng: np.random.Generator, left_closed: bool, right_closed: bool,
                    weight: np.ndarray | None, spread: bool,
-                   row_bias: np.ndarray | None = None) -> None:
+                   row_bias: np.ndarray | None = None,
+                   row_onset: np.ndarray | None = None) -> None:
     """order="block" for sample_window: x is filled in place."""
     open_rows = np.flatnonzero((x == MASK).any(axis=1))
     if len(open_rows) == 0:
@@ -258,7 +270,8 @@ def _sample_blocks(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, 
                 chosen = rng.random(len(todo)) < 1.0 / t
                 pick = (_spread(todo, int(chosen.sum()), todo[:, 0], rng) if spread
                         else todo[chosen])
-            _open_cells(x, pick, probs, rng, left_closed, right_closed, weight, row_bias)
+            _open_cells(x, pick, probs, rng, left_closed, right_closed, weight, row_bias,
+                        row_onset)
 
 
 def _lane_sets(free: list[int], n: int, p_tap: np.ndarray, p_empty: np.ndarray,
@@ -635,13 +648,15 @@ ONSET_FULL = 0.1                # onset_gate: rows at or below this flux quantil
 
 
 def onset_gate(mel: np.ndarray, n_cells: int, n_rows: int, beta: float) -> np.ndarray:
-    """[n_rows] log bias on EMPTY per row from the audio's onset strength (onset_strength),
-    ranked within the song: 0 for rows at or above the median, rising to beta at the
-    ONSET_FULL quantile and below (silence included); 0 past n_cells. On 40 val songs
-    (EXPERIMENTS 2026-10-06, quiet sections) the sampled onsets that miss the human rhythm
-    by more than a cell lie below the song's median onset strength 62% of the time (in its
-    bottom quarter 31%), the human onsets 26% (9%): the bias takes notes away where the
-    music gives them nothing to land on, more off the rhythm than on it."""
+    """[n_rows] log penalty on starting a note (TAP, HOLD_START) per row from the audio's
+    onset strength (onset_strength), ranked within the song: 0 for rows at or above the
+    median, rising to beta at the ONSET_FULL quantile and below (silence included); 0 past
+    n_cells. On 40 val songs (EXPERIMENTS 2026-10-06, quiet sections) the sampled onsets
+    that miss the human rhythm by more than a cell lie below the song's median onset
+    strength 62% of the time (in its bottom quarter 31%), the human onsets 26% (9%): the
+    penalty takes notes away where the music gives them nothing to land on, more off the
+    rhythm than on it. It applies to starts only: as an EMPTY bias it also cut the bodies
+    of long notes, which sit on weak onsets by nature (long-note share -38% at 1, 10-06)."""
     out = np.zeros(n_rows)
     if beta == 0 or n_cells < 2:
         return out
@@ -848,9 +863,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     loud_bias     while sampling, log bias on EMPTY of -loud_bias * the bar's loudness
                   z-score (loudness_bias): fewer notes where the music is quiet; loud_side
                   "quiet" (only there) or "both" (also more where it is loud)
-    onset_bias    while sampling, log bias on EMPTY of up to onset_bias on the rows where
-                  the audio's onset strength is below the song's median (onset_gate; the
-                  two biases add up): fewer notes where nothing in the music starts
+    onset_bias    while sampling, log penalty of up to onset_bias on starting a note on the
+                  rows where the audio's onset strength is below the song's median
+                  (onset_gate): fewer notes where nothing in the music starts
     genre, mapper style indices (style.encode) for a model trained with --style; None =
                   no label. style_guidance w > 0: classifier-free guidance towards the
                   style and stats (diffusion.Styled), two forward passes for every one
@@ -886,17 +901,16 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None else 0)
     beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
-    row_bias = None
-    if loud_bias or onset_bias:
-        row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) \
-            + onset_gate(mel, n_cells, len(song), onset_bias)
+    row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) if loud_bias else None
+    row_onset = onset_gate(mel, n_cells, len(song), onset_bias) if onset_bias else None
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(
             model, song[row0:row0 + L], frames[row0 * r:(row0 + L) * r], s, beat_len(row0),
             steps=steps, order=order, rng=rng, left_closed=left_closed, right_closed=right_closed,
             temperature=temperature, hold_bias=hold_bias, empty_bias=empty_bias, spread=spread,
-            row_empty_bias=None if row_bias is None else row_bias[row0:row0 + L])
+            row_empty_bias=None if row_bias is None else row_bias[row0:row0 + L],
+            row_onset_bias=None if row_onset is None else row_onset[row0:row0 + L])
 
     if mode == "independent":
         for c in range(n_chunks):

@@ -78,8 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
                     help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
     ap.add_argument("--onset-bias", type=float, default=0.0,
-                    help="fewer notes where nothing in the music starts: EMPTY bias of up to X "
-                         "on rows with weak audio onsets (sampler.onset_gate); 0 = off")
+                    help="fewer notes where nothing in the music starts: log penalty of up to X "
+                         "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
+                         "0 = off")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
@@ -195,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.loud_bias:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
-        order += f"-ob{a.onset_bias:g}"
+        order += f"-og{a.onset_bias:g}"
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:

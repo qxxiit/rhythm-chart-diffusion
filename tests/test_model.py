@@ -815,6 +815,28 @@ def test_onset_gate_follows_the_audio() -> None:
     assert off_onsets(onset_bias=3.0) < off_onsets()
 
 
+def test_onset_penalty_spares_long_note_bodies() -> None:
+    from src.data.tokenizer import HOLD_BODY
+    from src.models.sampler import _open_cells
+    probs = np.zeros((L, K, N_CLASSES))
+    probs[:, 0, EMPTY], probs[:, 0, HOLD_BODY] = 0.5, 0.5     # lane 0: empty or inside a hold
+    probs[:, 1, EMPTY], probs[:, 1, TAP] = 0.5, 0.5           # lane 1: empty or a tap
+    rows = np.arange(10, 210, 2)
+    pick = np.array([(r, k) for r in rows for k in (0, 1)])
+    penalty = np.full(L, 3.0)
+
+    def draw(**kw):
+        x = np.full((L, K), MASK)
+        _open_cells(x, pick, probs, np.random.default_rng(0), True, True, None, **kw)
+        return (x[rows, 0] == HOLD_BODY).mean(), (x[rows, 1] == TAP).mean()
+
+    body0, tap0 = draw()
+    body, tap = draw(row_onset=penalty)
+    assert abs(body - body0) < 0.15 and tap < 0.15 < tap0     # starts down, bodies kept
+    body_e, tap_e = draw(row_bias=penalty)
+    assert body_e < 0.15 and tap_e < 0.15                     # the EMPTY form cuts both
+
+
 def test_release_on_onset() -> None:
     from src.evaluation.holds import hold_stats
     x = np.full((48, K), EMPTY, dtype=np.int64)

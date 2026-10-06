@@ -211,8 +211,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="EMPTY bias of -X times each bar's loudness z-score while sampling: "
                          "fewer notes in quiet bars (sampler.loudness_bias)")
     ap.add_argument("--onset-bias", type=float, default=0.0,
-                    help="EMPTY bias of up to X on the rows where the audio's onset strength "
-                         "is below the song's median, while sampling (sampler.onset_gate)")
+                    help="log penalty of up to X on starting a note on the rows where the "
+                         "audio's onset strength is below the song's median, while sampling "
+                         "(sampler.onset_gate; tag _og)")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only (default), or both: also more notes in "
                          "loud bars (the 10-04 runs, tag _lb; quiet is _lbq)")
@@ -320,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.loud_bias:
         tag += f"_lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
-        tag += f"_ob{a.onset_bias:g}"
+        tag += f"_og{a.onset_bias:g}"           # 10-06 night's _ob runs: the EMPTY-bias form
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
