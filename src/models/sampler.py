@@ -78,7 +78,8 @@ def _neighbour(v: int) -> int | None:
     return None if v == MASK else (EMPTY if v == PAD else int(v))
 
 
-STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0}   # passes, copies, hold changes
+STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0}   # passes, copies,
+                                         # hold changes, bars left empty
                                          # (evaluate.py reports them per song)
 
 
@@ -765,6 +766,60 @@ def copy_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
     return copied
 
 
+def bar_probs(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+              r0: int) -> np.ndarray:
+    """p(x0) [BAR, K, 5] for the bar that starts at row r0, with the bar MASK and the rest
+    of the chart around it (a window centred on it, as copy_bars); song as copy_bars."""
+    fpc = model.config.frames_per_cell
+    w0 = int(np.clip(r0 - (L - BAR) // 2, 0, len(song) - L))
+    x = song[w0:w0 + L].astype(np.int64).copy()
+    x[r0 - w0:r0 - w0 + BAR] = MASK
+    probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+    return probs[r0 - w0:r0 - w0 + BAR]
+
+
+# Bars left empty. Human charts leave 0.85% of the bars inside a song without a note (240
+# val songs, 2026-10-07); the sampled charts fill 77% of those (the onset gate included).
+# The audio does not find them: those bars are quiet in the middle (loudness z -1.3) but
+# spread wide, and humans fill 94% of the bars at z < -2. A whole empty bar is a joint
+# choice of 192 cells, which cell-by-cell sampling seldom makes even where each cell is
+# unlikely to hold a note, the way it seldom kept a lane pattern (EXPERIMENTS 2026-10-02):
+# so ask the model about the whole bar, with the rest of the chart in view.
+
+
+def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+              n_cells: int, *, threshold: float) -> int:
+    """Leave empty the bars where the model expects almost no notes; returns how many.
+
+    For every whole bar with a note start, in time order, bar_probs with the bar MASK
+    gives the expected number of note starts in it, the sum of p(TAP) + p(HOLD_START) over
+    its cells; below threshold the bar's taps and the long notes that start in it (to
+    their ends) are taken out. Long notes that started before the bar are kept. Taking
+    notes out keeps the grammar and the release gaps, so no clean_holds is needed.
+    """
+    cleared = 0
+    for b in range(n_cells // BAR):
+        r0 = b * BAR
+        starts = np.isin(song[r0:r0 + BAR], (TAP, HOLD_START))
+        if not starts.any():
+            continue
+        p = bar_probs(model, song, frames, s, beat_len, r0)
+        if float((p[..., TAP] + p[..., HOLD_START]).sum()) >= threshold:
+            continue
+        for row, k in zip(*np.nonzero(starts), strict=True):
+            r = r0 + int(row)
+            e = r + 1
+            if song[r, k] == HOLD_START:
+                while e < len(song) and song[e, k] == HOLD_BODY:
+                    e += 1
+                if e < len(song) and song[e, k] == HOLD_END:
+                    e += 1
+            song[r:e, k] = EMPTY
+        cleared += 1
+    STATS["rest_bars"] += cleared
+    return cleared
+
+
 LANE_PASSES = ("sampled", "forward")
 
 
@@ -799,11 +854,11 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               hold_share: float | None = None,
               copy_bias: float | None = None, min_hold: int | None = None,
               release_gap: int | None = None, seed: int = 0, genre: int | None = None,
-              mapper: int | None = None, stats=None) -> np.ndarray:
+              mapper: int | None = None, stats=None, rest: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
-    order: refine_holds (holds=True or a hold_share), copy_bars (copy_bias), clean_holds;
-    a new array."""
+    order: refine_holds (holds=True or a hold_share), copy_bars (copy_bias), clean_holds,
+    rest_bars (rest: the threshold); a new array."""
     if genre is not None or mapper is not None or stats is not None:
         model = Styled(model, genre, mapper, stats=stats)
     song = np.concatenate([np.asarray(tokens, dtype=np.int64).reshape(-1, K),
@@ -821,6 +876,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                                          copy_bias=copy_bias) \
             and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    if rest is not None:
+        rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
 
 
@@ -837,7 +894,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   style_guidance: float = 0.0, holds: bool = False,
                   hold_share: float | None = None, loud_bias: float = 0.0,
                   loud_side: str = "quiet", stats=None,
-                  lane_guidance: float | None = None, onset_bias: float = 0.0) -> np.ndarray:
+                  lane_guidance: float | None = None, onset_bias: float = 0.0,
+                  rest: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -877,11 +935,14 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   where the context outweighs the stats; the long notes are already decided
                   by then, so guidance there moves the lanes (jacks, trills) without
                   overshooting the long-note share (EXPERIMENTS 2026-10-06)
+    rest          rest_bars last with this threshold (None: none): a bar whose expected
+                  note starts, asked with the bar MASK and the chart around it, fall
+                  below it is left empty
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
-    copy_bars, and clean_holds again if a bar was copied.
+    copy_bars, clean_holds again if a bar was copied, rest_bars.
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
@@ -946,4 +1007,6 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                                                s_audio, copy_bias=copy_bias)
     if copied and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    if rest is not None:
+        rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)

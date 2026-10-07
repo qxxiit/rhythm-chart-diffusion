@@ -12,6 +12,8 @@
         --from-charts outputs/full-v1/eval_val_songs_continue_random_T128_fwd_ref2t0.5
     python scripts/evaluate.py --ckpt outputs/full-v4/best.pt --per-song --n 0 --lanes forward \
         --refine 2 --stats oracle                  # each chart's own long-note/jack/trill rate
+    python scripts/evaluate.py --ckpt outputs/full-v4/best.pt --per-song --n 0 --stats oracle \
+        --from-charts outputs/full-v4/eval_... --rest 1     # leave the expected rests empty
 
 --per-song takes one chart per song (audio_key, a seeded random difficulty), so the
 N rows are N different songs; without it the first N charts of the split are
@@ -54,6 +56,10 @@ human chart's SR with the song's real timing, then score:
                           onset rows off the human rhythm in quiet / other bars, and the
                           human chart's empty bars that the generated chart fills
                           (structure.quiet_rhythm)
+    rest_bars, ln_bars, steady_bars
+                          bars without a note start, long-note bars, unbroken streams
+                          (structure.bar_kinds), human_* likewise
+    rest_bars_cleared     with --rest: bars the rest pass left empty (sampler.rest_bars)
     genre, mapper_known   the song's genre (data/style.csv, if there) and, for a model with
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
@@ -98,7 +104,7 @@ from src.evaluation.holds import hold_stats, ln_agreement
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
-from src.evaluation.structure import dynamics, quiet_rhythm, structure_scores
+from src.evaluation.structure import bar_kinds, dynamics, quiet_rhythm, structure_scores
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import (
     LANE_PASSES,
@@ -128,6 +134,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}{k}": p[k] for k in PATTERN_KEYS})
         row.update({f"{who}{k}": v for k, v in hold_stats(flat).items()})
         row.update({f"{who}{k}": v for k, v in dynamics(flat, mel, n_cells).items()})
+        row.update({f"{who}{k}": v for k, v in bar_kinds(flat, n_cells).items()})
     row.update(ln_agreement(gen_tokens.reshape(-1, gen_tokens.shape[-1])[:n_cells],
                             human_tokens.reshape(-1, human_tokens.shape[-1])[:n_cells]))
     row.update(quiet_rhythm(gen_tokens, human_tokens, mel, n_cells))
@@ -229,6 +236,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--release-gap", type=int, default=None,
                     help="empty cells required between a release and the next onset in its lane; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
+    ap.add_argument("--rest", type=float, default=None,
+                    help="rest_bars last: leave empty the bars where the model, with the bar "
+                         "masked, expects fewer note starts than this (EXPERIMENTS 2026-10-07 "
+                         "night); also on --from-charts")
+    ap.add_argument("--sr-offset", type=float, default=0.0,
+                    help="sample at the target SR + this (the onset gate leaves the charts "
+                         "0.14 SR under the target, EXPERIMENTS 2026-10-07); scored against "
+                         "the target")
     ap.add_argument("--mode", choices=["continue", "independent"], default="continue")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sample-seed", type=int, default=None,
@@ -326,6 +341,10 @@ def main(argv: list[str] | None = None) -> int:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}"
+    if a.rest is not None:
+        tag += f"_rb{a.rest:g}"
+    if a.sr_offset:
+        tag += f"_so{a.sr_offset:g}"
     if a.style == "oracle":
         tag += "_style" + (f"_sg{a.style_guidance:g}" if a.style_guidance else "")
     tag += stats_tag
@@ -342,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = a.ckpt.parent / f"eval_{tag}"
     saved = None
     if a.from_charts is not None:
+        if a.sr_offset:
+            print("--sr-offset changes the sampling: not with --from-charts", file=sys.stderr)
+            return 2
         saved = np.load(a.from_charts / "charts.npz")
         missing = [r["key"] for r in rows if r["key"] not in saved.files]
         if missing:
@@ -350,7 +372,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
-            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + stats_tag
+            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + (
+            f"_rb{a.rest:g}" if a.rest is not None else "") + stats_tag
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -369,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         if not style and a.stats != "none" and a.style_guidance:
             style = {"style_guidance": a.style_guidance}           # guidance towards the stats
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
-        holds0 = STATS["changed_holds"]
+        holds0, rests0 = STATS["changed_holds"], STATS["rest_bars"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -386,14 +409,16 @@ def main(argv: list[str] | None = None) -> int:
         buckets = chartstats.encode(spec, wanted) if a.stats != "none" else None
         if saved is not None:
             tokens = saved[r["key"]]
-            if a.copy_bias is not None or a.refine_holds or share is not None:
+            if a.copy_bias is not None or a.refine_holds or share is not None \
+                    or a.rest is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
-                                   seed=sample_seed + i, stats=buckets,
+                                   seed=sample_seed + i, stats=buckets, rest=a.rest,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
-            tokens = generate_song(model, mel, sr, tps, offset, n_cells, steps=a.steps,
+            tokens = generate_song(model, mel, sr + a.sr_offset, tps, offset, n_cells,
+                                   steps=a.steps,
                                    order=a.order, mode=a.mode, seed=sample_seed + i,
                                    temperature=a.temperature, refine=a.refine,
                                    lane_temperature=a.lane_temp,
@@ -403,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
-                                   onset_bias=a.onset_bias,
+                                   onset_bias=a.onset_bias, rest=a.rest,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -411,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
             cost["copied_bars"] = STATS["copied_bars"] - copies0
         if a.refine_holds or share is not None:
             cost["changed_holds"] = STATS["changed_holds"] - holds0
+        if a.rest is not None:
+            cost["rest_bars_cleared"] = STATS["rest_bars"] - rests0
         charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
@@ -453,7 +480,7 @@ def main(argv: list[str] | None = None) -> int:
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
-               "onset_bias": a.onset_bias,
+               "onset_bias": a.onset_bias, "rest": a.rest, "sr_offset": a.sr_offset,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

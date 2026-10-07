@@ -266,3 +266,28 @@ def test_quiet_rhythm() -> None:
     assert quiet_rhythm(human, human, mel, n_bars * bar)["off_rhythm_rest"] == 0.0
     short = quiet_rhythm(gen[:4 * bar], human[:4 * bar], mel, 4 * bar)
     assert all(np.isnan(v) for v in short.values())
+
+
+def test_bar_kinds() -> None:
+    from src.data.tokenizer import BAR, EMPTY, HOLD_BODY, HOLD_END, HOLD_START, TAP
+    from src.evaluation.structure import bar_kinds
+    n_bars = 10
+    x = np.full((n_bars * BAR, 4), EMPTY)
+    for b in range(n_bars):
+        if b == 4:
+            continue                                    # a rest inside the song
+        for row in range(0, BAR, 12):                   # 4 taps: not steady (under 8 rows)
+            x[b * BAR + row, b % 4] = TAP
+    x[2 * BAR:3 * BAR] = EMPTY                          # bar 2: 4 long notes
+    for i, row in enumerate(range(0, BAR, 12)):
+        x[2 * BAR + row, i], x[2 * BAR + row + 1:2 * BAR + row + 5, i] = HOLD_START, HOLD_BODY
+        x[2 * BAR + row + 5, i] = HOLD_END
+    x[6 * BAR:7 * BAR] = EMPTY                          # bar 6: an even stream of 8
+    x[6 * BAR + np.arange(0, BAR, 6), 0] = TAP
+    x[7 * BAR:8 * BAR] = EMPTY                          # bar 7: 8 uneven onset rows
+    x[7 * BAR + np.array([0, 3, 6, 12, 18, 24, 30, 42]), 1] = TAP
+    k = bar_kinds(x, n_bars * BAR)
+    assert k["rest_bars"] == pytest.approx(1 / 10)
+    assert k["ln_bars"] == pytest.approx(1 / 9)         # 9 bars with 4+ note starts
+    assert k["steady_bars"] == pytest.approx(1 / 2)
+    assert np.isnan(bar_kinds(x[:5 * BAR], 5 * BAR)["rest_bars"])

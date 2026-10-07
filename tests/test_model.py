@@ -550,6 +550,46 @@ def test_copy_bars_prefers_the_rhythm_the_model_expects() -> None:
     assert onset_count_logp(p)[0, 1] > onset_count_logp(np.full((1, K), 0.05))[0, 1]
 
 
+def test_rest_bars_leaves_empty_the_bars_the_model_expects_empty() -> None:
+    """A bar is cleared when the model, with the bar masked, expects fewer note starts than
+    the threshold: its taps and the long notes that start in it go, to their ends; a long
+    note that started earlier stays."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, rest_bars
+    song = _bars_song([[(0, 0), (12, 1)], [(0, 2), (24, 3)], [(6, 0), (30, 1)]])
+    song[BAR + 40, 0], song[BAR + 41:2 * BAR + 3, 0], song[2 * BAR + 3, 0] = \
+        HOLD_START, HOLD_BODY, HOLD_END                 # starts in bar 1, ends in bar 2
+    song[2 * BAR - 4, 3], song[2 * BAR - 3:2 * BAR + 2, 3], song[2 * BAR + 2, 3] = \
+        HOLD_START, HOLD_BODY, HOLD_END                 # starts in bar 1 too
+    frames = torch.zeros(len(song) * 4, 80)
+    quiet = torch.zeros(1, L, K, N_CLASSES)
+    quiet[..., EMPTY] = 12.0                            # expects (almost) nothing anywhere
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))    # 0.4 starts per cell: ~77 per bar
+
+    kept = song.copy()
+    assert rest_bars(uniform, kept, frames, 3.0, lambda row0: 400.0, 3 * BAR,
+                     threshold=1.0) == 0 and np.array_equal(kept, song)
+    before = STATS["rest_bars"]
+    out = song.copy()
+    assert rest_bars(Fixed(quiet), out, frames, 3.0, lambda row0: 400.0, 3 * BAR,
+                     threshold=1.0) == 3 and STATS["rest_bars"] == before + 3
+    assert (out[:3 * BAR] == EMPTY).all()               # the long notes went to their ends
+    held = song.copy()                                  # a long note from bar 0 into bar 1
+    held[BAR - 2, 2], held[BAR - 1:BAR + 6, 2], held[BAR + 6, 2] = HOLD_START, HOLD_BODY, HOLD_END
+    held[:BAR - 2] = EMPTY
+    held[BAR:2 * BAR, [1, 3]] = EMPTY
+    held[BAR:2 * BAR, 0] = EMPTY
+    held[2 * BAR:3 * BAR] = EMPTY
+    held[BAR + 20, 1] = TAP
+    bar1 = torch.zeros(1, L, K, N_CLASSES)              # windows start at row 0 here:
+    bar1[0, BAR:2 * BAR, :, EMPTY] = 12.0               # only bar 1 is expected empty
+    out = held.copy()
+    assert rest_bars(Fixed(bar1), out, frames, 3.0, lambda row0: 400.0, 3 * BAR,
+                     threshold=1.0) == 1
+    assert out[BAR + 20, 1] == EMPTY                    # bar 1's tap went ...
+    assert np.array_equal(out[BAR - 2:BAR + 7, 2], held[BAR - 2:BAR + 7, 2])   # ... not bar 0's hold
+
+
 def test_copy_bars_leaves_a_song_the_model_knows() -> None:
     from src.data.tokenizer import BAR
     from src.models.sampler import copy_bars

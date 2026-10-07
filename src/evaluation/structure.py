@@ -26,6 +26,15 @@
                      of the bars between the human chart's first and last onset where the
                      human chart has none, the share where the generated chart has one
                      (1.2% of the bars; the sampled charts fill 83-92% of them)
+    bar_kinds(tokens, n)         choices a chart makes for a whole bar, which cell-by-cell
+                 sampling makes less often than humans (240 val songs, 2026-10-07: human /
+                 fwd + ref2 + gate + loudness 0.1 + lane guidance 2):
+        rest_bars    of the bars between the chart's first and last onset, the share with
+                     none (0.85% of the human bars)
+        ln_bars      of the bars with LN_BAR_MIN+ note starts, the share where at least
+                     LN_BAR of them start long notes (7.5% / 3.8%)
+        steady_bars  of the bars with STEADY_MIN+ onset rows, the share where they are
+                     evenly spaced: an unbroken stream (36.5% / 20.1%)
 
 Bars are 48 cells (4/4). Row 0 of the token grid is a bar line (tokenizer), so
 bar m is rows 48m..48m+47 and mel frames 192m..192m+191, and chunk c is bars
@@ -152,6 +161,36 @@ def dynamics(tokens: np.ndarray, mel: np.ndarray, n_cells: int) -> dict:
     full = per_bar[per_bar > 0]
     light = float(np.mean(full <= 0.3 * np.percentile(full, 90))) if len(full) else float("nan")
     return {"loud_slope": slope, "light_bars": light}
+
+
+LN_BAR = 0.8                    # bar_kinds: a long-note bar starts at least this share
+LN_BAR_MIN = 4                  # of at least this many notes as long notes
+STEADY_MIN = 8                  # bar_kinds: a steady bar has at least this many onset rows
+
+
+def bar_kinds(tokens: np.ndarray, n_cells: int) -> dict:
+    """rest_bars, ln_bars, steady_bars (module docstring); nan for songs under 8 bars or
+    without such bars to count."""
+    out = dict.fromkeys(("rest_bars", "ln_bars", "steady_bars"), float("nan"))
+    n_bars = n_whole_bars(n_cells)
+    if n_bars < 8:
+        return out
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])[:n_bars * BAR]
+    starts = np.isin(x, (TAP, HOLD_START)).reshape(n_bars, BAR, -1)
+    rows = starts.any(axis=2)
+    n_start = starts.sum(axis=(1, 2))
+    n_long = (x == HOLD_START).reshape(n_bars, BAR, -1).sum(axis=(1, 2))
+    full = np.flatnonzero(rows.any(axis=1))
+    if len(full) >= 2:
+        out["rest_bars"] = float(np.mean(~rows[full[0]:full[-1] + 1].any(axis=1)))
+    busy = n_start >= LN_BAR_MIN
+    if busy.any():
+        out["ln_bars"] = float(np.mean(n_long[busy] >= LN_BAR * n_start[busy]))
+    steady = [len(set(np.diff(np.flatnonzero(r)).tolist())) == 1
+              for r in rows if r.sum() >= STEADY_MIN]
+    if steady:
+        out["steady_bars"] = float(np.mean(steady))
+    return out
 
 
 QUIET_Z = -1.0                  # quiet_rhythm: bars this far below the song's mean loudness

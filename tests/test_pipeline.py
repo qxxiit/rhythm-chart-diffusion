@@ -283,6 +283,33 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                        for r in rows)
         else:
             assert all(table[r["stat_key"]]["split"] == "train" for r in rows)
+    oracle_run = next((tmp_path / "cs").glob("eval_*_st-oracle"))
+    with open(oracle_run / "per_song.csv", newline="") as f:      # bar kinds, both charts
+        row = next(csv.DictReader(f))
+    assert all(k in row for k in ("rest_bars", "human_rest_bars", "ln_bars", "steady_bars"))
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--rest", "1000"]) == 0
+    rested = oracle_run.parent / (oracle_run.name + "_rb1000_st-oracle")
+    with open(rested / "per_song.csv", newline="") as f:          # every whole bar emptied
+        rows = list(csv.DictReader(f))
+    with open(oracle_run / "per_song.csv", newline="") as f:
+        before = {r["key"]: float(r["density_ratio"]) for r in csv.DictReader(f)}
+    assert all(float(r["density_ratio"]) < before[r["key"]] for r in rows)
+    assert all(int(r["rest_bars_cleared"]) > 0 for r in rows)
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--sr-offset", "0.2"]) == 2
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--sr-offset", "0.2", "--rest", "0.5"]) == 0
+    assert next((tmp_path / "cs").glob("eval_*_rb0.5_so0.2_st-oracle"))
+    from scripts import probe_bars
+    probe_args = ["--ckpt", str(tmp_path / "cs" / "best.pt"), "--split", "train", "--n", "2",
+                  "--stats", "oracle", "--fake-mel", "--manifest", str(data / "manifest.csv"),
+                  "--cache", str(data / "cache"), "--device", "cpu"]
+    assert probe_bars.main(probe_args) == 0
+    probe = json.loads((tmp_path / "cs" / "probe_bars.json").read_text())
+    assert probe["songs"] == 2 and probe["bars"] > 0 and "1" in probe["thresholds"]
+    assert probe_bars.main([*probe_args, "--charts", str(oracle_run / "charts.npz")]) == 0
+    assert (tmp_path / "cs" / f"probe_bars_{oracle_run.name}.csv").exists()
     if can_write_mp3():                       # the meeting pack of 10-06: stats + lane guidance
         from scripts import playtest_pack
         pp = tmp_path / "cs_pairs"

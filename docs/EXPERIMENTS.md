@@ -1262,6 +1262,61 @@ Readings:
    the target (2% fewer notes than human against 7% more before), motion_pred -0.01 and
    releases on onset rows -0.03.
 
+### 2026-10-07 night · Choices for a whole bar: rests, long-note bars, the SR offset (predictions)
+
+Three gaps the playtests named, measured on the 240 val songs (human charts against the
+candidate, full-v4 + lane guidance 2 + onset gate 1 + quiet bars 0.1), all choices a chart
+makes for a whole bar:
+
+| | human | candidate | before the gate |
+|---|---|---|---|
+| bars inside a song without a note start (rest bars) | 0.85% | (the candidate fills 77% of the human ones) | 88% filled |
+| bars with 4+ starts, 80%+ of them long notes (ln bars) | 7.5% | 3.8% | 3.5% |
+| bars with 8+ onset rows, evenly spaced (steady bars) | 36.5% | 20.1% | 18.7% |
+
+The audio does not find the rests. Their bars are quieter in the middle (loudness z -1.34
+against 0.29, 11.6 dB under the song's loud bars against 2.6) but spread wide: a quarter
+are above z -0.42, and humans fill 94% of the bars at z < -2. ROC AUC for a human rest:
+level in dB 0.84, loudness z 0.84, the bar's strongest onset 0.71. A rule on loudness that
+finds half the rests (z < -1.5) flags 7.6% of the bars, 5% of them rests, and takes 4.6% of
+the human notes: the queue's silence rule is dropped. Each of the three is a joint choice
+of a whole bar (192 cells kept empty; most starts long; no hole in a stream), which
+cell-by-cell sampling seldom makes even where every cell leans that way, as with the lanes
+(2026-10-02/03): ask the model about the whole bar, with the rest of the chart in view.
+
+`run_rest.sh` (patch 0038):
+
+1. `scripts/probe_bars.py`: for every bar inside each val song, the bar MASK and the rest of
+   the chart in view (the human chart; then the candidate's charts), the expected note
+   starts (sum of p(TAP) + p(HOLD_START) over the bar's cells) and long-note starts.
+2. `--rest T` (`sampler.rest_bars`, tag `_rb`): after all other passes, every bar whose
+   expected starts, asked that way, fall below T is left empty (its taps and the long notes
+   that start in it). On the candidate's saved charts (`--from-charts`, no new sampling)
+   at T 0.5, 1, 2.
+3. `--sr-offset 0.15` (tag `_so`): the candidate sampled at the target SR + 0.15 against the
+   gate's -0.14; then the rest pass at 1 on those charts.
+4. New columns for both charts: `rest_bars`, `ln_bars`, `steady_bars` (structure.bar_kinds).
+
+Predictions:
+
+1. Probe, human context: rest AUC of the expected starts 0.93 or more (the audio 0.84); at
+   T = 1, 0.5-1.5% of the bars below, 35% or more of them human rests, half of the rests
+   found. Candidate context: AUC 0.88 or more, precision at T = 1 of 25% or more.
+2. Probe, ln bars (busy bars): AUC of the expected long-note share 0.90 or more, the chart's
+   long-note share alone (the chart-stat input) about 0.80.
+3. Rest pass, T = 1: the candidate's rest bars to 0.5-1.5% (human 0.85%), human-empty bars
+   filled 0.78 → 0.60 or less, F1@50 within 0.002, density -1% or less, the other numbers
+   unchanged. T = 0.5 about half of that; T = 2 rest bars 1.5-3%, fill 0.45 or less, F1
+   -0.002 to -0.005 (bars humans fill get emptied).
+4. SR offset 0.15: SR bias -0.14 → within ±0.05; density 0.98 → 1.04-1.08; off the human
+   rhythm in quiet bars 0.231 → 0.245 or less; F1 within ±0.004; jacks, trills, long notes,
+   dynamics within their noise (±0.005, ±0.01 for the slope).
+
+Failure modes: the model spreads its expectation over the masked bar and the expected
+starts of human rests are not far below the filled bars' (AUC under 0.9): rests are then
+not a bar-level choice the model knows, and a rest pass would empty bars humans fill. Or
+the model knows the rests next to human context but not next to its own charts.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
