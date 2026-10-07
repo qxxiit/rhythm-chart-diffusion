@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
                          "in view (sampler.refine_holds)")
     ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
                     help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
-    ap.add_argument("--onset-bias", type=float, default=0.0,
+    ap.add_argument("--onset-bias", type=float, default=1.0,   # 2026-10-07
                     help="fewer notes where nothing in the music starts: log penalty of up to X "
                          "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
                          "0 = off")

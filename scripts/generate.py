@@ -28,7 +28,10 @@ outputs/generated/<audio stem>/): the audio, one .osu per SR, and <stem>.osz.
 Open the .osz with osu! (lazer: double-click or drag onto the window; stable:
 put it in Songs/ and press F5). Quiet bars are thinned by default (--loud-bias 0.1,
 quiet side; 0 turns it off), which brought the loudness dynamics of 60 val songs to
-the human level with the SR unchanged (EXPERIMENTS 2026-10-06).
+the human level with the SR unchanged (EXPERIMENTS 2026-10-06), and notes are less
+likely to start where nothing in the music starts (--onset-bias 1; 0 turns it off),
+which cut the notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07; the
+charts come out about 0.1 SR under the target with it).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -237,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
                          "in view (sampler.refine_holds)")
     ap.add_argument("--loud-bias", type=float, default=0.1,   # 2026-10-06
                     help="fewer notes in quiet bars (sampler.loudness_bias); 0 = off")
-    ap.add_argument("--onset-bias", type=float, default=0.0,
+    ap.add_argument("--onset-bias", type=float, default=1.0,   # 2026-10-07
                     help="fewer notes where nothing in the music starts: log penalty of up to X "
                          "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
                          "0 = off")

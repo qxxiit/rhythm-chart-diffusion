@@ -1204,6 +1204,64 @@ Predictions for the night of 10-06/07 (`run_gate.sh`), written before it:
 4. A pairs pack of that candidate (16 songs none of the earlier packs had, tag 1007):
    AI taken for human 1-4 of 16; fewer comments on quiet parts.
 
+### 2026-10-07 · The onset gate on note starts only; the candidate on 240 val songs
+
+`run_gate.sh` (predictions in the 10-06/07 entry). Full-v4 fwd + ref2, oracle stats.
+
+The gate as a start penalty, first 60 val songs, lane guidance 2, against the same without
+it (the EMPTY form of 10-06 alongside):
+
+| | reference | gate 1, EMPTY form | **gate 1, starts** | gate 1.5, starts |
+|---|---|---|---|---|
+| off the human rhythm, quiet bars | 0.293 | 0.256 | **0.258** (-0.034 [-0.052, -0.019]) | 0.257 |
+| off the human rhythm, other bars | 0.204 | 0.161 | **0.167** (-0.036 [-0.045, -0.028]) | 0.157 |
+| human-empty bars filled | 0.907 | 0.689 | **0.837** (-0.070 [-0.172, -0.007]) | 0.826 |
+| long-note share (human 0.190) | 0.157 | 0.098 | **0.172** (+0.014) | 0.168 |
+| long-note beats / released on an onset row | 0.78 / 0.70 | 0.79 / 0.70 | 0.82 / 0.68 | 0.83 / 0.68 |
+| ln_f1 | 0.224 | 0.161 | 0.231 | 0.231 |
+| F1@50 | 0.373 | 0.377 | 0.376 (+0.003 [-0.002, +0.008]) | 0.378 |
+| density ratio / SR bias | 1.114 / +0.097 | 1.028 / -0.091 | 1.041 / -0.022 | 1.030 / -0.062 |
+| motion_pred / chord share | 0.122 / 0.353 | 0.130 / 0.374 | 0.115 / 0.375 | 0.113 / 0.385 |
+
+Predictions: 1 off-rhythm gains within 0.02 of the EMPTY form's hit (-0.034 / -0.036
+against -0.036 / -0.043); empty bars within 0.05 miss (-0.070 against -0.22); long notes
+within 0.02 and ln_f1 hit (+0.014, +0.007); density -5 to -10% hit (-7%); F1 +0.003 hit
+(+0.0031). 2 (gate 1.5) off-rhythm in quiet bars between gates 1 and 2 miss (as gate 1),
+elsewhere hit, long notes hit; SR error +0.046 [+0.003, +0.090].
+
+The candidate for playable charts (lane guidance 2, gate 1, quiet bars 0.1) on all 240
+val songs, against full-v4 oracle alone (rescored):
+
+| | full-v4 oracle | candidate | human |
+|---|---|---|---|
+| off the human rhythm, quiet / other bars | 0.288 / 0.178 | **0.231 / 0.142** | - |
+| human-empty bars filled | 0.865 | 0.778 | - |
+| move_jack / move_trill | 0.010 / 0.132 | **0.033** / 0.173 | 0.044 / 0.153 |
+| chord share / lone chords | 0.353 / 0.358 | 0.381 / 0.391 | 0.372 / 0.413 |
+| loud_slope / light bars | 0.171 / 0.046 | **0.200 / 0.063** | 0.194 / 0.063 |
+| per-song correlation with the human chart: long notes / jacks / trills | 0.75 / 0.42 / 0.07 | **0.77 / 0.62 / 0.36** | - |
+| F1@50 / F1@50 any lane | 0.378 / 0.763 | 0.381 / 0.765 | - |
+| density ratio / SR bias / SR error | 1.075 / +0.020 / 0.243 | 0.984 / **-0.138** / 0.260 | 1 |
+| motion_pred / move_stair | 0.122 / 0.179 | 0.111 / 0.167 | 0.132 / 0.211 |
+| released on an onset row | 0.696 | 0.667 | 0.759 |
+| seconds per song (MacBook) | - | 60 | - |
+
+Predictions 3: off-rhythm in quiet bars 0.25 or less hit (0.231); empty bars 0.75 or less
+miss (0.778); move_jack 0.04 or more miss (0.033); long-note correlation 0.7 or more hit
+(0.77); F1 within 0.005 hit (+0.003); SR error within 0.03 hit (+0.017). Prediction 4 (the
+playtest of the pack, `outputs/full-v4/playtest_gate`, tag 1007) waits for ratings.
+
+Readings:
+1. As a start penalty the gate keeps the rhythm gains and the long notes (more of them,
+   and longer: a held note is not cut where nothing starts). It no longer empties the
+   bars humans leave empty: that part came from cutting long-note bodies, so silence
+   needs its own rule (e.g. a strong start penalty where the audio is near its minimum).
+2. Gate 1.5 is no better than 1 and misses the SR more: 1 stays.
+3. The candidate moves most numbers onto the human level at once (dynamics, light bars,
+   chords, jacks towards it, per-song style) with F1 a little up; it costs 0.14 SR under
+   the target (2% fewer notes than human against 7% more before), motion_pred -0.01 and
+   releases on onset rows -0.03.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
