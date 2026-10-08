@@ -119,6 +119,10 @@ python scripts/compare_runs.py <eval dir> <eval dir> ...   # paired over songs, 
 python scripts/rescore.py <eval dir> ...   # new pattern columns for an earlier run (charts.npz)
 python scripts/evaluate.py --ckpt ... --per-song --n 0 --copy-bias 0 --from-charts <eval dir>
                                         # bar copies on saved charts, no new sampling
+python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
+    --chart-stats data/chart_stats.csv --snapshot-every 1000 --run fit-v4   # the path saved
+python scripts/fit_viz.py outputs/fit-v4   # the path on the loss surface (its PCA plane),
+                                        # the straight line, Adam's step per coordinate
 ```
 
 The cache layout is in `src/data/cache.py`. Not implemented: the AR baselines (on hold).

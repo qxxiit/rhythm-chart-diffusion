@@ -752,3 +752,93 @@ def test_playtest_retag(tmp_path: Path) -> None:
 
 def parse_osu_text_notes(text: str) -> int:
     return len(text.split("[HitObjects]")[1].strip().splitlines())
+
+
+def test_fit_plane_recovers_a_planar_path(monkeypatch) -> None:
+    from scripts import fit_viz
+    monkeypatch.setattr(fit_viz, "BLOCK", 1024)           # several passes over 5000 columns
+    rng = np.random.default_rng(0)
+    e = np.linalg.qr(rng.normal(size=(5000, 2)))[0].T     # two orthonormal directions
+    base = rng.normal(size=5000)
+    t = np.linspace(0, 1, 12)
+    a, b = 3 * (1 - t) ** 2, np.sin(3 * t)                # a curved path in that plane
+    X = [(base + ai * e[0] + bi * e[1]).astype(np.float32) for ai, bi in zip(a, b, strict=True)]
+    pl = fit_viz.plane(X)
+    assert sum(pl["explained"]) > 0.999 and pl["explained"][0] >= pl["explained"][1]
+    assert np.allclose(pl["d"] @ pl["d"].T, np.eye(2), atol=1e-6)
+    c = pl["coords"]
+    assert np.allclose(c[-1], 0)
+    true = np.stack([a, b], axis=1)
+    dist = lambda p: np.linalg.norm(p[:, None] - p[None], axis=-1)   # noqa: E731
+    assert np.allclose(dist(c), dist(true), atol=1e-3)    # the plane keeps every distance
+    from_init, length = fit_viz.distances(pl["gram"])
+    assert np.allclose(from_init, np.linalg.norm(true - true[0], axis=1), atol=1e-3)
+    assert np.isclose(length, np.linalg.norm(np.diff(true, axis=0), axis=1).sum(), rtol=1e-3)
+    with pytest.raises(ValueError):
+        fit_viz.plane(X[:3])
+
+
+def test_snapshots_and_fit_viz(data: Path, tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from scripts import fit_viz
+    from src.models.diffusion import load_denoiser
+    common = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+              "--out", str(tmp_path), "--overfit", "4", "--batch-size", "4", "--warmup", "5",
+              "--d-model", "64", "--layers", "2", "--heads", "2", "--d-ff", "128",
+              "--log-every", "10", "--sample-steps", "4", "--fake-mel", "--device", "cpu",
+              "--lr", "2e-3"]
+    assert train.main([*common, "--run", "a", "--steps", "40", "--val-every", "40",
+                       "--snapshot-every", "20"]) == 0
+    traj = tmp_path / "a" / "traj"
+    steps = sorted(int(f.stem.split("_")[1]) for f in traj.glob("params_*.npy"))
+    assert steps == train.snapshot_steps(20, 40) == [0, 2, 4, 10, 20, 40]
+    assert sorted(int(f.stem.split("_")[1]) for f in traj.glob("adam_*.npz")) == steps[1:]
+    assert train.snapshot_steps(1000, 2500) == [0, 100, 200, 500, 1000, 2000, 2500]
+    assert train.snapshot_steps(0, 100) == []
+    model = load_denoiser(tmp_path / "a" / "last.pt")
+    last = torch.nn.utils.parameters_to_vector(model.parameters()).detach().numpy()
+    assert np.array_equal(np.load(traj / "params_000040.npy"), last)
+    z = np.load(traj / "adam_000040.npz")
+    assert len(z["m"]) == len(z["v"]) == len(np.load(traj / "sample_idx.npy")) and z["t"] == 40
+
+    # snapshots draw no random numbers: the same run without them ends at the same point
+    assert train.main([*common, "--run", "b", "--steps", "40", "--val-every", "40"]) == 0
+    other = torch.load(tmp_path / "b" / "last.pt", weights_only=True)["model"]
+    assert all(torch.equal(v, model.state_dict()[k]) for k, v in other.items())
+
+    short = [*common, "--steps", "20", "--val-every", "20", "--snapshot-every", "10",
+             "--weight-decay", "0"]
+    assert train.main([*short, "--run", "sgd", "--optim", "sgd", "--lr", "0.05"]) == 0
+    assert train.main([*short, "--run", "norm", "--betas", "0", "0", "--lr", "1e-3"]) == 0
+    assert not list((tmp_path / "sgd" / "traj").glob("adam_*.npz"))
+
+    viz = ["--grid", "4", "--line", "3", "--chunks", "3", "--batch-size", "8",
+           "--device", "cpu"]
+    assert fit_viz.main([str(tmp_path / "a"), *viz, "--ref", str(tmp_path / "b" / "last.pt")]) == 0
+    out = tmp_path / "a" / "fit_viz"
+    res = json.loads((out / "fit_viz.json").read_text())
+    r = res["runs"][0]
+    assert r["steps"] == steps and r["coords"][-1] == [0.0, 0.0]
+    assert 0 < r["explained"][1] <= r["explained"][0] and sum(r["explained"]) <= 1 + 1e-9
+    assert all(np.isfinite(r["loss_true"])) and r["loss_true"][-1] < r["loss_true"][0]
+    assert np.isclose(r["loss_plane"][-1], r["loss_true"][-1], rtol=1e-5)  # the end is on it
+    assert len(r["grid"]["loss"]) == 4 and len(r["line"]["loss"]) == 3
+    assert np.isclose(r["line"]["loss"][0], r["loss_true"][0], rtol=1e-5)
+    assert r["ref"]["dist_to_final"] < 1e-6                  # run b ended where run a did
+    assert r["adam"]["steps"] == steps[1:] and set(r["adam"]["groups"]) >= {"embeddings",
+                                                                            "LayerNorms"}
+    for name in ("fit_path.png", "fit_curves.png", "fit_adam.png"):
+        assert (out / name).stat().st_size > 0
+
+    cmp_out = tmp_path / "cmp"
+    assert fit_viz.main([str(tmp_path / "a"), str(tmp_path / "sgd"), str(tmp_path / "norm"),
+                         *viz, "--out", str(cmp_out)]) == 0
+    runs = json.loads((cmp_out / "fit_viz.json").read_text())["runs"]
+    assert [r["optim"] for r in runs] == ["adamw", "sgd", "adamw"] and runs[1]["adam"] is None
+    assert np.allclose(runs[2]["adam"]["u_median"], 1.0, atol=1e-3)   # betas 0 0: the sign
+    a_loss = [r["loss_true"][0] for r in runs]
+    assert np.allclose(a_loss, a_loss[0])            # same start, same chunks and masks
+    before = (cmp_out / "fit_path.png").stat().st_mtime_ns
+    assert fit_viz.main([str(tmp_path / "a"), "--out", str(cmp_out), "--replot"]) == 0
+    assert (cmp_out / "fit_path.png").stat().st_mtime_ns >= before
+    assert fit_viz.main([str(tmp_path / "b"), *viz]) == 2          # no snapshots

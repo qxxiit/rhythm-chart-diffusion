@@ -1420,6 +1420,57 @@ Predictions:
    other bars Insane 0.10 → 0.13 (the cost); in quiet bars +0.02 or less; F1 within ±0.004.
 4. Holes on the tapered charts: steady bars +0.02, SR +0.02 more.
 
+### 2026-10-08 night · The path of training on the loss surface (notebook 6.5 at 6.9M parameters; predictions)
+
+The deep-learning class of 10-08 drew optimizer steps on the contours of a two-parameter
+loss (UDL notebook 6.5: gradient descent too slow with a small step and zigzagging with a
+large one, the normalized gradient bouncing at the end, Adam getting there). The same
+picture for our training: `train.py --snapshot-every` saves the parameters along the run
+(no random numbers drawn, so the run is the same run), and `fit_viz.py` draws the path on
+its PCA plane (Li et al. 2018: the top two principal directions of the offsets θ_i − θ_T),
+with the loss measured on a grid of that plane (val_ce's recipe on fixed train chunks).
+What the plane leaves out is reported with it: the share of the path's variance, and at
+every snapshot the loss there against the loss at its projection. Also the straight line
+from θ_0 to θ_T, the distance from θ_0, and for AdamW Adam's step per coordinate against
+the coordinate's gradient scale (√v̂, eqs. 6.13-6.17). `run_fit.sh` (patch 0040), started
+after `run_taper.sh` ends:
+
+1. Four 3,000-step runs from full-v4's start (seed 0, its data and inputs, weight decay 0,
+   warmup 300 then cosine): AdamW lr 3e-4 (the recipe's), SGD lr 0.05 and 0.5 (no momentum;
+   at 0.5 a step is about as long as Adam's, at 0.05 a tenth), and the normalized gradient
+   (AdamW with betas 0 0: every coordinate moves lr in the sign of its gradient, the
+   notebook's eq. 6.14) at lr 3e-4. Snapshots at 20, 40, 100 and every 200 steps;
+   `fit_viz.py` on the four (grid 21 × 21, 32 chunks), each on its own plane.
+2. fit-v4: the full-v4 recipe again (60,000 steps, 3.3 h) with snapshots at 100, 200, 500
+   and every 1,000 steps; `fit_viz.py` on it (grid 25 × 25, 64 chunks), with full-v4's
+   best.pt marked on the plane.
+
+Predictions:
+
+1. fit-v4's plane: PC1 0.55-0.80 of the path's variance, PC1 + PC2 ≥ 0.75. The path one
+   long sweep along PC1 in the first 10k steps (where val_ce goes 0.23 → 0.10), then a slow
+   bend into the end, the dots bunching as the cosine takes the learning rate to 0.
+   ||θ_T − θ_0|| 20-80, the path 1.3-2.5 times as long.
+2. The plane is a caricature in the middle: at the median snapshot the loss at the
+   projection is 0.01-0.05 above the loss at the snapshot (the off-plane part of the path
+   does real work); within 0.005 over the last 10k steps. The grid's minimum within 0.003
+   of the end's loss, within a tenth of the span from the end.
+3. The straight line from θ_0 to θ_T: the loss falls all the way (no barrier), minimum at
+   α 0.95-1.1.
+4. Adam a quarter in (step 15k): the gradient scale spans ≥ 3 decades over the sampled
+   coordinates (5-95%), Adam's step ≤ 1.5 decades, its median 0.05-0.3 lr (well under 1:
+   the gradient's sign changes from batch to batch and the momentum averages it out). The
+   median step ≥ 0.4 lr in the first 500 steps, ≤ 0.15 lr in the second half.
+5. fit-v4 against full-v4: val_ce at 60k within ±0.001 of 0.0740, but not the same numbers
+   (sums run in parallel on MPS, so the runs drift apart); full-v4's end ≥ 0.2 ||θ_T − θ_0||
+   from fit-v4's, nearly all of it off the plane.
+6. The four at 3,000 steps (loss on the 32 chunks): Adam 0.18-0.24; the normalized gradient
+   as fast over the first 200 steps, then stuck 0.05-0.15 above Adam (the notebook's
+   bouncing: every coordinate keeps moving lr, until the cosine stops it); SGD 0.5
+   0.30-0.45; SGD 0.05 above 0.40 (the class frequencies per cell and little more).
+   Distance from the start: the normalized gradient ≥ 3 × Adam's, SGD 0.05 under a tenth of
+   it. The normalized run's step per coordinate is 1 lr exactly (a check of the plot).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

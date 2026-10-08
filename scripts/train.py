@@ -6,12 +6,15 @@
     python scripts/train.py --steps 60000 --val-every 2000 --style data/style.csv --run full-v2
     python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
         --chart-stats data/chart_stats.csv --run full-v4
+    python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
+        --chart-stats data/chart_stats.csv --snapshot-every 1000 --run fit-v4
 
 Reads data/manifest.csv and data/cache (tokens + log-Mel, layout in src/data/cache.py).
 --fake-mel reads the plumbing-only mel that encodes the answer instead (never report it).
 Writes outputs/<run>/: config.json, log.csv (every --log-every steps), val.csv,
-last.pt and best.pt. Before a run, write the prediction (final loss, when it
-converges, how it could fail) in docs/EXPERIMENTS.md (design doc §6, 예측 기록).
+last.pt and best.pt (and traj/ with --snapshot-every). Before a run, write the
+prediction (final loss, when it converges, how it could fail) in docs/EXPERIMENTS.md
+(design doc §6, 예측 기록).
 
 --style data/style.csv (scripts/build_style.py) adds the genre and mapper inputs
 (src/data/style.py): the vocab is built from the train charts and saved in the
@@ -31,6 +34,13 @@ the same probability. val_ce_null is then without style and without stats.
 of the first one and counts matching cells. The loss should approach 0 and the
 sample should rebuild the chart; if not, suspect the code before the
 hyperparameters (§6, 사전 점검).
+
+--snapshot-every N saves the path of the run for scripts/fit_viz.py, in outputs/<run>/traj
+(Trajectory below): the parameters at step 0, N/10, N/5, N/2, every multiple of N and the
+last step. It draws no random numbers, so a run with snapshots trains as the same run
+without them. --optim sgd (plain gradient descent, or with --momentum) and --betas 0 0
+(AdamW with no averaging: the normalized gradient, each coordinate moved by lr in the sign
+of its gradient) are there to compare optimizers from the same start (notebook 6.5).
 """
 
 from __future__ import annotations
@@ -85,6 +95,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--warmup", type=int, default=1000)
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.98))
+    ap.add_argument("--optim", choices=["adamw", "sgd"], default="adamw",
+                    help="sgd: gradient descent with --momentum (default 0: plain)")
+    ap.add_argument("--momentum", type=float, default=0.0, help="--optim sgd")
     ap.add_argument("--clip", type=float, default=1.0)
     ap.add_argument("--dropout", type=float, default=0.0)
     ap.add_argument("--row-mask", type=float, default=0.0,
@@ -114,6 +127,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--val-every", type=int, default=1000)
     ap.add_argument("--val-batches", type=int, default=50)
     ap.add_argument("--sample-steps", type=int, default=32)
+    ap.add_argument("--snapshot-every", type=int, default=0,
+                    help="save the parameters to <run>/traj for scripts/fit_viz.py; 0 = off")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", type=Path, default=None)
     ap.add_argument("--wandb", default=None, help="wandb project name (optional)")
@@ -243,6 +258,69 @@ def save(path: Path, **state) -> None:
     tmp.replace(path)                                # never leave a half-written checkpoint
 
 
+def snapshot_steps(every: int, total: int) -> list[int]:
+    """--snapshot-every: 0, every / 10, / 5, / 2 (the first steps move the most), every
+    multiple of every, and the last step."""
+    if every <= 0:
+        return []
+    early = {s for s in (0, every // 10, every // 5, every // 2) if s < every}
+    return sorted(early | set(range(every, total + 1, every)) | {total})
+
+
+class Trajectory:
+    """outputs/<run>/traj, what scripts/fit_viz.py reads:
+
+    params_<step>.npy   float32 [P], the parameters in model.parameters() order
+                        (torch.nn.utils.parameters_to_vector), after that many steps
+    adam_<step>.npz     AdamW only, from step 1: exp_avg (m), exp_avg_sq (v) and the step
+                        count t at a fixed sample of coordinates (up to SAMPLE per tensor,
+                        sample_idx.npy: positions in the flat vector)
+    meta.json           names and shapes in that order, the optimizer, betas and eps
+    steps.csv           step, lr (of the next step) of each snapshot as it is written
+    """
+
+    SAMPLE = 2048
+
+    def __init__(self, run_dir: Path, model: torch.nn.Module, opt, a: argparse.Namespace):
+        self.dir = run_dir / "traj"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        named = list(model.named_parameters())
+        self.params = [p for _, p in named]
+        self.opt = opt if isinstance(opt, torch.optim.AdamW) else None
+        rng = np.random.default_rng(0)                 # its own generator: training's untouched
+        self.local, flat, offset = [], [], 0
+        for p in self.params:
+            idx = np.sort(rng.choice(p.numel(), min(p.numel(), self.SAMPLE), replace=False))
+            self.local.append(torch.as_tensor(idx, device=p.device))
+            flat.append(offset + idx)
+            offset += p.numel()
+        np.save(self.dir / "sample_idx.npy", np.concatenate(flat))
+        group = opt.param_groups[0]
+        (self.dir / "meta.json").write_text(json.dumps({
+            "names": [n for n, _ in named], "shapes": [list(p.shape) for p in self.params],
+            "optim": a.optim, "betas": list(group["betas"]) if "betas" in group else None,
+            "eps": group.get("eps"), "momentum": group.get("momentum"), "lr": a.lr,
+            "steps": a.steps}, indent=1))
+
+    def save(self, step: int, lr: float) -> None:
+        vec = torch.nn.utils.parameters_to_vector(self.params).detach().float().cpu().numpy()
+        np.save(self.dir / f"params_{step:06d}.npy", vec)
+        if self.opt is not None and step > 0:
+            m, v, t = [], [], 0.0
+            for p, idx in zip(self.params, self.local, strict=True):
+                state = self.opt.state.get(p, {})
+                if "exp_avg" not in state:              # no gradient yet: no step either
+                    m.append(np.zeros(len(idx), np.float32))
+                    v.append(np.zeros(len(idx), np.float32))
+                    continue
+                m.append(state["exp_avg"].reshape(-1)[idx].float().cpu().numpy())
+                v.append(state["exp_avg_sq"].reshape(-1)[idx].float().cpu().numpy())
+                t = max(t, float(state["step"]))
+            np.savez(self.dir / f"adam_{step:06d}.npz", m=np.concatenate(m),
+                     v=np.concatenate(v), t=np.float64(t))
+        append_csv(self.dir / "steps.csv", ["step", "lr"], [step, f"{lr:.4e}"])
+
+
 def main(argv=None) -> int:
     a = parse_args(argv)
     torch.manual_seed(a.seed)
@@ -316,7 +394,11 @@ def main(argv=None) -> int:
                             n_stats=len(spec["names"]) if spec else 0,
                             stat_bins=spec["bins"] if spec else 0)
     model = Denoiser(config).to(device)
-    opt = torch.optim.AdamW(param_groups(model, a.weight_decay), lr=a.lr, betas=tuple(a.betas))
+    if a.optim == "sgd":
+        opt = torch.optim.SGD(param_groups(model, a.weight_decay), lr=a.lr, momentum=a.momentum)
+    else:
+        opt = torch.optim.AdamW(param_groups(model, a.weight_decay), lr=a.lr,
+                                betas=tuple(a.betas))
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda(a.warmup, a.steps))
     step, best = 0, math.inf
     if a.resume:
@@ -361,6 +443,11 @@ def main(argv=None) -> int:
              args=args_json, **({"style": vocab} if vocab is not None else {}),
              **({"chart_stats": spec} if spec is not None else {}))
 
+    snaps = set(snapshot_steps(a.snapshot_every, a.steps))
+    traj = Trajectory(run_dir, model, opt, a) if snaps else None
+    if traj is not None and step == 0:
+        traj.save(0, sched.get_last_lr()[0])
+
     # --- loop ---
     model.train()
     micro, seen, t0 = 0, 0, time.time()
@@ -393,6 +480,8 @@ def main(argv=None) -> int:
             opt.zero_grad(set_to_none=True)
             sched.step()
             step += 1
+            if traj is not None and step in snaps:
+                traj.save(step, sched.get_last_lr()[0])
 
             if step % a.log_every == 0 or step == a.steps:
                 rate = seen / (time.time() - t0)
