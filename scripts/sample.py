@@ -81,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="fewer notes where nothing in the music starts: log penalty of up to X "
                          "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
                          "0 = off")
+    ap.add_argument("--rest", type=float, default=1.0,   # 2026-10-08
+                    help="leave empty the bars where the model, with the bar masked and the "
+                         "chart around it, expects fewer note starts than this "
+                         "(sampler.rest_bars); 0 = off")
     ap.add_argument("--loud-side", choices=list(LOUD_SIDES), default="quiet",
                     help="--loud-bias: quiet bars only, or both (also more notes in loud bars)")
     ap.add_argument("--hold-share", type=float, default=None,
@@ -173,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
                            jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
                            loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
+                           rest=a.rest or None,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -201,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
+    if a.rest:
+        order += f"-rb{a.rest:g}"
     if "genre" in style:
         order += "-style"
     if style.get("style_guidance"):

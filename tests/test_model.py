@@ -590,6 +590,41 @@ def test_rest_bars_leaves_empty_the_bars_the_model_expects_empty() -> None:
     assert np.array_equal(out[BAR - 2:BAR + 7, 2], held[BAR - 2:BAR + 7, 2])   # ... not bar 0's hold
 
 
+def test_taper_factor() -> None:
+    from src.models.sampler import GATE_TAPER, taper_factor
+    assert taper_factor(6.0, None) == 1.0
+    assert taper_factor(2.0, GATE_TAPER) == 1.0 and taper_factor(2.7, GATE_TAPER) == 1.0
+    assert taper_factor(3.85, GATE_TAPER) == pytest.approx(0.5)
+    assert taper_factor(5.0, GATE_TAPER) == pytest.approx(0.35)
+    assert taper_factor(9.0, GATE_TAPER) == pytest.approx(0.35)
+
+
+def test_stream_holes_and_fill_holes() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import STATS, fill_holes, stream_holes
+    song = _bars_song([[(r, (r // 3) % 4) for r in (0, 3, 6, 12, 15)],      # 1/4-beat stream,
+                       [(0, 0)],                                            # row 9 missing
+                       [(0, 1), (6, 2), (18, 3), (24, 0)]])                 # 1/2-beat, 12 missing
+    assert stream_holes(song, 3 * BAR) == [9, 2 * BAR + 12]
+    crowded = song.copy()                               # another note inside the span: no stream
+    crowded[2 * BAR + 15, 1] = TAP
+    assert stream_holes(crowded, 3 * BAR) == [9]
+    frames = torch.zeros(len(song) * 4, 80)
+    sure = torch.zeros(1, L, K, N_CLASSES)
+    sure[..., TAP] = 4.0
+    sure[0, :, 2, TAP] = 6.0                            # lane 2 the likeliest
+    quiet = torch.zeros(1, L, K, N_CLASSES)
+    quiet[..., EMPTY] = 8.0
+    out = song.copy()
+    assert fill_holes(Fixed(quiet), out, frames, 3.0, lambda row0: 400.0, 3 * BAR,
+                      threshold=0.5) == 0 and np.array_equal(out, song)
+    before = STATS["filled_holes"]
+    assert fill_holes(Fixed(sure), out, frames, 3.0, lambda row0: 400.0, 3 * BAR,
+                      threshold=0.5) == 2 and STATS["filled_holes"] == before + 2
+    assert out[9, 2] == TAP and out[2 * BAR + 12, 2] == TAP
+    assert stream_holes(out, 3 * BAR) == []
+
+
 def test_copy_bars_leaves_a_song_the_model_knows() -> None:
     from src.data.tokenizer import BAR
     from src.models.sampler import copy_bars

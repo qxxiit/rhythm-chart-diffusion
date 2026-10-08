@@ -310,6 +310,26 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert probe["songs"] == 2 and probe["bars"] > 0 and "1" in probe["thresholds"]
     assert probe_bars.main([*probe_args, "--charts", str(oracle_run / "charts.npz")]) == 0
     assert (tmp_path / "cs" / f"probe_bars_{oracle_run.name}.csv").exists()
+    assert probe_bars.main([*probe_args, "--context", "none"]) == 0
+    none = json.loads((tmp_path / "cs" / "probe_bars_none.json").read_text())
+    assert none["context"] == "none" and "auc_rest_expected_starts_within" in none
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--fill-holes", "0.0",
+                          "--rest", "1000"]) == 0
+    assert (oracle_run.parent / (oracle_run.name + "_fh0_rb1000_st-oracle")).exists()
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--onset-bias", "1", "--onset-taper", "2.7,5,0.35",
+                          "--sr-min", "4.5"]) == 0
+    tapered = next((tmp_path / "cs").glob("eval_*_og1_ot2.7-5-0.35_st-oracle_min4.5"))
+    with open(tapered / "per_song.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1 and float(rows[0]["sr_target"]) >= 4.5   # 4.92 and 4.11 above
+    assert "weak_onsets" in rows[0] and "human_weak_onsets" in rows[0]
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--onset-bias", "1",
+                          "--onset-taper", "5,2,0.3"]) == 2
+    named = tmp_path / "cs" / "probe_bars_t0.5_x"                 # a dot in the name
+    assert probe_bars.main([*probe_args, "--out", str(named)]) == 0
+    assert (tmp_path / "cs" / "probe_bars_t0.5_x.json").exists()
     if can_write_mp3():                       # the meeting pack of 10-06: stats + lane guidance
         from scripts import playtest_pack
         pp = tmp_path / "cs_pairs"
@@ -412,9 +432,9 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-cp0_T4_*.osu"))
+    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-cp0-rb1_T4_*.osu"))
     import zipfile
-    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-cp0_T4_*.osz"))
+    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-cp0-rb1_T4_*.osz"))
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
@@ -433,7 +453,8 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-lbq0.1-og1-cp0]" in p.name for p in charts)    # quiet bars, onset gate, copies
+    assert all("-lbq0.1-og1-cp0-rb1]" in p.name for p in charts)   # quiet bars, onset gate,
+    # copies, rests
     assert generate.main([*common, "--timing", str(folder / "v0.osu"), "--mode", "independent",
                           "--order", "confidence", "--no-copy", "--out", str(tmp_path / "gen2")]) == 0
     made = list((tmp_path / "gen2").glob("*independent-confidence*.osu"))
@@ -678,6 +699,8 @@ def test_playtest_settings() -> None:
     assert parse_setting("random:128:continue:fwd+stsample")["stats"] == "sample"
     gated = parse_setting("random:128:continue:fwd+ref2+st+lg2+og1")
     assert gated["onset_bias"] == 1 and gated["name"].endswith("st lg2 og1")
+    rested = parse_setting("random:128:continue:fwd+ref2+st+lg2+og1+rb1")
+    assert rested["rest"] == 1 and rested["name"].endswith("og1 rb1")
     assert parse_setting("random:128")["onset_bias"] == 0
     guided = parse_setting("random:128:continue:fwd+ref2+st+sg1.5")
     assert guided["style_guidance"] == 1.5 and guided["name"].endswith("sg1.5 st")

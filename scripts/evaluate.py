@@ -60,6 +60,9 @@ human chart's SR with the song's real timing, then score:
                           bars without a note start, long-note bars, unbroken streams
                           (structure.bar_kinds), human_* likewise
     rest_bars_cleared     with --rest: bars the rest pass left empty (sampler.rest_bars)
+    holes_filled          with --fill-holes: stream holes the pass filled (sampler.fill_holes)
+    weak_onsets           onset rows on weak audio onsets (below the song's median onset
+                          strength), human_* likewise
     genre, mapper_known   the song's genre (data/style.csv, if there) and, for a model with
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
@@ -112,6 +115,7 @@ from src.models.sampler import (
     ORDERS,
     STATS,
     generate_song,
+    onset_strength,
     post_song,
     steps_name,
 )
@@ -124,8 +128,18 @@ PATTERN_KEYS = ("coverage", "coverage_chance", "coverage_p1", "coverage_p2", "co
                 "lone_chord", "bar_rhythm_repeat", "bar_lane_repeat")
 
 
+def weak_onsets(tokens: np.ndarray, strength: np.ndarray, n_cells: int) -> float:
+    """Of the chart's onset rows, the share whose audio onset strength (sampler.onset_strength)
+    is below the song's median: humans start more notes there the harder the chart."""
+    rows = np.isin(np.asarray(tokens).reshape(-1, K)[:n_cells], (TAP, HOLD_START)).any(axis=1)
+    if not rows.any():
+        return float("nan")
+    return float(np.mean(strength[:n_cells][rows] < np.median(strength[:n_cells])))
+
+
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int) -> dict:
     row = {}
+    strength = onset_strength(mel, n_cells)
     for who, tokens in (("", gen_tokens), ("human_", human_tokens)):
         flat = tokens.reshape(-1, tokens.shape[-1])[:n_cells]
         s = structure_scores(flat, mel, n_cells, far_k=far_k)
@@ -135,6 +149,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}{k}": v for k, v in hold_stats(flat).items()})
         row.update({f"{who}{k}": v for k, v in dynamics(flat, mel, n_cells).items()})
         row.update({f"{who}{k}": v for k, v in bar_kinds(flat, n_cells).items()})
+        row[f"{who}weak_onsets"] = weak_onsets(flat, strength, n_cells)
     row.update(ln_agreement(gen_tokens.reshape(-1, gen_tokens.shape[-1])[:n_cells],
                             human_tokens.reshape(-1, human_tokens.shape[-1])[:n_cells]))
     row.update(quiet_rhythm(gen_tokens, human_tokens, mel, n_cells))
@@ -236,6 +251,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--release-gap", type=int, default=None,
                     help="empty cells required between a release and the next onset in its lane; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
+    ap.add_argument("--onset-taper", default=None,
+                    help="LO,HI,FLOOR: the onset gate at full strength up to SR LO, falling to "
+                         "FLOOR at HI and above (sampler.taper_factor, EXPERIMENTS 2026-10-08)")
+    ap.add_argument("--fill-holes", type=float, default=None,
+                    help="fill the rows where an even stream misses one note when the model, "
+                         "with the row masked, starts a note there with at least this "
+                         "probability (sampler.fill_holes); also on --from-charts")
+    ap.add_argument("--sr-min", type=float, default=None,
+                    help="only the charts at this SR or above (the seeds stay those of the "
+                         "full run, so the charts match it)")
     ap.add_argument("--rest", type=float, default=None,
                     help="rest_bars last: leave empty the bars where the model, with the bar "
                          "masked, expects fewer note starts than this (EXPERIMENTS 2026-10-07 "
@@ -335,12 +360,24 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_jb{a.jack_bias:g}"
     if a.loud_bias:
         tag += f"_lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
+    taper = None
+    if a.onset_taper is not None:
+        try:
+            taper = tuple(float(v) for v in a.onset_taper.split(","))
+            assert len(taper) == 3 and taper[0] < taper[1] and 0 <= taper[2] <= 1
+        except (ValueError, AssertionError):
+            print("--onset-taper LO,HI,FLOOR with LO < HI and 0 <= FLOOR <= 1", file=sys.stderr)
+            return 2
     if a.onset_bias:
         tag += f"_og{a.onset_bias:g}"           # 10-06 night's _ob runs: the EMPTY-bias form
+        if taper is not None:
+            tag += "_ot" + "-".join(f"{v:g}" for v in taper)
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}"
+    if a.fill_holes is not None:
+        tag += f"_fh{a.fill_holes:g}"
     if a.rest is not None:
         tag += f"_rb{a.rest:g}"
     if a.sr_offset:
@@ -358,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
     if a.sample_seed is not None:
         tag += f"_s{a.sample_seed}"
+    if a.sr_min is not None:
+        tag += f"_min{a.sr_min:g}"
     out_dir = a.ckpt.parent / f"eval_{tag}"
     saved = None
     if a.from_charts is not None:
@@ -365,7 +404,8 @@ def main(argv: list[str] | None = None) -> int:
             print("--sr-offset changes the sampling: not with --from-charts", file=sys.stderr)
             return 2
         saved = np.load(a.from_charts / "charts.npz")
-        missing = [r["key"] for r in rows if r["key"] not in saved.files]
+        missing = [r["key"] for r in rows if r["key"] not in saved.files
+                   and (a.sr_min is None or float(r["sr"]) >= a.sr_min)]
         if missing:
             print(f"{a.from_charts}: no saved chart for {len(missing)} of the {len(rows)} charts "
                   "(use that run's --per-song / --n / --seed)", file=sys.stderr)
@@ -373,12 +413,15 @@ def main(argv: list[str] | None = None) -> int:
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
             f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + (
+            f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
             f"_rb{a.rest:g}" if a.rest is not None else "") + stats_tag
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results, charts = [], {}
     for i, r in enumerate(rows):
+        if a.sr_min is not None and float(r["sr"]) < a.sr_min:
+            continue
         z = np.load(a.cache / "tokens" / f"{r['key']}.npz")
         tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
         offset, n_cells, sr = int(z["cell_offset"]), int(z["n_cells"]), float(r["sr"])
@@ -392,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         if not style and a.stats != "none" and a.style_guidance:
             style = {"style_guidance": a.style_guidance}           # guidance towards the stats
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
-        holds0, rests0 = STATS["changed_holds"], STATS["rest_bars"]
+        holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -410,11 +453,12 @@ def main(argv: list[str] | None = None) -> int:
         if saved is not None:
             tokens = saved[r["key"]]
             if a.copy_bias is not None or a.refine_holds or share is not None \
-                    or a.rest is not None:
+                    or a.rest is not None or a.fill_holes is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
+                                   holes=a.fill_holes,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
             tokens = generate_song(model, mel, sr + a.sr_offset, tps, offset, n_cells,
@@ -428,7 +472,8 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
-                                   onset_bias=a.onset_bias, rest=a.rest,
+                                   onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
+                                   holes=a.fill_holes,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -438,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
             cost["changed_holds"] = STATS["changed_holds"] - holds0
         if a.rest is not None:
             cost["rest_bars_cleared"] = STATS["rest_bars"] - rests0
+        if a.fill_holes is not None:
+            cost["holes_filled"] = STATS["filled_holes"] - fills0
         charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
@@ -480,7 +527,8 @@ def main(argv: list[str] | None = None) -> int:
                "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
-               "onset_bias": a.onset_bias, "rest": a.rest, "sr_offset": a.sr_offset,
+               "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
+               "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

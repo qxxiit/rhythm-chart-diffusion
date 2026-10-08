@@ -1317,6 +1317,109 @@ starts of human rests are not far below the filled bars' (AUC under 0.9): rests 
 not a bar-level choice the model knows, and a rest pass would empty bars humans fill. Or
 the model knows the rests next to human context but not next to its own charts.
 
+**Results** (10-08, `outputs/overnight_rest.log`; the candidate-context probe was written
+to `probe_bars_eval_..._lbq0.{csv,json}`: `Path.with_suffix` cut the name at its last dot)
+
+Probe, 240 val songs, 29,436 bars inside the songs, 0.85% of them human rests:
+
+| | human context | candidate context |
+|---|---|---|
+| rest: AUC of the expected starts (audio: dB 0.84, loudness z 0.84) | **0.986** | 0.938 |
+| T = 0.5: bars below / of them human rests / of the rests below | 0.61% / 73% / 53% | 0.78% / 19% / 18% |
+| T = 1 | 1.60% / 36% / 68% | 1.21% / 19% / 28% |
+| T = 2 | 3.20% / 23% / 87% | 2.73% / 16% / 50% |
+| ln bars (busy bars): AUC of the expected long-note share (the chart's share alone 0.80) | **0.954** | 0.749 |
+
+The rest pass on the candidate's saved charts (paired, 240 songs):
+
+| | candidate | T 0.5 | **T 1** | T 2 | human |
+|---|---|---|---|---|---|
+| rest bars | 0.61% | 0.64% | **0.87%** | 1.70% | 0.75% |
+| human-empty bars filled | 0.778 | 0.705 | **0.644** | 0.416 | - |
+| off the human rhythm, quiet bars | 0.231 | 0.226 | 0.223 | 0.209 | - |
+| density ratio | 0.984 | 0.983 | 0.981 | 0.972 | 1 |
+| F1@50 / rho_in | 0.381 / 0.206 | 0.381 / 0.207 | 0.381 / 0.212 | 0.381 / 0.222 | - / 0.228 |
+| light bars / loud_slope | 0.063 / 0.200 | 0.061 / 0.202 | 0.058 / 0.204 | 0.050 / 0.211 | 0.063 / 0.194 |
+
+At T = 1 the pass empties 191 bars (0.8 per song): 34% are human rests, and in 68% the
+human chart has at most 2 starts (median 1); the candidate had a median of 1 start there.
+
+The SR offset 0.15 (sampled again, 240 songs): SR bias -0.138 → -0.026 [+0.087, +0.138],
+density 0.98 → 1.04, F1@50 +0.003, off the human rhythm in quiet bars unchanged but +0.011
+elsewhere, chords +0.015 (away from human), steady bars -0.016, trills' per-song correlation
+0.36 → 0.46; SR error 0.260 → 0.293. By grade (SR bias, full-v4 without the gate /
+candidate / +0.15):
+
+| grade | SR bias | onset rows below the song's median onset strength: human / no gate / candidate |
+|---|---|---|
+| Easy (47) | +0.10 / +0.07 / +0.21 | 0.055 / 0.075 / 0.055 |
+| Normal (32) | +0.08 / +0.05 / +0.16 | 0.088 / 0.117 / 0.087 |
+| Hard (72) | +0.10 / -0.05 / +0.05 | 0.157 / 0.205 / 0.142 |
+| Insane (66) | -0.03 / -0.27 / -0.17 | 0.244 / 0.280 / 0.189 |
+| Expert (18) | -0.19 / -0.62 / -0.46 | 0.287 / 0.326 / 0.223 |
+| Expert+ (5) | -0.83 / -1.10 / -1.13 | 0.313 / 0.306 / 0.215 |
+
+Predictions: 1 hit (0.986; at T = 1 1.6% of the bars, a little over 0.5-1.5%; 36% human
+rests; 68% of them found); candidate context AUC hit (0.938), precision miss (19% against
+25%). 2 hit (0.954; the chart's share 0.80). 3 at T = 1: rest bars hit, filled bars miss
+(0.644 against 0.60), F1 and density hit; T 0.5 about half hit; T 2 rest bars and fill hit,
+F1 miss the other way (-0.0004 against -0.002 to -0.005). 4 SR bias hit, density hit
+narrowly (1.037), off-rhythm in quiet bars and F1 hit, trills just miss (-0.006); chords
++0.015 not foreseen.
+
+Readings:
+1. The model knows where humans rest and where they hold a whole bar, when the rest of
+   the chart is a human one (AUC 0.99 and 0.95, far above the audio and the chart's
+   style). Next to its own charts it finds the rests less precisely (0.94; 19% of the bars
+   under T 0.5 are human rests against 73%) and the long-note bars hardly (0.75, under the
+   chart-level share): the context decides, and its own context tells less.
+2. The rest pass at 1 brings the rest bars to the human count with nothing else lost: the
+   bars it empties held about one note in both charts.
+3. A flat SR offset is the wrong cure. The gate costs SR from Hard up only (density
+   Insane 0.92, Expert 0.88), where humans stream through weak onsets: their onset rows
+   below the median onset strength rise from 5.5% (Easy) to 29-31% (Expert, Expert+); the
+   gate at 1 matches that up to Normal and cuts too much above (19-22% at Insane+), and
+   steady bars fall short most there (Insane 0.17 against 0.32, Expert 0.11 against 0.26).
+   The offset adds notes everywhere instead: Easy and Normal overshoot.
+
+### 2026-10-08 · The gate tapered by SR, stream holes, rests and long-note bars without a chart (predictions)
+
+From the 10-07 night: the gate costs SR from Hard up, where humans start a quarter of
+their notes on weak onsets (streams), and the sampled streams miss notes (steady bars 28%
+against 41% per song). And the model finds human rests and long-note bars only next to a
+human chart. `run_taper.sh` (patch 0039):
+
+1. `probe_bars.py --context none`: the whole chart MASK, so audio, SR and stats alone.
+   New: AUCs within songs (`*_within`: pairs of bars of one song only; the chart-level
+   long-note share is no help there).
+2. `--fill-holes T` (`sampler.fill_holes`, tag `_fh`): a row where an evenly spaced stream
+   (1/4, 1/3, 1/2 or 1 beat) misses exactly one note gets a tap when the model, with the
+   row's free lanes MASK and the chart around it, starts a note there with probability T
+   or more. On the candidate's charts with the rest pass (240 songs, no new sampling) at
+   0.3 and 0.5.
+3. `--onset-taper 2.7,5,0.35` (`sampler.taper_factor`, tag `_ot`): the gate at full strength
+   up to SR 2.7, falling linearly to 0.35 at SR 5 and above (the strength the per-grade
+   weak-onset shares ask for if the share moves linearly between gate 0 and 1). The
+   candidate with the rest pass otherwise, sampled again on the 161 val songs at SR 2.7
+   or above (`--sr-min 2.7`, which keeps the full run's seeds); then the holes at 0.5.
+4. New column `weak_onsets` (and `human_`): the share of onset rows below the song's median
+   onset strength; `compare_runs --by-grade` shows it with the density and steady bars.
+
+Predictions:
+
+1. No chart: rest AUC 0.90 (0.88 within songs; the audio alone 0.84); long-note bars 0.85
+   (0.75 within songs). Below 0.8 within songs, deciding them before sampling is out.
+2. Holes at 0.5: 3-6 filled per song; steady bars 0.28 → 0.31; breaks per 100 0.14 → 0.10;
+   density +0.5 to 1%; F1@50 +0.001; SR +0.02. At 0.3: half again as many, steady bars
+   0.32, F1 within ±0.002, SR +0.03.
+3. Taper, by grade against the candidate with rests (per-song means, which sit 0.01-0.02
+   off the pooled shares of 10-07): SR bias Hard -0.05 → -0.01 (±0.05), Insane -0.27 →
+   -0.12 (±0.07), Expert -0.62 → -0.38 (±0.15); weak onsets Hard → 0.16, Insane → 0.24,
+   Expert → 0.28 (human about 0.16 / 0.24 / 0.29); density Insane 0.92 → 0.99, Expert 0.88
+   → 0.95; steady bars Insane 0.17 → 0.21, Expert 0.11 → 0.15; off the human rhythm in
+   other bars Insane 0.10 → 0.13 (the cost); in quiet bars +0.02 or less; F1 within ±0.004.
+4. Holes on the tapered charts: steady bars +0.02, SR +0.02 more.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

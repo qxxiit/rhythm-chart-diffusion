@@ -49,10 +49,11 @@ METRICS = [
     ("loud_slope", "human_loud_slope"), ("light_bars", "human_light_bars"),
     ("off_rhythm_quiet", None), ("off_rhythm_rest", None), ("empty_bar_fill", None),
     ("rest_bars", "human_rest_bars"), ("ln_bars", "human_ln_bars"),
-    ("steady_bars", "human_steady_bars"),
+    ("steady_bars", "human_steady_bars"), ("weak_onsets", "human_weak_onsets"),
     ("passes", None), ("seconds", None),
 ]
-GRADE_METRICS = ("f1@50", "sr_bias", "coverage", "motion_pred")
+GRADE_METRICS = ("f1@50", "sr_bias", "density_ratio", "weak_onsets", "steady_bars",
+                 "motion_pred")
 # per-song style: does each song get its own amount, as its human chart has it?
 FOLLOW_METRICS = ("hold_share", "move_jack", "move_trill", "move_stair", "chord_share")
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")

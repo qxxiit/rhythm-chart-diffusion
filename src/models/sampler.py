@@ -78,8 +78,9 @@ def _neighbour(v: int) -> int | None:
     return None if v == MASK else (EMPTY if v == PAD else int(v))
 
 
-STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0}   # passes, copies,
-                                         # hold changes, bars left empty
+STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
+         "filled_holes": 0}             # passes, copies, hold changes, bars left empty,
+                                         # stream holes filled
                                          # (evaluate.py reports them per song)
 
 
@@ -667,6 +668,79 @@ def onset_gate(mel: np.ndarray, n_cells: int, n_rows: int, beta: float) -> np.nd
     return out
 
 
+# The gate by SR. Humans start more of their notes on weak onsets the harder the chart:
+# of their onset rows below the song's median onset strength, Easy 5.5%, Normal 8.8%, Hard
+# 15.7%, Insane 24.4%, Expert 28.7% (240 val songs, 2026-10-08): streams run through the
+# weak onsets. The gate at 1 matches them up to Normal (5.5%, 8.7%) and cuts too much above
+# (Insane 18.9%, Expert 22.3%), where the charts lose notes and SR (-0.27, -0.62) and their
+# streams break. taper (lo, hi, floor): the gate at full strength up to SR lo, falling
+# linearly to floor at hi and above; (2.7, 5.0, 0.35) is the guess the per-grade shares give
+# when the share moves linearly with the gate's strength between 0 and 1.
+GATE_TAPER = (2.7, 5.0, 0.35)
+
+
+def taper_factor(s: float, taper) -> float:
+    """The onset gate's strength factor at target SR s for taper = (lo, hi, floor), or 1."""
+    if taper is None:
+        return 1.0
+    lo, hi, floor = taper
+    return float(np.clip((hi - s) / (hi - lo), floor, 1.0))
+
+
+# Stream holes. In the sampled charts an evenly spaced stream misses a note more often than in
+# human ones (bars of 8+ onset rows evenly spaced: 28% against 41% per song, 2026-10-08; a
+# stream of 8+ single notes ends at a missing note 28% of the time against 12.5%, 2026-10-03).
+HOLE_GAPS = (3, 4, 6, 12)       # stream spacings in cells: 1/4, 1/3, 1/2, 1 beat
+
+
+def stream_holes(song: np.ndarray, n_cells: int) -> list[int]:
+    """Rows h before n_cells without a note start where a stream misses exactly one: for a
+    gap g of HOLE_GAPS (the first that fits), note starts at h - 2g, h - g, h + g and h + 2g
+    and none on the other rows from h - 2g to h + 2g."""
+    on = np.isin(song[:n_cells], (TAP, HOLD_START)).any(axis=1)
+    holes = []
+    for h in np.flatnonzero(~on):
+        for g in HOLE_GAPS:
+            if h - 2 * g < 0 or h + 2 * g >= n_cells:
+                continue
+            span = on[h - 2 * g:h + 2 * g + 1]
+            want = np.zeros(4 * g + 1, dtype=bool)
+            want[[0, g, 3 * g, 4 * g]] = True
+            if np.array_equal(span, want):
+                holes.append(int(h))
+                break
+    return holes
+
+
+def fill_holes(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+               n_cells: int, *, threshold: float, release_gap: int = 0) -> int:
+    """Fill the stream holes (stream_holes) the model wants filled; returns how many.
+
+    For each hole, the row's free lanes (EMPTY, not too soon after a release) MASK and the
+    rest of the chart around it in view (a window centred on the row): if the row starts a
+    note with probability at least threshold (1 - the product over the masked lanes of
+    1 - p(TAP) - p(HOLD_START)), a tap goes in the masked lane with the highest p(TAP).
+    A tap in an EMPTY cell keeps the grammar.
+    """
+    fpc = model.config.frames_per_cell
+    filled = 0
+    for h in stream_holes(song, n_cells):
+        free = [k for k in _free_lanes(song, h, release_gap)[0] if song[h, k] == EMPTY]
+        if not free:
+            continue
+        w0 = int(np.clip(h - L // 2, 0, len(song) - L))
+        x = song[w0:w0 + L].astype(np.int64).copy()
+        x[h - w0, free] = MASK
+        probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+        p = probs[h - w0, free]
+        if 1.0 - float(np.prod(1.0 - p[:, TAP] - p[:, HOLD_START])) < threshold:
+            continue
+        song[h, free[int(np.argmax(p[:, TAP]))]] = TAP
+        filled += 1
+    STATS["filled_holes"] += filled
+    return filled
+
+
 # Bar copies. Human charts repeat whole bars where the music repeats; on the 240 val
 # charts (EXPERIMENTS 2026-10-03) 17% of the bars with 4+ onsets copy an earlier bar,
 # as it is or mirrored, and the source is the earlier bar whose audio is most similar
@@ -854,11 +928,12 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               hold_share: float | None = None,
               copy_bias: float | None = None, min_hold: int | None = None,
               release_gap: int | None = None, seed: int = 0, genre: int | None = None,
-              mapper: int | None = None, stats=None, rest: float | None = None) -> np.ndarray:
+              mapper: int | None = None, stats=None, rest: float | None = None,
+              holes: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share), copy_bars (copy_bias), clean_holds,
-    rest_bars (rest: the threshold); a new array."""
+    fill_holes (holes: the threshold), rest_bars (rest: the threshold); a new array."""
     if genre is not None or mapper is not None or stats is not None:
         model = Styled(model, genre, mapper, stats=stats)
     song = np.concatenate([np.asarray(tokens, dtype=np.int64).reshape(-1, K),
@@ -876,6 +951,9 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                                          copy_bias=copy_bias) \
             and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    if holes is not None:
+        fill_holes(model, song, frames, s, beat_len, n_cells, threshold=holes,
+                   release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
@@ -895,7 +973,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   hold_share: float | None = None, loud_bias: float = 0.0,
                   loud_side: str = "quiet", stats=None,
                   lane_guidance: float | None = None, onset_bias: float = 0.0,
-                  rest: float | None = None) -> np.ndarray:
+                  onset_taper=None, rest: float | None = None,
+                  holes: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -935,6 +1014,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   where the context outweighs the stats; the long notes are already decided
                   by then, so guidance there moves the lanes (jacks, trills) without
                   overshooting the long-note share (EXPERIMENTS 2026-10-06)
+    onset_taper   (lo, hi, floor): the gate's strength falls with the target SR (taper_factor,
+                  GATE_TAPER); None: onset_bias at every SR
+    holes         fill_holes with this threshold before rest_bars (None: none)
     rest          rest_bars last with this threshold (None: none): a bar whose expected
                   note starts, asked with the bar MASK and the chart around it, fall
                   below it is left empty
@@ -942,7 +1024,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
-    copy_bars, clean_holds again if a bar was copied, rest_bars.
+    copy_bars, clean_holds again if a bar was copied, fill_holes, rest_bars.
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
@@ -963,7 +1045,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
     row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) if loud_bias else None
-    row_onset = onset_gate(mel, n_cells, len(song), onset_bias) if onset_bias else None
+    row_onset = onset_gate(mel, n_cells, len(song), onset_bias * taper_factor(s, onset_taper)) \
+        if onset_bias else None
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
         song[row0:row0 + L] = sample_window(
@@ -1007,6 +1090,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                                                s_audio, copy_bias=copy_bias)
     if copied and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    if holes is not None:
+        fill_holes(model, song, frames, s, beat_len, n_cells, threshold=holes,
+                   release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)
