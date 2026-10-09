@@ -964,3 +964,13 @@ def test_ln_agreement() -> None:
     gen[6, 1], gen[7, 1] = TAP, EMPTY                               # the second one as a tap
     assert ln_agreement(gen, human)["ln_f1"] == pytest.approx(2 / 3)   # P 1, R 1/2
     assert np.isnan(ln_agreement(np.where(gen == 2, TAP, gen), human)["ln_f1"])
+
+
+def test_parse_taper() -> None:
+    from src.models.sampler import GATE_TAPER, parse_taper, taper_factor
+    assert parse_taper("2.7,5,0.35") == GATE_TAPER
+    assert parse_taper("off") is None and parse_taper("0") is None and parse_taper(None) is None
+    for bad in ("5,2.7,0.35", "2.7,5", "2.7,5,1.5", "a,b,c"):
+        with pytest.raises(ValueError):
+            parse_taper(bad)
+    assert taper_factor(2.0, GATE_TAPER) == 1.0 and taper_factor(6.0, GATE_TAPER) == 0.35

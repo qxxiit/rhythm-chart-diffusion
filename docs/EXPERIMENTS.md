@@ -1420,6 +1420,50 @@ Predictions:
    other bars Insane 0.10 → 0.13 (the cost); in quiet bars +0.02 or less; F1 within ±0.004.
 4. Holes on the tapered charts: steady bars +0.02, SR +0.02 more.
 
+**Results (`run_taper.sh`, night of 10-08)**
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | no chart: rest AUC 0.90 (0.88 within songs; audio 0.84) | 0.917 (0.936 within; audio 0.841) | hit |
+| 1 | long-note bars 0.85 (0.75 within songs) | 0.820 (0.699 within) | miss, under the 0.8 bar |
+| 2 | holes 0.5: 3-6 per song | 11.3 | miss |
+| 2 | steady bars 0.28 → 0.31, breaks per 100 0.14 → 0.10 | 0.281 → 0.308; 0.142 → 0.133 | hit, miss |
+| 2 | density +0.5 to 1%, F1 +0.001, SR +0.02 | +0.77%, +0.0003, +0.011 | hit, miss, miss |
+| 2 | holes 0.3: half again as many, steady 0.32, F1 ±0.002, SR +0.03 | 16.4 (1.45x), 0.317, +0.0002, +0.017 | hit, hit, hit, miss |
+| 3 | taper, SR bias Hard -0.05 → -0.01, Insane -0.27 → -0.12 (±0.07), Expert -0.62 → -0.38 (±0.15) | -0.010, -0.145, -0.281 | hit, hit, hit |
+| 3 | weak onsets Hard 0.16, Insane 0.24, Expert 0.28 (human 0.14 / 0.23 / 0.30) | 0.132 → 0.144, 0.179 → 0.219, 0.224 → 0.277 | miss, miss (both at the human share), hit |
+| 3 | density Insane 0.92 → 0.99, Expert 0.88 → 0.95 | 0.969, 0.962 | miss, hit |
+| 3 | steady bars Insane 0.17 → 0.21, Expert 0.11 → 0.15 | 0.159, 0.104 | miss, miss |
+| 3 | off the human rhythm elsewhere Insane 0.10 → 0.13; quiet bars +0.02 or less; F1 ±0.004 | 0.125; Hard +0.008, Insane +0.026, Expert +0.019; -0.0017 | hit, miss (Insane), hit |
+| 4 | holes on the tapered charts: steady +0.02, SR +0.02 | +0.024, +0.011 | hit, miss |
+
+Per-song means on the 161 songs at SR 2.7+ (candidate with rests → tapered → tapered with holes):
+
+| grade (n) | SR bias | density | weak onsets (human) | steady bars (human) | off rhythm, other bars | off rhythm, quiet bars |
+|---|---|---|---|---|---|---|
+| Hard (72) | -0.050 → -0.010 → -0.000 | 0.990 → 1.001 → 1.007 | 0.132 → 0.144 → 0.146 (0.143) | 0.275 → 0.263 → 0.288 (0.458) | 0.128 → 0.135 | 0.185 → 0.193 |
+| Insane (66) | -0.269 → -0.145 → -0.133 | 0.918 → 0.969 → 0.975 | 0.179 → 0.219 → 0.221 (0.226) | 0.168 → 0.159 → 0.185 (0.323) | 0.102 → 0.125 | 0.239 → 0.265 |
+| Expert (18) | -0.620 → -0.281 → -0.265 | 0.874 → 0.962 → 0.966 | 0.224 → 0.277 → 0.279 (0.295) | 0.107 → 0.104 → 0.118 (0.259) | 0.093 → 0.117 | 0.202 → 0.221 |
+| Expert+ (5) | -1.100 → -0.937 → -0.932 | 0.849 → 0.908 → 0.913 | 0.213 → 0.261 → 0.263 (0.288) | 0.146 → 0.157 → 0.180 (0.307) | 0.090 → 0.106 | 0.289 → 0.277 |
+
+What it says:
+
+- The taper does what it was for: the hard grades get their notes back where humans put them
+  (weak-onset starts at the human share in Hard, Insane and Expert) and most of the SR back.
+  The notes come back on weak onsets, so off the human rhythm rises with them (+0.02); that is
+  the human level of weak-onset starts, not noise. F1 is unchanged. Adopted (DECISIONS 10-09).
+- The returned notes do not make streams: steady bars do not move with the taper. The holes do
+  (+0.02 to +0.03 in every grade), at 11 notes a song and +0.01 SR; but breaks in long streams
+  stay at 0.13 per 100 (human 0.05): a stream that misses two notes in a row, or changes
+  spacing, is not a hole. Adopted at 0.5 (DECISIONS 10-09); steady bars are still 0.31 against
+  0.41.
+- Expert+ (5 songs) stays -0.9 SR under: the taper's floor 0.35 is not the problem there
+  (density 0.91); those charts need more notes than the model starts at any gate.
+- Without a chart in view the model still ranks the human rests well (AUC 0.92, 0.94 within
+  songs), but its expected starts there are high: under 1 expected start it catches a fifth
+  of them (0.68 next to a human chart). Long-note bars within a song only at 0.70. Planning
+  bars before sampling is out; the rest pass after sampling stays (DECISIONS 10-09).
+
 ### 2026-10-08 night · The path of training on the loss surface (notebook 6.5 at 6.9M parameters; predictions)
 
 The deep-learning class of 10-08 drew optimizer steps on the contours of a two-parameter
@@ -1470,6 +1514,57 @@ Predictions:
    0.30-0.45; SGD 0.05 above 0.40 (the class frequencies per cell and little more).
    Distance from the start: the normalized gradient ≥ 3 × Adam's, SGD 0.05 under a tenth of
    it. The normalized run's step per coordinate is 1 lr exactly (a check of the plot).
+
+**Results (`run_fit.sh`, night of 10-08)** — figures: `outputs/fit-v4/fit_viz/`, `outputs/opt-compare/`
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | PC1 0.55-0.80, PC1 + PC2 ≥ 0.75 | 0.782 + 0.112 = 0.894 | hit |
+| 1 | one sweep along PC1 in 10k steps, then a slow bend; dots bunching at the end | an arc: PC1 falls steadily all run (110 → 65 by 10k → 0), PC2 rises to 35 by 16k and comes back; bunching yes | half |
+| 1 | ‖θ_T − θ_0‖ 20-80, path 1.3-2.5 times as long | 112, path 526 (4.7x) | miss, miss |
+| 2 | gap (plane − snapshot) +0.01-0.05 at the median snapshot | median \|gap\| 0.003; +0.04 to +0.06 only from 1k to 9k steps | miss |
+| 2 | within 0.005 over the last 10k; grid minimum within 0.003 of the end, within a tenth of the span | max 0.0013; 0.0899 = the end's, 1.9 from it (the path spans 110) | hit, hit |
+| 3 | straight line monotone, minimum at α 0.95-1.1 | monotone, 1.00 | hit |
+| 4 | at 15k: gradient scale ≥ 3 decades, step ≤ 1.5, median step 0.05-0.3 lr | 2.0, 1.8, 0.129 | miss, miss, hit |
+| 4 | median step ≥ 0.4 lr in the first 500 steps, ≤ 0.15 in the second half | 0.12-0.15 from step 100 on (opt-adam: 0.86 at 20, 0.34 at 40, 0.13 at 100); 0.14 | miss, hit |
+| 5 | fit-v4 val_ce at 60k within ±0.001 of full-v4's 0.0740, not the same numbers | 0.0737; equal to 5 decimals at 2k and 4k, apart from 6k (0.14007 vs 0.13983) | hit, hit |
+| 5 | full-v4's end ≥ 0.2 ‖θ_T − θ_0‖ away, nearly all off the plane | 50.8 (0.45x), 47.9 off the plane | hit |
+| 6 | at 3k: Adam 0.18-0.24; SGD 0.5 0.30-0.45; SGD 0.05 above 0.40 | 0.241, 0.306, 0.487 | at the edge, hit, hit |
+| 6 | normalized gradient as fast for 200 steps, then 0.05-0.15 above Adam | 0.510 vs 0.497 at 200; 0.258 (+0.017) | hit, miss |
+| 6 | distance: normalized ≥ 3x Adam's, SGD 0.05 under a tenth | 33.9 vs 28.6 (1.19x); 2.2 (0.08x) | miss, hit |
+| 6 | normalized run's step exactly 1 lr | 1.000 at every snapshot | hit |
+
+What the pictures say:
+
+- **The path is low-dimensional, the parameters are not.** 89% of the 60k-step path lies in
+  one plane of the 6.9M-dimensional space, and on that plane it is a smooth arc into a long
+  valley, much like the notebook's figure. But the plane only describes the path: the start
+  sits in the plane at loss 0.44 while the real start is at 1.75 (its random part is off the
+  plane), and from 1k to 9k steps, the fast phase, the plane misses 0.04-0.06 of loss. After
+  10k the plane and the real loss agree to 0.005.
+- **The start-to-end line has a shelf.** On the straight line from θ_0 to θ_T the loss falls
+  to 0.65 by a fifth of the way, stays there to 0.4, then falls to 0.09. 0.6 is the "class
+  frequencies" level: where plain SGD at 0.05 stops (0.49 after 3k steps) and where every run
+  is at step 100. No barrier, but a flat stretch the optimizer has to cross.
+- **Adam's normalization, measured.** Median gradient scale differs 80x between parameter
+  groups (cross-attention 7e-6, output head 6e-4), the median step is 0.12-0.14 lr in every
+  group. And the step is 0.13 lr, not 1: the gradient's sign changes from batch to batch, so
+  the momentum averages most of it away, from step 100 to the end, whatever the learning rate.
+  2.5% of the sampled coordinates have a gradient scale under ε = 1e-8: all of them the key
+  part of the attention biases (median 6e-12). Softmax ignores a constant added to every
+  key's score, so their true gradient is 0; there Adam moves by g / ε, i.e. not at all, as
+  it should.
+- **The notebook's four, on our model.** From the same start for 3,000 steps: SGD 0.05 stalls
+  at the class frequencies (0.49), SGD 0.5 gets to 0.31 with bumps (step 200 above step 100,
+  1,800 above 1,600), the normalized gradient follows Adam to within 0.02 (0.26 vs 0.24),
+  Adam 0.24. The normalized gradient moves each coordinate 7x as far per step (1 lr against
+  0.13) yet ends only 1.2x as far from the start: most of its motion goes back and forth,
+  the notebook's bouncing in 6.9M dimensions; Adam's momentum takes that out, and ends a
+  little lower.
+- **Seed noise floor.** The same seed on the Mac's GPU gives the same run for 4k steps, then
+  two runs whose ends are 51 apart (0.45 of the whole path's span, nearly all off the plane)
+  and equally good (val_ce 0.0737 vs 0.0740, 0.0899 vs 0.0897 on the 64 chunks). Differences
+  between our full-v* runs under about 0.0005 val_ce are noise.
 
 ## Phase 3 Ablation A: Diffusion Design
 

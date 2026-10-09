@@ -30,11 +30,14 @@ put it in Songs/ and press F5). Quiet bars are thinned by default (--loud-bias 0
 quiet side; 0 turns it off), which brought the loudness dynamics of 60 val songs to
 the human level with the SR unchanged (EXPERIMENTS 2026-10-06), and notes are less
 likely to start where nothing in the music starts (--onset-bias 1; 0 turns it off),
-which cut the notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07; the
-charts come out about 0.1 SR under the target with it). Last, bars where the model
-expects under one note start, asked about the whole bar with the chart around it, are
-left empty (--rest 1; 0 turns it off), which brought the bars without a note to the human
-count (EXPERIMENTS 2026-10-07 night).
+which cut the notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07). From SR
+2.7 up the gate weakens, to 0.35 of it from SR 5 (--onset-taper 2.7,5,0.35; off keeps it
+full), since hard charts start many notes on weak onsets: that brought the SR of the hard
+grades back near the target (EXPERIMENTS 2026-10-08). A stream that misses exactly one
+note gets it where the model would start one with probability 0.5 or more (--holes 0.5;
+0 turns it off). Last, bars where the model expects under one note start, asked about
+the whole bar with the chart around it, are left empty (--rest 1; 0 turns it off), which
+brought the bars without a note to the human count (EXPERIMENTS 2026-10-07 night).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -81,7 +84,15 @@ from src.data.mel import FRAMES_PER_CELL, log_mel, on_grid, song_stats
 from src.data.style import GENRES, genre_index, mapper_index
 from src.data.tokenizer import BAR, D, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, LOUD_SIDES, ORDERS, generate_song, steps_name
+from src.models.sampler import (
+    GATE_TAPER,
+    LANE_PASSES,
+    LOUD_SIDES,
+    ORDERS,
+    generate_song,
+    parse_taper,
+    steps_name,
+)
 
 
 def red_lines(osu: Path) -> list[tuple[float, float]]:
@@ -247,6 +258,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="fewer notes where nothing in the music starts: log penalty of up to X "
                          "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
                          "0 = off")
+    ap.add_argument("--onset-taper", default=",".join(f"{v:g}" for v in GATE_TAPER),
+                    help="--onset-bias by target SR: full up to LO, falling linearly to FLOOR "
+                         "of it at HI and above (sampler.taper_factor), as LO,HI,FLOOR; "
+                         "off = full at every SR")   # 2026-10-09
+    ap.add_argument("--holes", type=float, default=0.5,   # 2026-10-09
+                    help="fill the one missing note of an evenly spaced stream where the model "
+                         "starts a note with this probability or more (sampler.fill_holes); "
+                         "0 = off")
     ap.add_argument("--rest", type=float, default=1.0,   # 2026-10-08
                     help="leave empty the bars where the model, with the bar masked and the "
                          "chart around it, expects fewer note starts than this "
@@ -288,6 +307,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="print the genres and mappers the model knows, and stop")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
+    try:
+        taper = parse_taper(a.onset_taper)
+    except ValueError as e:
+        print(f"--onset-taper: {e}", file=sys.stderr)
+        return 2
     if a.no_copy:
         a.copy_bias = None
     if a.list_styles:
@@ -372,11 +396,13 @@ def main(argv: list[str] | None = None) -> int:
     if a.loud_bias:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
-        order += f"-og{a.onset_bias:g}"
+        order += f"-og{a.onset_bias:g}" + ("-ot" if taper is not None else "")
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
+    if a.holes:
+        order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
     if a.genre is not None:
@@ -412,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
                                holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
                                loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                                rest=a.rest or None,
+                               onset_taper=taper, holes=a.holes or None,
                                lane_guidance=a.lane_guidance, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))

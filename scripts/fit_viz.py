@@ -89,6 +89,16 @@ def plane(X: list[np.ndarray]) -> dict:
     n, P = len(X), len(X[0])
     if n < 4:
         raise ValueError(f"{n} snapshots: the plane needs at least 4")
+    # numpy's Accelerate BLAS on Apple Silicon raises bogus divide/overflow/invalid flags
+    # in matmul (as in mel.py and structure.py); silence them, and check the results.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        out = _plane(X, n, P)
+    if not all(np.isfinite(out[k]).all() for k in ("d", "coords", "gram")):
+        raise FloatingPointError("non-finite plane")
+    return out
+
+
+def _plane(X: list[np.ndarray], n: int, P: int) -> dict:
     gram = np.zeros((n, n))
     for lo in range(0, P, BLOCK):
         M = np.stack([np.asarray(x[lo:lo + BLOCK], dtype=np.float64) for x in X])

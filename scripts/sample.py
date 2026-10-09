@@ -33,7 +33,15 @@ from src.data.mel import open_mel
 from src.data.style import encode, read_style
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.sampler import LANE_PASSES, LOUD_SIDES, ORDERS, generate_song, steps_name
+from src.models.sampler import (
+    GATE_TAPER,
+    LANE_PASSES,
+    LOUD_SIDES,
+    ORDERS,
+    generate_song,
+    parse_taper,
+    steps_name,
+)
 
 
 def onset_match(pred: np.ndarray, real: np.ndarray) -> tuple[float, float]:
@@ -81,6 +89,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="fewer notes where nothing in the music starts: log penalty of up to X "
                          "on starting a note on rows with weak audio onsets (sampler.onset_gate); "
                          "0 = off")
+    ap.add_argument("--onset-taper", default=",".join(f"{v:g}" for v in GATE_TAPER),
+                    help="--onset-bias by target SR: full up to LO, falling linearly to FLOOR "
+                         "of it at HI and above (sampler.taper_factor), as LO,HI,FLOOR; "
+                         "off = full at every SR")   # 2026-10-09
+    ap.add_argument("--holes", type=float, default=0.5,   # 2026-10-09
+                    help="fill the one missing note of an evenly spaced stream where the model "
+                         "starts a note with this probability or more (sampler.fill_holes); "
+                         "0 = off")
     ap.add_argument("--rest", type=float, default=1.0,   # 2026-10-08
                     help="leave empty the bars where the model, with the bar masked and the "
                          "chart around it, expects fewer note starts than this "
@@ -122,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
                          "(default: --style-guidance); long notes are decided before them")
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
+    try:
+        taper = parse_taper(a.onset_taper)
+    except ValueError as e:
+        print(f"--onset-taper: {e}", file=sys.stderr)
+        return 2
     if a.no_copy:
         a.copy_bias = None
 
@@ -178,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
                            loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                            rest=a.rest or None,
+                           onset_taper=taper, holes=a.holes or None,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -201,11 +223,13 @@ def main(argv: list[str] | None = None) -> int:
     if a.loud_bias:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
-        order += f"-og{a.onset_bias:g}"
+        order += f"-og{a.onset_bias:g}" + ("-ot" if taper is not None else "")
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
+    if a.holes:
+        order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
     if "genre" in style:

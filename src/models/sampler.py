@@ -679,6 +679,19 @@ def onset_gate(mel: np.ndarray, n_cells: int, n_rows: int, beta: float) -> np.nd
 GATE_TAPER = (2.7, 5.0, 0.35)
 
 
+def parse_taper(text: str | None):
+    """"LO,HI,FLOOR" -> (lo, hi, floor) for taper_factor; None, "", "off" or "0" -> None."""
+    if text is None or text.strip().lower() in ("", "off", "0", "none"):
+        return None
+    try:
+        lo, hi, floor = (float(v) for v in text.split(","))
+    except ValueError:
+        raise ValueError(f"onset taper {text!r}: LO,HI,FLOOR") from None
+    if not (lo < hi and 0 <= floor <= 1):
+        raise ValueError(f"onset taper {text!r}: LO < HI and 0 <= FLOOR <= 1")
+    return lo, hi, floor
+
+
 def taper_factor(s: float, taper) -> float:
     """The onset gate's strength factor at target SR s for taper = (lo, hi, floor), or 1."""
     if taper is None:
