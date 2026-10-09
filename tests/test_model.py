@@ -974,3 +974,110 @@ def test_parse_taper() -> None:
         with pytest.raises(ValueError):
             parse_taper(bad)
     assert taper_factor(2.0, GATE_TAPER) == 1.0 and taper_factor(6.0, GATE_TAPER) == 0.35
+
+
+def test_carry_rhythm_takes_an_earlier_rhythm_the_model_likes() -> None:
+    """A bar of taps takes the rhythm of a bar 1, 2, 4 or 8 before (its rows and chord
+    sizes) when the model, with the bar masked, scores it at least as well as the bar's
+    own less the bias; the taps stay taps in free lanes, and bars with long notes neither
+    give nor take."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, carry_rhythm
+    on_beats = [(0, 0), (0, 3), (12, 1), (24, 2), (36, 3)]          # a chord, then 3 notes
+    song = _bars_song([on_beats, [(6, 0), (18, 1), (30, 2), (42, 3)],
+                       [(3, 1), (15, 1), (27, 2), (39, 0)]])
+    logits = torch.zeros(1, L, K, N_CLASSES)
+    logits[..., EMPTY] = 2.0                            # mostly nothing ...
+    for row in (0, 12, 24, 36):                         # ... notes on the beats of bar 2
+        logits[0, 2 * BAR + row, :, EMPTY] = 0.0        # (the windows start at row 0)
+        logits[0, 2 * BAR + row, :, TAP] = 1.0
+        logits[0, 2 * BAR + row + 6, :, EMPTY] = 4.0    # and surely none between them
+    frames = torch.zeros(len(song) * 4, 80)
+
+    def run(x, bias):
+        return carry_rhythm(Fixed(logits), x, frames, 3.0, lambda row0: 400.0, 3 * BAR, None,
+                            bias=bias, rng=np.random.default_rng(0))
+
+    def counts(x, b):
+        return (x[b * BAR:(b + 1) * BAR] == TAP).sum(axis=1)
+
+    kept = song.copy()
+    assert run(kept, -np.inf) == 0 and np.array_equal(kept, song)
+    before = STATS["carried_bars"]
+    out = song.copy()
+    assert run(out, 0.0) == 1 and STATS["carried_bars"] == before + 1
+    assert np.array_equal(out[:2 * BAR], song[:2 * BAR])        # bar 1 keeps its own: the
+    assert np.array_equal(counts(out, 2), counts(song, 0))      # chord fits it worse
+    assert np.isin(out[2 * BAR:3 * BAR], (EMPTY, TAP)).all()
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+    loose = song.copy()
+    assert run(loose, 2.0) == 2 and np.array_equal(counts(loose, 1), counts(song, 0))
+    held = song.copy()                                  # a long note in bar 0: no source
+    held[40, 1], held[41:44, 1], held[44, 1] = HOLD_START, HOLD_BODY, HOLD_END
+    assert run(held, 0.0) == 0
+
+
+def test_place_rhythm_keeps_out_of_released_lanes() -> None:
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import _place_rhythm
+    x = _bars_song([[(0, 1)], [(6, 2), (18, 3)]])
+    x[BAR - 4, 0], x[BAR - 3:BAR - 1, 0], x[BAR - 1, 0] = HOLD_START, HOLD_BODY, HOLD_END
+    src = np.full((BAR, K), EMPTY)
+    src[0, [2, 3]] = TAP
+    counts = np.zeros(BAR, dtype=int)
+    counts[0] = 4                                       # lane 0 was just released
+    before = x.copy()
+    assert not _place_rhythm(x, BAR, counts, src, release_gap=2)
+    assert np.array_equal(x, before)
+    counts[0] = 2                                       # the source's lanes first
+    assert _place_rhythm(x, BAR, counts, src, release_gap=2)
+    assert list(x[BAR]) == [EMPTY, EMPTY, TAP, TAP] and (x[BAR + 1:2 * BAR] == EMPTY).all()
+    counts[0] = 3
+    assert _place_rhythm(x, BAR, counts, src, release_gap=2)
+    assert list(x[BAR]) == [EMPTY, TAP, TAP, TAP]
+
+
+def test_tidy_holds_turns_long_notes_among_taps_into_taps() -> None:
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, tidy_holds
+
+    def hold(x, row, lane, n):
+        x[row, lane], x[row + 1:row + n, lane], x[row + n, lane] = HOLD_START, HOLD_BODY, HOLD_END
+    song = _bars_song([[(r, r // 6 % 4) for r in range(0, BAR, 6)],     # 8 taps
+                       [(0, 0), (24, 1)],
+                       [(0, 0), (12, 1), (24, 2), (36, 3)]])
+    hold(song, 13, 2, 6)                                # bar 0: half a beat among 8 taps
+    hold(song, 27, 3, 12)                               # bar 0: a beat
+    hold(song, BAR + 6, 2, 4)                           # bar 1: 3 note starts only
+    hold(song, 2 * BAR + 3, 2, 6)                       # bar 2: 2 of 6 starts long
+    hold(song, 2 * BAR + 27, 0, 6)
+    before = STATS["tidied_holds"]
+    out = song.copy()
+    assert tidy_holds(out, 3 * BAR, max_beats=1.0) == 1 and STATS["tidied_holds"] == before + 1
+    assert out[13, 2] == TAP and (out[14:20, 2] == EMPTY).all()
+    out[13:20, 2] = song[13:20, 2]
+    assert np.array_equal(out, song)                    # nothing else changed
+    out = song.copy()
+    assert tidy_holds(out, 3 * BAR, max_beats=2.0) == 2
+    assert np.array_equal(np.isin(out, (TAP, HOLD_START)), np.isin(song, (TAP, HOLD_START)))
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+
+
+def test_carry_and_tidy_in_generate_song_keep_the_grammar() -> None:
+    from src.models.sampler import STATS
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, 700)
+    carried0 = STATS["carried_bars"]
+    taps = generate_song(*args, steps=6, seed=2, lanes="forward", hold_bias=-np.inf,
+                         carry=50.0)                    # bars of taps only: they carry
+    assert len(grammar_violations(taps)) == 0 and STATS["carried_bars"] > carried0
+    flat = taps.reshape(-1, K)
+    assert np.all(flat[700:] == PAD) and not np.any(flat[:700] == PAD)
+    plain = generate_song(*args, steps=6, seed=2, lanes="forward")
+    tidied = generate_song(*args, steps=6, seed=2, lanes="forward", ln_tidy=4.0)
+    assert len(grammar_violations(tidied)) == 0         # the same onsets, fewer long notes
+    assert np.array_equal(np.isin(tidied, (TAP, 2)), np.isin(plain, (TAP, 2)))
+    assert (tidied == 2).sum() <= (plain == 2).sum()

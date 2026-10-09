@@ -119,6 +119,11 @@ python scripts/compare_runs.py <eval dir> <eval dir> ...   # paired over songs, 
 python scripts/rescore.py <eval dir> ...   # new pattern columns for an earlier run (charts.npz)
 python scripts/evaluate.py --ckpt ... --per-song --n 0 --copy-bias 0 --from-charts <eval dir>
                                         # bar copies on saved charts, no new sampling
+python scripts/evaluate.py --ckpt ... --per-song --n 0 --stats oracle --lane-guidance 2 \
+    --carry-rhythm 0 --ln-tidy 1 --from-charts <eval dir>   # rhythms carried over, long
+                                        # notes among taps made taps (on trial, 10-10)
+python scripts/style_from_audio.py      # how well the audio of similar train songs tells
+                                        # a val chart's long-note share (no model)
 python scripts/train.py --steps 60000 --val-every 2000 --row-mask 0.5 \
     --chart-stats data/chart_stats.csv --snapshot-every 1000 --run fit-v4   # the path saved
 python scripts/fit_viz.py outputs/fit-v4   # the path on the loss surface (its PCA plane),

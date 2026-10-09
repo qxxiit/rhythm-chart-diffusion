@@ -318,6 +318,21 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                           "--rest", "1000"]) == 0
     assert (oracle_run.parent / (oracle_run.name + "_fh0_rb1000_st-oracle")).exists()
     assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--carry-rhythm", "100",
+                          "--lane-guidance", "1", "--ln-tidy", "1"]) == 0
+    carried = oracle_run.parent / (oracle_run.name + "_rc100_lt1_st-oracle_lg1")
+    with open(carried / "per_song.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 2 and all(int(r["carried_bars"]) >= 0 and int(r["tidied_holds"]) >= 0
+                                  for r in rows)
+    assert all(k in rows[0] for k in ("rhythm_rep1", "human_rhythm_rep16", "lane_rep1",
+                                      "ln_sections", "human_ln_scattered"))
+    summary = json.loads((carried / "summary.json").read_text())
+    assert summary["carry_rhythm"] == 100 and summary["ln_tidy"] == 1
+    assert sample.main([*common, "--key", key, "--stats", "oracle", "--carry-rhythm", "0",
+                        "--ln-tidy", "1"]) == 0
+    assert list((tmp_path / "cs" / "samples").glob("*-rc0-cp0-lt1-*.osu"))
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
                           "--onset-bias", "1", "--onset-taper", "2.7,5,0.35",
                           "--sr-min", "4.5"]) == 0
     tapered = next((tmp_path / "cs").glob("eval_*_og1_ot2.7-5-0.35_st-oracle_min4.5"))
@@ -337,13 +352,14 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
             "--ckpt", str(tmp_path / "cs" / "best.pt"), "--split", "train", "--songs", "2",
             "--sr-range", "0", "10", "--pairs", "--stats-csv", str(stats_csv),
             "--settings", "random:4:continue:fwd+ref1+cp0+lbq0.1+st+lg1",
-            "random:4:continue:fwd+ref1+cp0+lbq0.1+stsample+lg1",
+            "random:4:continue:fwd+ref1+cp0+lbq0.1+stsample+lg1+og1+ot+rc0+lt1+fh0.5+rb1",
             "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
             "--cache", str(data / "cache"), "--out", str(pp), "--device", "cpu"]) == 0
         with open(pp / "answers.csv", encoding="utf-8-sig") as f:
             sources = {r["source"] for r in csv.DictReader(f)}
         assert sources == {"human", "ai random T4 continue fwd ref1@0.5 lbq0.1 cp0 st lg1",
-                           "ai random T4 continue fwd ref1@0.5 lbq0.1 cp0 stsample lg1"}
+                           "ai random T4 continue fwd ref1@0.5 lbq0.1 rc0 cp0 lt1 stsample lg1 "
+                           "og1 ot fh0.5 rb1"}
     from scripts import compare_runs
     runs = sorted((tmp_path / "cs").glob("eval_*_st-*"))
     assert compare_runs.main([str(r) for r in runs]) == 0
@@ -715,6 +731,11 @@ def test_playtest_settings() -> None:
     copies = parse_setting("random:128:continue:fwd+ref2+cp4")
     assert copies["copy_bias"] == 4 and copies["name"] == "ai random T128 continue fwd ref2@0.5 cp4"
     assert parse_setting("random:128")["copy_bias"] is None
+    full = parse_setting("random:128:continue:fwd+ref2+st+lg2+og1+ot+rc0+cp0+lt1+fh0.5+rb1")
+    assert (full["onset_taper"], full["carry"], full["ln_tidy"], full["holes"]) == \
+        ((2.7, 5.0, 0.35), 0, 1, 0.5)
+    assert full["name"] == "ai random T128 continue fwd ref2@0.5 rc0 cp0 lt1 st lg2 og1 ot fh0.5 rb1"
+    assert parse_setting("random:128")["carry"] is None
     with pytest.raises(ValueError):
         parse_setting("random:128:continue:bogus")
 

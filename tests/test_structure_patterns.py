@@ -291,3 +291,45 @@ def test_bar_kinds() -> None:
     assert k["ln_bars"] == pytest.approx(1 / 9)         # 9 bars with 4+ note starts
     assert k["steady_bars"] == pytest.approx(1 / 2)
     assert np.isnan(bar_kinds(x[:5 * BAR], 5 * BAR)["rest_bars"])
+
+
+def test_phrase_repeats_by_distance() -> None:
+    from src.evaluation.structure import phrase_repeats
+    a, b = (0, 12, 24, 36), (0, 6, 24, 30)
+
+    def song(bars):                                     # each bar: (onset rows, their lanes)
+        x = np.full((len(bars) * BAR, 4), EMPTY)
+        for i, (rows, lanes) in enumerate(bars):
+            for r, k in zip(rows, lanes, strict=True):
+                x[i * BAR + r, k] = TAP
+        return x
+    x = song([(a, [0, 1, 2, 3]), (a, [3, 2, 1, 0]), (b, [0, 1, 2, 3]), (a, [0, 2, 1, 3]),
+              (a, [0, 2, 1, 3]), (a, [1, 1, 2, 2])])
+    r = phrase_repeats(x, len(x))
+    assert r["rhythm_rep1"] == pytest.approx(3 / 5)    # bars 1, 4, 5 repeat the bar before
+    assert r["rhythm_rep2"] == pytest.approx(2 / 4)    # bars 3 and 5
+    assert r["rhythm_rep4"] == 1.0                      # bars 4 and 5
+    assert np.isnan(r["rhythm_rep8"]) and np.isnan(r["rhythm_rep16"])
+    assert r["lane_rep1"] == pytest.approx(2 / 3)      # mirrored, the same, other lanes
+    x[3 * BAR:4 * BAR] = EMPTY                          # under 4 onset rows: not counted
+    x[3 * BAR, 0] = TAP
+    assert phrase_repeats(x, len(x))["rhythm_rep1"] == pytest.approx(2 / 3)
+    assert all(np.isnan(v) for v in phrase_repeats(x[:BAR], BAR).values())
+
+
+def test_ln_placement() -> None:
+    from src.evaluation.structure import ln_placement
+    x = np.full((3 * BAR, 4), EMPTY)
+    for i, row in enumerate((0, 12, 24, 36)):          # bar 0: 4 long notes
+        x[row, i], x[row + 1:row + 6, i], x[row + 6, i] = HOLD_START, HOLD_BODY, HOLD_END
+    for row in range(0, BAR, 6):                        # bar 1: 7 taps and a long note
+        x[BAR + row, 1] = TAP
+    x[BAR + 3, 3], x[BAR + 4:BAR + 9, 3], x[BAR + 9, 3] = HOLD_START, HOLD_BODY, HOLD_END
+    x[2 * BAR, 0] = x[2 * BAR + 24, 0] = TAP            # bar 2: 2 taps and a long note
+    x[2 * BAR + 12, 2], x[2 * BAR + 13:2 * BAR + 20, 2] = HOLD_START, HOLD_BODY
+    x[2 * BAR + 20, 2] = HOLD_END
+    p = ln_placement(x, len(x))
+    assert p["ln_sections"] == pytest.approx(4 / 6)
+    assert p["ln_scattered"] == pytest.approx(1 / 6)
+    taps = np.where(np.isin(x, (HOLD_BODY, HOLD_END)), EMPTY, np.where(x == HOLD_START, TAP, x))
+    assert all(np.isnan(v) for v in ln_placement(taps, len(taps)).values())

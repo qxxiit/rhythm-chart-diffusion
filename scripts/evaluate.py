@@ -14,6 +14,8 @@
         --refine 2 --stats oracle                  # each chart's own long-note/jack/trill rate
     python scripts/evaluate.py --ckpt outputs/full-v4/best.pt --per-song --n 0 --stats oracle \
         --from-charts outputs/full-v4/eval_... --rest 1     # leave the expected rests empty
+    python scripts/evaluate.py --ckpt outputs/full-v4/best.pt --per-song --n 0 --stats oracle \
+        --lane-guidance 2 --from-charts outputs/full-v4/eval_... --carry-rhythm 0 --ln-tidy 1
 
 --per-song takes one chart per song (audio_key, a seeded random difficulty), so the
 N rows are N different songs; without it the first N charts of the split are
@@ -59,6 +61,14 @@ human chart's SR with the song's real timing, then score:
     rest_bars, ln_bars, steady_bars
                           bars without a note start, long-note bars, unbroken streams
                           (structure.bar_kinds), human_* likewise
+    rhythm_rep1/2/4/8/16, lane_rep1
+                          bars with the rhythm of the bar 1 .. 16 before, and of those 1
+                          before, also its lanes (structure.phrase_repeats), human_* likewise
+    ln_sections, ln_scattered
+                          long notes in bars of long notes / among taps
+                          (structure.ln_placement), human_* likewise
+    carried_bars          with --carry-rhythm: bars that took an earlier bar's rhythm
+    tidied_holds          with --ln-tidy: long notes among taps made taps (sampler.tidy_holds)
     rest_bars_cleared     with --rest: bars the rest pass left empty (sampler.rest_bars)
     holes_filled          with --fill-holes: stream holes the pass filled (sampler.fill_holes)
     weak_onsets           onset rows on weak audio onsets (below the song's median onset
@@ -66,10 +76,12 @@ human chart's SR with the song's real timing, then score:
     genre, mapper_known   the song's genre (data/style.csv, if there) and, for a model with
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
-sampling, after --refine-holds and the copy pass if asked (sampler.post_song): minutes
-instead of hours. Use the same --per-song / --n / --seed as that run; the sampler
-options are ignored, and passes / seconds are those of the passes run here. Writes to
-DIR_hr_cp<bias> (the parts asked for).
+sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry-rhythm,
+--copy-bias, --ln-tidy, --fill-holes, --rest, in that order): minutes instead of hours.
+Use the same --per-song / --n / --seed as that run; the sampler options are ignored
+(--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
+are those of the passes run here. Writes to DIR_hr_rc<bias>_cp<bias>_lt<beats>_fh<p>_rb<n>
+(the parts asked for), then the stats tag and, with --carry-rhythm, _lg<weight>.
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
 --style-guidance W adds classifier-free guidance towards that style and / or the chart
@@ -107,7 +119,14 @@ from src.evaluation.holds import hold_stats, ln_agreement
 from src.evaluation.metrics import onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
-from src.evaluation.structure import bar_kinds, dynamics, quiet_rhythm, structure_scores
+from src.evaluation.structure import (
+    bar_kinds,
+    dynamics,
+    ln_placement,
+    phrase_repeats,
+    quiet_rhythm,
+    structure_scores,
+)
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.sampler import (
     LANE_PASSES,
@@ -149,6 +168,8 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}{k}": v for k, v in hold_stats(flat).items()})
         row.update({f"{who}{k}": v for k, v in dynamics(flat, mel, n_cells).items()})
         row.update({f"{who}{k}": v for k, v in bar_kinds(flat, n_cells).items()})
+        row.update({f"{who}{k}": v for k, v in phrase_repeats(flat, n_cells).items()})
+        row.update({f"{who}{k}": v for k, v in ln_placement(flat, n_cells).items()})
         row[f"{who}weak_onsets"] = weak_onsets(flat, strength, n_cells)
     row.update(ln_agreement(gen_tokens.reshape(-1, gen_tokens.shape[-1])[:n_cells],
                             human_tokens.reshape(-1, human_tokens.shape[-1])[:n_cells]))
@@ -184,6 +205,13 @@ def pick_per_song(rows: list[dict], seed: int) -> list[dict]:
         by_song.setdefault(r["audio_key"], []).append(r)
     rng = np.random.default_rng(seed)
     return [charts[int(rng.integers(len(charts)))] for charts in by_song.values()]
+
+
+def nan_mean(values) -> float:
+    """Mean of the values that are not NaN, to 4 places; NaN (without a warning) if none."""
+    v = np.asarray(values, dtype=np.float64)
+    v = v[~np.isnan(v)]
+    return round(float(v.mean()), 4) if len(v) else float("nan")
 
 
 def bootstrap_ci(values, n: int = 2000, seed: int = 0) -> list[float]:
@@ -258,6 +286,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="fill the rows where an even stream misses one note when the model, "
                          "with the row masked, starts a note there with at least this "
                          "probability (sampler.fill_holes); also on --from-charts")
+    ap.add_argument("--carry-rhythm", type=float, default=None,
+                    help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
+                         "before when the model, with the bar masked, scores it within this many "
+                         "nats of its own; its lanes chosen again (sampler.carry_rhythm, tag _rc); "
+                         "also on --from-charts")
+    ap.add_argument("--ln-tidy", type=float, default=None,
+                    help="in bars of taps, long notes shorter than this many beats become taps "
+                         "(sampler.tidy_holds, tag _lt); also on --from-charts")
     ap.add_argument("--sr-min", type=float, default=None,
                     help="only the charts at this SR or above (the seeds stay those of the "
                          "full run, so the charts match it)")
@@ -374,8 +410,12 @@ def main(argv: list[str] | None = None) -> int:
             tag += "_ot" + "-".join(f"{v:g}" for v in taper)
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
+    if a.carry_rhythm is not None:
+        tag += f"_rc{a.carry_rhythm:g}"
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}"
+    if a.ln_tidy is not None:
+        tag += f"_lt{a.ln_tidy:g}"
     if a.fill_holes is not None:
         tag += f"_fh{a.fill_holes:g}"
     if a.rest is not None:
@@ -412,9 +452,13 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
+            f"_rc{a.carry_rhythm:g}" if a.carry_rhythm is not None else "") + (
             f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + (
+            f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
-            f"_rb{a.rest:g}" if a.rest is not None else "") + stats_tag
+            f"_rb{a.rest:g}" if a.rest is not None else "") + stats_tag + (
+            f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
+            and a.lane_guidance is not None else "")          # the carried bars' lanes
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -436,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
             style = {"style_guidance": a.style_guidance}           # guidance towards the stats
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
+        carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -453,12 +498,14 @@ def main(argv: list[str] | None = None) -> int:
         if saved is not None:
             tokens = saved[r["key"]]
             if a.copy_bias is not None or a.refine_holds or share is not None \
-                    or a.rest is not None or a.fill_holes is not None:
+                    or a.rest is not None or a.fill_holes is not None \
+                    or a.carry_rhythm is not None or a.ln_tidy is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
-                                   holes=a.fill_holes,
+                                   holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
+                                   lane_guidance=a.lane_guidance, lane_temperature=a.lane_temp,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
             tokens = generate_song(model, mel, sr + a.sr_offset, tps, offset, n_cells,
@@ -473,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
-                                   holes=a.fill_holes,
+                                   holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -485,6 +532,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["rest_bars_cleared"] = STATS["rest_bars"] - rests0
         if a.fill_holes is not None:
             cost["holes_filled"] = STATS["filled_holes"] - fills0
+        if a.carry_rhythm is not None:
+            cost["carried_bars"] = STATS["carried_bars"] - carried0
+        if a.ln_tidy is not None:
+            cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
         charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)
@@ -529,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
+               "carry_rhythm": a.carry_rhythm, "ln_tidy": a.ln_tidy,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,
@@ -537,8 +589,7 @@ def main(argv: list[str] | None = None) -> int:
                "seed": a.seed, "sample_seed": sample_seed,
                "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,
-               **{f"mean_{k}": round(float(np.nanmean([x[k] for x in results])), 4)
-                  for k in numeric},
+               **{f"mean_{k}": nan_mean([x[k] for x in results]) for k in numeric},
                **{f"ci95_{k}": bootstrap_ci([x[k] for x in results], seed=a.seed)
                   for k in CI_KEYS if k in results[0]}}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))

@@ -35,6 +35,14 @@
                      LN_BAR of them start long notes (7.5% / 3.8%)
         steady_bars  of the bars with STEADY_MIN+ onset rows, the share where they are
                      evenly spaced: an unbroken stream (36.5% / 20.1%)
+    phrase_repeats(tokens, n)    rhythm_rep1/2/4/8/16: bars with the rhythm (onset rows) of
+                 the bar 1, 2, 4, 8, 16 before; lane_rep1: of those 1 before, also its lanes
+                 (EXPERIMENTS 2026-10-10, means over the 240 val songs: human 0.27 / 0.31 /
+                 0.29 / 0.23 / 0.18 and 0.06, the candidate 0.14 / 0.15 / 0.12 / 0.09 / 0.07
+                 and 0.03)
+    ln_placement(tokens, n)      ln_sections, ln_scattered: the share of long notes in bars
+                 that are mostly long notes / in bars of taps (human 0.48 / 0.19, the
+                 candidate 0.34 / 0.29)
 
 Bars are 48 cells (4/4). Row 0 of the token grid is a bar line (tokenizer), so
 bar m is rows 48m..48m+47 and mel frames 192m..192m+191, and chunk c is bars
@@ -190,6 +198,69 @@ def bar_kinds(tokens: np.ndarray, n_cells: int) -> dict:
               for r in rows if r.sum() >= STEADY_MIN]
     if steady:
         out["steady_bars"] = float(np.mean(steady))
+    return out
+
+
+REPEAT_LAGS = (1, 2, 4, 8, 16)  # phrase_repeats: bar distances
+REPEAT_MIN = 4                  # phrase_repeats: bars with at least this many onset rows
+_MIRROR = np.array([int(f"{m:04b}"[::-1], 2) for m in range(16)])
+
+
+def phrase_repeats(tokens: np.ndarray, n_cells: int) -> dict:
+    """rhythm_rep<k> for k in REPEAT_LAGS: of the whole bars with REPEAT_MIN+ onset rows whose
+    bar k earlier has them too, the share whose onset rows are the same (the rhythm; chord
+    sizes and lanes aside). lane_rep1: of the bars with the rhythm of the bar just before,
+    the share whose lanes are the same too, as they are or mirrored (lane k <-> 3 - k).
+    Human charts come back to a rhythm 1, 2, 4, 8 and 16 bars later about twice as often as
+    the sampled ones, and 2 and 4 bars later most (EXPERIMENTS 2026-10-10). nan where there
+    is nothing to count."""
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
+    n_bars = n_whole_bars(n_cells)
+    out = {f"rhythm_rep{k}": float("nan") for k in REPEAT_LAGS}
+    out["lane_rep1"] = float("nan")
+    if n_bars < 2:
+        return out
+    starts = np.isin(x[:n_bars * BAR], (TAP, HOLD_START)).reshape(n_bars, BAR, -1)
+    rows = starts.any(axis=2)
+    masks = (starts * (1 << np.arange(starts.shape[2]))).sum(axis=2)       # [bars, BAR]
+    busy = rows.sum(axis=1) >= REPEAT_MIN
+    for k in REPEAT_LAGS:
+        b = np.flatnonzero(busy[k:] & busy[:-k]) + k if n_bars > k else np.array([], int)
+        if len(b):
+            out[f"rhythm_rep{k}"] = float(np.mean([np.array_equal(rows[i], rows[i - k])
+                                                    for i in b]))
+    same = [i for i in np.flatnonzero(busy[1:] & busy[:-1]) + 1
+            if np.array_equal(rows[i], rows[i - 1])]
+    if same:
+        out["lane_rep1"] = float(np.mean([np.array_equal(masks[i], masks[i - 1])
+                                          or np.array_equal(masks[i], _MIRROR[masks[i - 1]])
+                                          for i in same]))
+    return out
+
+
+LN_SECTION = 0.5                # ln_placement: a long-note bar starts at least this share
+LN_SCATTER = 0.25               # of its notes as long notes; a bar of taps under this share
+
+
+def ln_placement(tokens: np.ndarray, n_cells: int) -> dict:
+    """Where the long notes go. ln_sections: of the long notes started in the whole bars,
+    the share in bars with 2+ note starts of which at least LN_SECTION are long notes;
+    ln_scattered: the share in bars where under LN_SCATTER are (a long note among taps).
+    Humans 0.48 / 0.19, the sampled charts 0.34 / 0.29 (EXPERIMENTS 2026-10-10). nan
+    without long notes."""
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
+    n_bars = n_whole_bars(n_cells)
+    out = {"ln_sections": float("nan"), "ln_scattered": float("nan")}
+    if n_bars < 1:
+        return out
+    n_start = np.isin(x[:n_bars * BAR], (TAP, HOLD_START)).reshape(n_bars, -1).sum(axis=1)
+    n_long = (x[:n_bars * BAR] == HOLD_START).reshape(n_bars, -1).sum(axis=1)
+    total = n_long.sum()
+    if total == 0:
+        return out
+    share = n_long / np.maximum(n_start, 1)
+    out["ln_sections"] = float(n_long[(share >= LN_SECTION) & (n_start >= 2)].sum() / total)
+    out["ln_scattered"] = float(n_long[share < LN_SCATTER].sum() / total)
     return out
 
 

@@ -22,9 +22,11 @@ long, spread evenly over SR. For each song one .osz holds, as difficulties
         (0.5), fwd[@T] for the left-to-right lane pass before it, spread, ebX for an
         EMPTY bias of X, jbX for a jack bias of X, cpX for bar copies with a bias of X
         nats (sampler.copy_bars), style for the human chart's genre and mapper (a model
-        trained with --style; --style-csv), sgW for guidance towards it; e.g.
-        random:128:continue:fwd+ref2@0.5. At the human chart's SR
-all under one creator name and the human chart's OD and HP.
+        trained with --style; --style-csv), sgW for guidance towards it, and the passes
+        after sampling (parse_setting lists them all); e.g. random:128:continue:fwd+ref2@0.5,
+        or the candidate of 10-09 with rhythms carried over:
+        random:128:continue:fwd+ref2+cp0+lbq0.1+st+lg2+og1+ot+rc0+fh0.5+rb1.
+At the human chart's SR, all under one creator name and the human chart's OD and HP.
 
 --pairs: two charts per song instead, [A] and [B]: the human chart and one AI chart,
 the --settings taking turns over the songs (in SR order, so each setting gets songs
@@ -63,7 +65,7 @@ from src.data.mel import open_mel
 from src.data.style import encode, read_style
 from src.data.tokenizer import L, decode, make_metas
 from src.evaluation.holds import hold_stats
-from src.models.sampler import ORDERS, steps_name
+from src.models.sampler import GATE_TAPER, ORDERS, steps_name
 
 CREATOR = "playtest"
 RATING_FIELDS = ["song", "title", "label", "rank", "human?", "comment"]
@@ -119,8 +121,11 @@ def parse_setting(text: str) -> dict:
     lbX on both sides; st, the human chart's long-note share, jack and trill rate as chart
     stats (a model trained with --chart-stats), stsample, those of a random train chart
     of about the same SR (--stats-csv); lgW, the lane passes' own guidance weight; ogX, the
-    onset-strength gate (sampler.onset_gate); rbX, bars left empty below X expected note
-    starts (sampler.rest_bars)."""
+    onset-strength gate (sampler.onset_gate); ot, the gate tapered by SR
+    (sampler.GATE_TAPER); rcB, rhythms carried over at bias B (sampler.carry_rhythm); ltX,
+    long notes among taps under X beats made taps (sampler.tidy_holds); fhX, stream holes
+    filled at X (sampler.fill_holes); rbX, bars left empty below X expected note starts
+    (sampler.rest_bars)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -138,6 +143,7 @@ def parse_setting(text: str) -> dict:
     fwd_temp, copy_bias, style, guidance, holds, loud_bias = None, None, False, 0.0, False, 0.0
     hold_share: float | str | None = None
     loud_side, stats, lane_guidance, onset, rest = "both", None, None, 0.0, 0.0
+    taper, holes, carry, ln_tidy = None, 0.0, None, None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -174,10 +180,18 @@ def parse_setting(text: str) -> dict:
             onset = float(head[2:])
         elif head.startswith("rb") and not t:
             rest = float(head[2:])
+        elif head == "ot" and not t:
+            taper = GATE_TAPER
+        elif head.startswith("fh") and not t:
+            holes = float(head[2:])
+        elif head.startswith("rc") and not t:
+            carry = float(head[2:])
+        elif head.startswith("lt") and not t:
+            ln_tidy = float(head[2:])
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
-                             "jbX, cpX, style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, rbX, "
-                             "st, stsample")
+                             "jbX, cpX, style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, ot, rcB, "
+                             "ltX, fhX, rbX, st, stsample")
     if (guidance or lane_guidance) and not style and not stats:
         raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
                          "st or stsample")
@@ -195,11 +209,14 @@ def parse_setting(text: str) -> dict:
         + (["hr"] if holds else []) \
         + ([f"ln{hold_share:g}" if isinstance(hold_share, float) else "ln"]
            if hold_share is not None else []) \
+        + ([f"rc{carry:g}"] if carry is not None else []) \
         + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
+        + ([f"lt{ln_tidy:g}"] if ln_tidy is not None else []) \
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
         + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
         + ([f"lg{lane_guidance:g}"] if lane_guidance is not None else []) \
-        + ([f"og{onset:g}"] if onset else []) + ([f"rb{rest:g}"] if rest else [])
+        + ([f"og{onset:g}"] if onset else []) + (["ot"] if taper is not None else []) \
+        + ([f"fh{holes:g}"] if holes else []) + ([f"rb{rest:g}"] if rest else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
@@ -207,8 +224,8 @@ def parse_setting(text: str) -> dict:
             "copy_bias": copy_bias, "style": style, "style_guidance": guidance,
             "holds": holds, "loud_bias": loud_bias, "hold_share": hold_share,
             "loud_side": loud_side, "stats": stats, "lane_guidance": lane_guidance,
-            "onset_bias": onset, "rest": rest,
-            "name": name_}
+            "onset_bias": onset, "rest": rest, "onset_taper": taper, "holes": holes,
+            "carry": carry, "ln_tidy": ln_tidy, "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -341,7 +358,9 @@ def build(a) -> int:
                                    holds=s["holds"], loud_bias=s["loud_bias"],
                                    loud_side=s["loud_side"], stats=buckets,
                                    lane_guidance=s["lane_guidance"], onset_bias=s["onset_bias"],
-                                   rest=s["rest"] or None,
+                                   rest=s["rest"] or None, onset_taper=s["onset_taper"],
+                                   holes=s["holes"] or None, carry=s["carry"],
+                                   ln_tidy=s["ln_tidy"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),
                                    **style_args(s, vocab, style_labels.get(row["key"], {})))

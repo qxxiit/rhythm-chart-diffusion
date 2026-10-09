@@ -1566,6 +1566,96 @@ What the pictures say:
   and equally good (val_ce 0.0737 vs 0.0740, 0.0899 vs 0.0897 on the 64 chunks). Differences
   between our full-v* runs under about 0.0005 val_ce are noise.
 
+### 2026-10-10 · Rhythms carried over, long notes among taps, the long-note share from the audio (predictions)
+
+The playtest of 10-07 said the charts have no bite ("치는 맛이 없다"): the same pattern does
+not go on for long; the first bars sometimes feel human, then it feels like an AI; long notes
+mixed into taps unlike a human; too fond of holding a long note while tapping; the tap-heavy
+charts that feel human are bland. Measured on the 240 val songs (the candidate with holes and
+rests, `${C}_fh0.5_rb1`, against the human charts; per-song means, new columns in
+`structure.py`):
+
+1. **A rhythm does not come back.** Of the bars with 4+ onset rows, the share with the same
+   onset rows as the bar 1 / 2 / 4 / 8 / 16 before (`rhythm_rep*`): human 0.27 / 0.31 / 0.29
+   / 0.23 / 0.18, the candidate 0.14 / 0.15 / 0.12 / 0.09 / 0.07: half, at every distance.
+   When a human bar repeats the rhythm of the bar before, its lanes change 94% of the time
+   (`lane_rep1` 0.06; the candidate 0.03). The gap is the same in every 8-bar window of the
+   song (human 0.25-0.32, the candidate 0.09-0.14 from the 2nd window to the 7th), so "human
+   at first, then AI" is not a drift: the first phrase cannot show a missing repeat, the next
+   ones do. The bar copies of 10-04 (on in `generate.py`) repeat whole bars, lanes included
+   (bar_lane_repeat 0.66 against 0.33); the rhythm with new lanes is what is missing.
+2. **Long notes are scattered.** Of the long notes humans start, 48% are in bars where at least
+   half the starts are long notes and 19% among taps (under a quarter); the candidate 34% and
+   29%, and its long notes are shorter (0.75 against 1.00 beats). Over the whole chart it
+   holds a long note under taps less than humans (2% of tap bars against 3%), so "too fond of
+   holding" is about where, not how much: short long notes dropped into runs of taps.
+3. **Not the cause:** chord accents (chords on strong beats 0.58 against 0.61, rank gap 0.16
+   both), drift along the song (F1 and density flat by position).
+
+Tonight (`run_carry.sh`, patch 0042), all on the candidate's saved charts with the holes (0.5)
+and the rest pass (1) after, as in the reference, no new sampling:
+
+1. `--carry-rhythm B` (`sampler.carry_rhythm`, tag `_rc`): after the lane passes, in time order,
+   a bar of taps with 4+ onset rows may take the rhythm (onset rows and chord sizes) of the bar
+   1, 2, 4 or 8 before, if that bar is taps too, has other onset rows and an onset count
+   within 15%. With the bar MASK and the chart around it the model scores a rhythm row by row
+   (log P(that many onsets), as `copy_bars`); the first source by audio similarity whose
+   score plus B reaches the bar's own gives its rhythm, and the bar's lanes are chosen again
+   with the chart in view (the lane passes' model, guidance 2, temperature 0.5). B = -2, 0, 2.
+2. The bar copies alone (`--copy-bias 0`, the generate.py default) and after the carry at 0.
+3. `--ln-tidy X` (`sampler.tidy_holds`, tag `_lt`): in bars with 4+ note starts of which under
+   a quarter are long notes, a long note shorter than X beats becomes a tap (onsets stay).
+   X = 1 and 0.5; and 1 after the carry at 0.
+4. `style_from_audio.py`: below (no model; already run).
+
+Smoke check (7 val songs, 5 of them tap charts, carry on the saved charts without the holes
+and rests, full-v4 on CPU): bias -2 / 0 / 2 carried 10% / 17% / 23% of the bars; rhythm_rep1
+0.21 → 0.27 / 0.33 / 0.38 (human 0.40), rep4 0.19 → 0.26 / 0.30 / 0.34 (0.31); notes -0.5%;
+no grammar violations. ln-tidy 1: 13 long notes a song, among taps 0.41 → 0.11 (human 0.22).
+
+Predictions (240 songs, against the reference `${C}_fh0.5_rb1` rescored):
+
+1. Carry at 0: 9-15% of the bars carried (~12-18 a song; long-note charts have few bars of
+   taps); rhythm_rep1/2/4/8/16 0.14 / 0.15 / 0.12 / 0.09 / 0.07 → 0.21-0.25 / 0.22-0.26 /
+   0.18-0.22 / 0.12-0.15 / 0.07-0.08; lane_rep1 0.03 → 0.04-0.07 (human 0.06);
+   bar_rhythm_repeat 0.12 → 0.20-0.26 (0.43); steady bars 0.31 → 0.32-0.34; rho_in +0.005 to
+   +0.015; F1@50 within ±0.003; density -0.3% to -0.8%; SR -0.01 to -0.04; the long-note
+   columns unchanged (bars with long notes are left alone).
+2. Bias -2: half the carries of 0 or fewer, rhythm_rep1 0.18-0.21. Bias 2: 14-20% of bars,
+   rhythm_rep1/2/4 0.25-0.30 / 0.26-0.31 / 0.21-0.26 (at the human level or a little under),
+   F1 -0.002 to -0.008.
+3. Copies alone: about 15% of bars (as on 10-04); rhythm_rep1..8 +0.02 to +0.05 each,
+   lane_rep1 0.03 → 0.25-0.45 (whole bars: the lanes repeat with the rhythm); F1 ±0.002.
+   Carry then copies: rhythm_rep1/2/4 0.24-0.29 / 0.25-0.30 / 0.21-0.26, lane_rep1 0.15-0.35.
+4. Tidy 1: 8-15 long notes a song made taps; hold_share 0.172 → 0.155-0.165 (human 0.218,
+   the cost); hold_beats 0.75 → 0.80-0.86 (1.00); ln_scattered 0.29 → 0.10-0.15 (0.19:
+   overshoots) and ln_sections 0.34 → 0.38-0.42 (0.48); ln_f1 +0.00 to +0.02; F1 and the
+   rhythm columns unchanged (onsets stay); SR 0 to -0.03. Tidy 0.5: a third to a half of
+   those changes, ln_scattered 0.17-0.22.
+
+**Already measured: the long-note share from the audio** (`style_from_audio.py`, 777 val
+charts, 269 tap charts under 0.1, 167 long-note charts at 0.3 or more; train charts within 0.3
+SR). For a new song `--stats sample` takes the stats of a random train chart of the SR:
+
+| guess for the val chart | r (long-note share) | mae | tap chart given ≥ 0.3 | long-note chart given ≤ 0.1 | AUC long-note vs tap |
+|---|---|---|---|---|---|
+| a random train chart of the SR (`--stats sample`) | 0.02 | 0.180 | 0.22 | 0.36 | 0.51 |
+| the mean of the train charts of the SR | 0.16 | 0.130 | 0.01 | 0.00 | 0.60 |
+| the mean of the 10 / 30 songs with the nearest audio | 0.25 / 0.26 | 0.126 / 0.126 | 0.08 / 0.04 | 0.02 / 0.00 | 0.66 / 0.69 |
+| a chart of one of the 10 nearest songs | 0.10 | 0.167 | 0.20 | 0.31 | 0.55 |
+| the mean of the 30 nearest, the tempo as a feature too | 0.25 | 0.125 | 0.06 | 0.01 | 0.68 |
+
+(Audio: the per-band mean and std of the log-Mel, 16 principal components. The same within
+±0.03 AUC with a 0.5 SR window, 8 or 32 components, 5 or 50 neighbours. Jacks and trills
+r ≤ 0.25 for every guess.) The audio of similar songs says as much about the long-note share
+as another mapset's chart of the same song (r 0.25 on 10-05): it is the mapper's choice. A
+random draw (as now) is a coin: a third of the long-note charts come out tap charts and a fifth
+of the tap charts long-note charts; a draw among the nearest songs is barely better. The means
+rank well (AUC 0.69) but are never a tap chart or a long-note chart: a medium share, the mix
+of long notes and taps the playtest found least human. So for a new song the long-note share
+is a choice to give the user (`--stats ln=0` / `ln=0.4`), or a tap version and a long-note
+version side by side.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

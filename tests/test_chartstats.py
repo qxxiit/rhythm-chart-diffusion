@@ -83,3 +83,50 @@ def test_sample_by_sr(tmp_path) -> None:
     assert picks == {"c2", "c3"}                                     # within 0.3, train only
     key, values = chartstats.sample(table, 4.5, rng)                 # none within: the nearest
     assert key in table and set(values) == set(chartstats.NAMES)
+
+
+def test_style_from_audio_finds_what_the_audio_tells(tmp_path) -> None:
+    """Songs whose audio says "long notes" (feature 0 high) get long-note charts: the
+    nearest songs by audio guess them, a random chart of the SR does not."""
+    import json
+
+    from scripts import style_from_audio as sfa
+    rng = np.random.default_rng(0)
+    stats, rows = {}, []
+    for i in range(240):
+        ln = i % 2 == 0
+        split = "val" if i % 6 < 2 else "train"
+        aid = f"a{i}"
+        sr = float(rng.uniform(2, 4))
+        hold = float(rng.uniform(0.35, 0.6) if ln else rng.uniform(0, 0.05))
+        stats[f"k{i}"] = {"split": split, "sr": sr, "hold_share": hold,
+                          "move_jack": float(rng.uniform(0, 0.2)),
+                          "move_trill": float(rng.uniform(0, 0.2))}
+        feats = rng.normal(size=8)
+        feats[0] += 4.0 if ln else -4.0
+        (tmp_path / "logmel").mkdir(exist_ok=True)
+        (tmp_path / "logmel" / f"{aid}.json").write_text(
+            json.dumps({"mean": feats[:4].tolist(), "std": feats[4:].tolist()}))
+        rows.append({"key": f"k{i}", "audio_id": aid, **stats[f"k{i}"]})
+    with open(tmp_path / "logmel" / "index.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["key", "audio_id"], extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    with open(tmp_path / "chart_stats.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=chartstats.FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    out = tmp_path / "style.json"
+    assert sfa.main(["--stats-csv", str(tmp_path / "chart_stats.csv"), "--cache", str(tmp_path),
+                     "--out", str(out), "--width", "1", "--dims", "4", "--k", "5", "10",
+                     "--draws", "5", "--min-pool", "10"]) == 0
+    res = json.loads(out.read_text())
+    assert res["val_charts"] == 80 and res["tap_charts"] == 40 and res["ln_charts"] == 40
+    sc = res["scores"]
+    assert sc["knn5"]["hold_share"]["auc"] > 0.95 and sc["knn5_draw"]["hold_share"]["auc"] > 0.9
+    assert sc["knn5"]["hold_share"]["r"] > 0.8
+    assert abs(sc["rand"]["hold_share"]["auc"] - 0.5) < 0.15
+    assert sc["rand"]["hold_share"]["tap_as_ln"] > 0.3 > sc["knn5_draw"]["hold_share"]["tap_as_ln"]
+    assert sfa.auc(np.array([1.0, 2.0]), np.array([1.0, 0.0])) == pytest.approx(0.875)
+    assert np.isnan(sfa.auc(np.array([]), np.array([1.0])))
+    assert sfa.main(["--stats-csv", str(tmp_path / "none.csv")]) == 2

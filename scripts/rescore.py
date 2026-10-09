@@ -4,8 +4,9 @@
 
 For each run directory with charts.npz (evaluate.py saves it since 2026-10-02):
 every generated chart, and the human chart from the token cache, is scored again
-with patterns.summarize and holds.hold_stats, so pattern and long-note columns
-added after the run (e.g. lone_chord, bar_rhythm_repeat) appear. per_song.csv is
+with patterns.summarize, holds.hold_stats, structure.phrase_repeats and
+structure.ln_placement, so pattern, long-note and phrase columns added after the run
+(e.g. lone_chord, bar_rhythm_repeat, rhythm_rep4, ln_scattered) appear. per_song.csv is
 updated in place (the first rescore keeps the original as per_song.orig.csv) and
 summary.json gets the new means. rho needs the log-Mel and is left as it was.
 """
@@ -22,15 +23,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
-from scripts.evaluate import PATTERN_KEYS
+from scripts.evaluate import PATTERN_KEYS, nan_mean
 from src.data.tokenizer import K
 from src.evaluation.holds import hold_stats
 from src.evaluation.patterns import summarize
+from src.evaluation.structure import ln_placement, phrase_repeats
 
 
 def scores(flat: np.ndarray) -> dict:
     p = summarize(flat, chance_seeds=3)
-    return {**{k: p[k] for k in PATTERN_KEYS}, **hold_stats(flat)}
+    return {**{k: p[k] for k in PATTERN_KEYS}, **hold_stats(flat),
+            **phrase_repeats(flat, len(flat)), **ln_placement(flat, len(flat))}
 
 
 def rescore(run: Path, cache: Path) -> int:
@@ -70,7 +73,7 @@ def rescore(run: Path, cache: Path) -> int:
                 break
         else:
             if vals:
-                summary[f"mean_{k}"] = round(float(np.nanmean(vals)), 4)
+                summary[f"mean_{k}"] = nan_mean(vals)
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"{run}: {len(rows)} songs rescored")
     return 0

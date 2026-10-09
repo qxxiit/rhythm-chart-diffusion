@@ -50,6 +50,10 @@ METRICS = [
     ("off_rhythm_quiet", None), ("off_rhythm_rest", None), ("empty_bar_fill", None),
     ("rest_bars", "human_rest_bars"), ("ln_bars", "human_ln_bars"),
     ("steady_bars", "human_steady_bars"), ("weak_onsets", "human_weak_onsets"),
+    ("rhythm_rep1", "human_rhythm_rep1"), ("rhythm_rep2", "human_rhythm_rep2"),
+    ("rhythm_rep4", "human_rhythm_rep4"), ("rhythm_rep8", "human_rhythm_rep8"),
+    ("rhythm_rep16", "human_rhythm_rep16"), ("lane_rep1", "human_lane_rep1"),
+    ("ln_sections", "human_ln_sections"), ("ln_scattered", "human_ln_scattered"),
     ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "density_ratio", "weak_onsets", "steady_bars",

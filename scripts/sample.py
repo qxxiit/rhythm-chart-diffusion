@@ -80,6 +80,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
+    ap.add_argument("--carry-rhythm", type=float, default=None,
+                    help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
+                         "before when the model, with the bar masked, scores it within this many "
+                         "nats of its own; its lanes chosen again (sampler.carry_rhythm)")
+    ap.add_argument("--ln-tidy", type=float, default=None,
+                    help="in bars of taps, long notes shorter than this many beats become taps "
+                         "(sampler.tidy_holds)")
     ap.add_argument("--refine-holds", action="store_true",
                     help="decide tap or long note and the release again with the whole chart "
                          "in view (sampler.refine_holds)")
@@ -200,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
                            loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                            rest=a.rest or None,
                            onset_taper=taper, holes=a.holes or None,
+                           carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -226,8 +234,12 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-og{a.onset_bias:g}" + ("-ot" if taper is not None else "")
     if a.refine_holds or a.hold_share is not None:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
+    if a.carry_rhythm is not None:
+        order += f"-rc{a.carry_rhythm:g}"
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}"
+    if a.ln_tidy is not None:
+        order += f"-lt{a.ln_tidy:g}"
     if a.holes:
         order += f"-fh{a.holes:g}"
     if a.rest:
