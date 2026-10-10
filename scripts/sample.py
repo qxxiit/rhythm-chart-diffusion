@@ -80,10 +80,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
-    ap.add_argument("--carry-rhythm", type=float, default=None,
+    ap.add_argument("--copy-min-lag", type=int, default=1,
+                    help="copies only from bars at least this many bars back (1: any)")
+    ap.add_argument("--carry-rhythm", type=float, default=2.0,   # 2026-10-11
                     help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
                          "before when the model, with the bar masked, scores it within this many "
                          "nats of its own; its lanes chosen again (sampler.carry_rhythm)")
+    ap.add_argument("--no-carry", action="store_true", help="no rhythms carried over")
     ap.add_argument("--ln-tidy", type=float, default=None,
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds)")
@@ -152,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if a.no_copy:
         a.copy_bias = None
+    if a.no_carry:
+        a.carry_rhythm = None
 
     row = next((r for r in read_manifest(a.manifest) if r["key"] == a.key), None)
     if row is None:
@@ -207,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
                            loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                            rest=a.rest or None,
                            onset_taper=taper, holes=a.holes or None,
-                           carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
+                           carry=a.carry_rhythm, ln_tidy=a.ln_tidy, copy_min_lag=a.copy_min_lag,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -237,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}"
     if a.copy_bias is not None:
-        order += f"-cp{a.copy_bias:g}"
+        order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy is not None:
         order += f"-lt{a.ln_tidy:g}"
     if a.holes:

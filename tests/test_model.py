@@ -525,6 +525,13 @@ def test_copy_bars_takes_similar_sources_within_the_bias() -> None:
     dense = song.copy()                                 # bar 0 twice as dense: no source
     dense[[6, 18, 30, 42], [3, 0, 1, 2]] = TAP
     assert run(dense, 0.0) == 0
+    far = song.copy()                                   # sources 2 or more bars back: bar 2
+    assert copy_bars(uniform, far, frames, 3.0, lambda row0: 400.0, 4 * BAR, sims,
+                     copy_bias=0.0, min_lag=2) == 1     # takes bar 0, bar 1 has none
+    assert np.array_equal(far[BAR:2 * BAR], song[BAR:2 * BAR])
+    assert np.array_equal(far[2 * BAR:3 * BAR], song[:BAR])
+    assert copy_bars(uniform, song.copy(), frames, 3.0, lambda row0: 400.0, 4 * BAR, sims,
+                     copy_bias=0.0, min_lag=3) == 0     # bar 3's only source is bar 0 (0.3)
 
 
 def test_copy_bars_prefers_the_rhythm_the_model_expects() -> None:

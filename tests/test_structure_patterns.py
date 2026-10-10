@@ -333,3 +333,22 @@ def test_ln_placement() -> None:
     assert p["ln_scattered"] == pytest.approx(1 / 6)
     taps = np.where(np.isin(x, (HOLD_BODY, HOLD_END)), EMPTY, np.where(x == HOLD_START, TAP, x))
     assert all(np.isnan(v) for v in ln_placement(taps, len(taps)).values())
+
+
+def test_phrase_repeats_copy_distance() -> None:
+    from src.evaluation.structure import phrase_repeats
+
+    def song(bars):                                     # 4 notes at 0, 12, 24, 36 a bar
+        x = np.full((len(bars) * BAR, 4), EMPTY)
+        for i, lanes in enumerate(bars):
+            for j, k in enumerate(lanes or []):
+                x[i * BAR + 12 * j, k] = TAP
+        return x
+    a, b, c, d = [0, 1, 2, 3], [3, 1, 0, 2], [1, 1, 2, 2], [0, 2, 1, 3]
+    x = song([a, b, a, [3 - k for k in a], c, b, d, d, d, d, None, a])
+    r = phrase_repeats(x, len(x))                       # 10 busy bars after the first:
+    assert r["copy_near"] == pytest.approx(5 / 10)      # bars 2, 3 (mirrored), 7, 8, 9
+    assert r["copy_mid"] == pytest.approx(2 / 10)       # bar 5 (4 back), bar 11 (8 back)
+    assert r["copy_far"] == 0.0
+    y = song([a, c, c, c, c, c, c, c, c, c, b, a])
+    assert phrase_repeats(y, len(y))["copy_far"] == pytest.approx(1 / 11)   # 11 back

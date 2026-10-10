@@ -111,21 +111,22 @@ README_PAIRS = """블라인드 플레이 테스트, 짝 비교 (rhythm-chart-dif
 
 def parse_setting(text: str) -> dict:
     """order:steps[:mode[:extras]] -> generate_song arguments; noisyT means order noisy at
-    temperature T. extras, joined by +: refN or refN@T, N sweeps of lane refinement at lane
-    temperature T (0.5); fwd or fwd@T, the left-to-right lane pass (sampler.forward_lanes)
-    at T (default: refinement's); spread; ebX, EMPTY bias X; jbX, jack bias X; cpX, bar
-    copies with bias X (sampler.copy_bars); style, the human chart's genre and mapper;
-    sgW, classifier-free guidance W towards it; hr, long notes decided again
-    (sampler.refine_holds); lnX, that share of the onsets as long notes (ln alone: the
-    human chart's share); lbqX, loudness bias X in quiet bars only (sampler.loudness_bias),
-    lbX on both sides; st, the human chart's long-note share, jack and trill rate as chart
-    stats (a model trained with --chart-stats), stsample, those of a random train chart
-    of about the same SR (--stats-csv); lgW, the lane passes' own guidance weight; ogX, the
+    temperature T. extras, joined by +: refN or refN@T, N sweeps of lane refinement at
+    lane temperature T (0.5); fwd or fwd@T, the left-to-right lane pass
+    (sampler.forward_lanes) at T (default: refinement's); spread; ebX, EMPTY bias X;
+    jbX, jack bias X; cpX, bar copies with bias X (sampler.copy_bars), cpXlN only from N
+    or more bars back; style, the human chart's genre and mapper; sgW, classifier-free
+    guidance W towards it; hr, long notes decided again (sampler.refine_holds); lnX,
+    that share of the onsets as long notes (ln alone: the human chart's share); lbqX,
+    loudness bias X in quiet bars only (sampler.loudness_bias), lbX on both sides; st,
+    the human chart's long-note share, jack and trill rate as chart stats (a model
+    trained with --chart-stats), stsample, those of a random train chart of about the
+    same SR (--stats-csv); lgW, the lane passes' own guidance weight; ogX, the
     onset-strength gate (sampler.onset_gate); ot, the gate tapered by SR
-    (sampler.GATE_TAPER); rcB, rhythms carried over at bias B (sampler.carry_rhythm); ltX,
-    long notes among taps under X beats made taps (sampler.tidy_holds); fhX, stream holes
-    filled at X (sampler.fill_holes); rbX, bars left empty below X expected note starts
-    (sampler.rest_bars)."""
+    (sampler.GATE_TAPER); rcB, rhythms carried over at bias B (sampler.carry_rhythm);
+    ltX, long notes among taps under X beats made taps (sampler.tidy_holds); fhX, stream
+    holes filled at X (sampler.fill_holes); rbX, bars left empty below X expected note
+    starts (sampler.rest_bars)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -143,7 +144,7 @@ def parse_setting(text: str) -> dict:
     fwd_temp, copy_bias, style, guidance, holds, loud_bias = None, None, False, 0.0, False, 0.0
     hold_share: float | str | None = None
     loud_side, stats, lane_guidance, onset, rest = "both", None, None, 0.0, 0.0
-    taper, holes, carry, ln_tidy = None, 0.0, None, None
+    taper, holes, carry, ln_tidy, copy_min_lag = None, 0.0, None, None, 1
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -159,7 +160,8 @@ def parse_setting(text: str) -> dict:
         elif head.startswith("jb") and not t:
             jack_bias = float(head[2:])
         elif head.startswith("cp") and not t:
-            copy_bias = float(head[2:])
+            bias, _, lag = head[2:].partition("l")
+            copy_bias, copy_min_lag = float(bias), int(lag) if lag else 1
         elif head == "style" and not t:
             style = True
         elif head == "hr" and not t:
@@ -210,7 +212,8 @@ def parse_setting(text: str) -> dict:
         + ([f"ln{hold_share:g}" if isinstance(hold_share, float) else "ln"]
            if hold_share is not None else []) \
         + ([f"rc{carry:g}"] if carry is not None else []) \
-        + ([f"cp{copy_bias:g}"] if copy_bias is not None else []) \
+        + ([f"cp{copy_bias:g}" + (f"l{copy_min_lag}" if copy_min_lag > 1 else "")]
+           if copy_bias is not None else []) \
         + ([f"lt{ln_tidy:g}"] if ln_tidy is not None else []) \
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
         + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
@@ -225,7 +228,7 @@ def parse_setting(text: str) -> dict:
             "holds": holds, "loud_bias": loud_bias, "hold_share": hold_share,
             "loud_side": loud_side, "stats": stats, "lane_guidance": lane_guidance,
             "onset_bias": onset, "rest": rest, "onset_taper": taper, "holes": holes,
-            "carry": carry, "ln_tidy": ln_tidy, "name": name_}
+            "carry": carry, "ln_tidy": ln_tidy, "copy_min_lag": copy_min_lag, "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -360,7 +363,7 @@ def build(a) -> int:
                                    lane_guidance=s["lane_guidance"], onset_bias=s["onset_bias"],
                                    rest=s["rest"] or None, onset_taper=s["onset_taper"],
                                    holes=s["holes"] or None, carry=s["carry"],
-                                   ln_tidy=s["ln_tidy"],
+                                   ln_tidy=s["ln_tidy"], copy_min_lag=s["copy_min_lag"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),
                                    **style_args(s, vocab, style_labels.get(row["key"], {})))

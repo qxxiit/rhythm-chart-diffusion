@@ -27,17 +27,22 @@ independent (no context across chunks: the ablation of queue 3c). Writes to --ou
 outputs/generated/<audio stem>/): the audio, one .osu per SR, and <stem>.osz.
 Open the .osz with osu! (lazer: double-click or drag onto the window; stable:
 put it in Songs/ and press F5). Quiet bars are thinned by default (--loud-bias 0.1,
-quiet side; 0 turns it off), which brought the loudness dynamics of 60 val songs to
-the human level with the SR unchanged (EXPERIMENTS 2026-10-06), and notes are less
-likely to start where nothing in the music starts (--onset-bias 1; 0 turns it off),
-which cut the notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07). From SR
-2.7 up the gate weakens, to 0.35 of it from SR 5 (--onset-taper 2.7,5,0.35; off keeps it
-full), since hard charts start many notes on weak onsets: that brought the SR of the hard
-grades back near the target (EXPERIMENTS 2026-10-08). A stream that misses exactly one
-note gets it where the model would start one with probability 0.5 or more (--holes 0.5;
-0 turns it off). Last, bars where the model expects under one note start, asked about
-the whole bar with the chart around it, are left empty (--rest 1; 0 turns it off), which
-brought the bars without a note to the human count (EXPERIMENTS 2026-10-07 night).
+quiet side; 0 turns it off), which brought the loudness dynamics of 60 val songs to the
+human level with the SR unchanged (EXPERIMENTS 2026-10-06), and notes are less likely to
+start where nothing in the music starts (--onset-bias 1; 0 turns it off), which cut the
+notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07). From SR 2.7 up the gate
+weakens, to 0.35 of it from SR 5 (--onset-taper 2.7,5,0.35; off keeps it full), since
+hard charts start many notes on weak onsets: that brought the SR of the hard grades back
+near the target (EXPERIMENTS 2026-10-08). After the lane passes a bar of taps takes the
+rhythm of the bar 1, 2, 4 or 8 before where the model, asked about the whole bar, scores
+it within 2 nats of its own, its lanes chosen again (--carry-rhythm 2; --no-carry turns
+it off): that closed two thirds of the gap to the human charts in rhythms repeated from
+the bar before, two fifths in those from 2 and 4 bars back (EXPERIMENTS 2026-10-10). A
+stream that misses exactly one note gets it where the model would start one with
+probability 0.5 or more (--holes 0.5; 0 turns it off). Last, bars where the model
+expects under one note start, asked about the whole bar with the chart around it, are
+left empty (--rest 1; 0 turns it off), which brought the bars without a note to the
+human count (EXPERIMENTS 2026-10-07 night).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -249,10 +254,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
-    ap.add_argument("--carry-rhythm", type=float, default=None,
+    ap.add_argument("--copy-min-lag", type=int, default=1,
+                    help="copies only from bars at least this many bars back (1: any)")
+    ap.add_argument("--carry-rhythm", type=float, default=2.0,   # 2026-10-11
                     help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
                          "before when the model, with the bar masked, scores it within this many "
                          "nats of its own; its lanes chosen again (sampler.carry_rhythm)")
+    ap.add_argument("--no-carry", action="store_true", help="no rhythms carried over")
     ap.add_argument("--ln-tidy", type=float, default=None,
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds)")
@@ -321,6 +329,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if a.no_copy:
         a.copy_bias = None
+    if a.no_carry:
+        a.carry_rhythm = None
     if a.list_styles:
         return list_styles(load_denoiser(a.ckpt, "cpu"))
     if a.audio is None:
@@ -409,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}"
     if a.copy_bias is not None:
-        order += f"-cp{a.copy_bias:g}"
+        order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy is not None:
         order += f"-lt{a.ln_tidy:g}"
     if a.holes:
@@ -450,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                                loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                                rest=a.rest or None,
                                onset_taper=taper, holes=a.holes or None,
-                               carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
+                               carry=a.carry_rhythm, ln_tidy=a.ln_tidy, copy_min_lag=a.copy_min_lag,
                                lane_guidance=a.lane_guidance, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))

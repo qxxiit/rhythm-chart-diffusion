@@ -64,6 +64,8 @@ human chart's SR with the song's real timing, then score:
     rhythm_rep1/2/4/8/16, lane_rep1
                           bars with the rhythm of the bar 1 .. 16 before, and of those 1
                           before, also its lanes (structure.phrase_repeats), human_* likewise
+    copy_near/mid/far     bars whose nearest earlier copy (lanes too) is 1-2, 3-8, 9+ bars
+                          back (structure.phrase_repeats), human_* likewise
     ln_sections, ln_scattered
                           long notes in bars of long notes / among taps
                           (structure.ln_placement), human_* likewise
@@ -80,7 +82,7 @@ sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry
 --copy-bias, --ln-tidy, --fill-holes, --rest, in that order): minutes instead of hours.
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
-are those of the passes run here. Writes to DIR_hr_rc<bias>_cp<bias>_lt<beats>_fh<p>_rb<n>
+are those of the passes run here. Writes to DIR_hr_rc<bias>_cp<bias>[l<lag>]_lt<beats>_fh<p>_rb<n>
 (the parts asked for), then the stats tag and, with --carry-rhythm, _lg<weight>.
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
@@ -255,6 +257,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats of the bar "
                          "(sampler.copy_bars); default: no copies")
+    ap.add_argument("--copy-min-lag", type=int, default=1,
+                    help="--copy-bias: copy only bars at least this many bars back (tag "
+                         "_cp<bias>l<N>; 1 = any earlier bar)")
     ap.add_argument("--empty-bias", type=float, default=0.0,
                     help="log-scale bias on EMPTY while sampling: > 0 fewer notes, < 0 more")
     ap.add_argument("--loud-bias", type=float, default=0.0,
@@ -413,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.carry_rhythm is not None:
         tag += f"_rc{a.carry_rhythm:g}"
     if a.copy_bias is not None:
-        tag += f"_cp{a.copy_bias:g}"
+        tag += f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy is not None:
         tag += f"_lt{a.ln_tidy:g}"
     if a.fill_holes is not None:
@@ -453,7 +458,8 @@ def main(argv: list[str] | None = None) -> int:
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
             f"_rc{a.carry_rhythm:g}" if a.carry_rhythm is not None else "") + (
-            f"_cp{a.copy_bias:g}" if a.copy_bias is not None else "") + (
+            f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
+            if a.copy_bias is not None else "") + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
             f"_rb{a.rest:g}" if a.rest is not None else "") + stats_tag + (
@@ -502,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
                     or a.carry_rhythm is not None or a.ln_tidy is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
+                                   copy_min_lag=a.copy_min_lag,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
@@ -517,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
                                    release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                                    empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
+                                   copy_min_lag=a.copy_min_lag,
                                    holds=a.refine_holds, hold_share=share,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
@@ -575,7 +583,8 @@ def main(argv: list[str] | None = None) -> int:
                "temperature": a.temperature if a.order == "noisy" else None,
                "steps": a.steps, "spread": a.spread, "lanes": a.lanes, "refine": a.refine,
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
-               "copy_bias": a.copy_bias, "style": a.style, "style_guidance": a.style_guidance,
+               "copy_bias": a.copy_bias, "copy_min_lag": a.copy_min_lag,
+               "style": a.style, "style_guidance": a.style_guidance,
                "refine_holds": a.refine_holds, "hold_share": a.hold_share,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,

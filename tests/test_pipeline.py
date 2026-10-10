@@ -319,16 +319,19 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert (oracle_run.parent / (oracle_run.name + "_fh0_rb1000_st-oracle")).exists()
     assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
                           "--from-charts", str(oracle_run), "--carry-rhythm", "100",
-                          "--lane-guidance", "1", "--ln-tidy", "1"]) == 0
-    carried = oracle_run.parent / (oracle_run.name + "_rc100_lt1_st-oracle_lg1")
+                          "--lane-guidance", "1", "--ln-tidy", "1", "--copy-bias", "0",
+                          "--copy-min-lag", "4"]) == 0
+    carried = oracle_run.parent / (oracle_run.name + "_rc100_cp0l4_lt1_st-oracle_lg1")
     with open(carried / "per_song.csv", newline="") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 2 and all(int(r["carried_bars"]) >= 0 and int(r["tidied_holds"]) >= 0
                                   for r in rows)
     assert all(k in rows[0] for k in ("rhythm_rep1", "human_rhythm_rep16", "lane_rep1",
-                                      "ln_sections", "human_ln_scattered"))
+                                      "ln_sections", "human_ln_scattered", "copy_far",
+                                      "human_copy_near", "copied_bars"))
     summary = json.loads((carried / "summary.json").read_text())
     assert summary["carry_rhythm"] == 100 and summary["ln_tidy"] == 1
+    assert summary["copy_min_lag"] == 4
     assert sample.main([*common, "--key", key, "--stats", "oracle", "--carry-rhythm", "0",
                         "--ln-tidy", "1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob("*-rc0-cp0-lt1-*.osu"))
@@ -448,9 +451,10 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    assert list((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-cp0-fh0.5-rb1_T4_*.osu"))
+    made = "*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-rc2-cp0-fh0.5-rb1_T4_*"
+    assert list((tmp_path / "r" / "samples").glob(made + ".osu"))
     import zipfile
-    osz = next((tmp_path / "r" / "samples").glob("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-cp0-fh0.5-rb1_T4_*.osz"))
+    osz = next((tmp_path / "r" / "samples").glob(made + ".osz"))
     names = zipfile.ZipFile(osz).namelist()
     assert "audio.mp3" in names and "v0.osu" in names and any("noisy2" in n for n in names)
 
@@ -469,14 +473,18 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-lbq0.1-og1-ot-cp0-fh0.5-rb1]" in p.name for p in charts)   # quiet bars,
-    # onset gate tapered by SR, copies, stream holes, rests
+    assert all("-lbq0.1-og1-ot-rc2-cp0-fh0.5-rb1]" in p.name for p in charts)   # quiet bars,
+    # onset gate tapered by SR, rhythms carried over, copies, stream holes, rests
     assert generate.main([*common, "--bpm", "120", "--sr", "2", "--onset-taper", "5,2,1",
                           "--out", str(out)]) == 2
     assert generate.main([*common, "--timing", str(folder / "v0.osu"), "--mode", "independent",
-                          "--order", "confidence", "--no-copy", "--out", str(tmp_path / "gen2")]) == 0
+                          "--order", "confidence", "--no-copy", "--no-carry",
+                          "--out", str(tmp_path / "gen2")]) == 0
     made = list((tmp_path / "gen2").glob("*independent-confidence*.osu"))
-    assert len(made) == 1 and "-cp" not in made[0].name
+    assert len(made) == 1 and "-cp" not in made[0].name and "-rc" not in made[0].name
+    assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
+                          "--copy-min-lag", "4", "--out", str(tmp_path / "gen3")]) == 0
+    assert all("-rc2-cp0l4-" in p.name for p in (tmp_path / "gen3").glob("*.osu"))
     # the model input from the audio file equals the one training read from the cache
     with open(data / "manifest.csv", newline="") as f:
         key = next(r["key"] for r in csv.DictReader(f)
@@ -736,6 +744,9 @@ def test_playtest_settings() -> None:
         ((2.7, 5.0, 0.35), 0, 1, 0.5)
     assert full["name"] == "ai random T128 continue fwd ref2@0.5 rc0 cp0 lt1 st lg2 og1 ot fh0.5 rb1"
     assert parse_setting("random:128")["carry"] is None
+    lagged = parse_setting("random:128:continue:fwd+cp0l4")
+    assert (lagged["copy_bias"], lagged["copy_min_lag"]) == (0, 4) and lagged["name"].endswith("cp0l4")
+    assert parse_setting("random:128:continue:fwd+cp2")["copy_min_lag"] == 1
     with pytest.raises(ValueError):
         parse_setting("random:128:continue:bogus")
 

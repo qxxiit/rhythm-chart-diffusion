@@ -74,7 +74,11 @@ def embedding(x_train: np.ndarray, dims: int):
     p = vt[:dims]
 
     def project(x: np.ndarray) -> np.ndarray:
-        return ((np.asarray(x, dtype=np.float64) - mu) / sd - centre) @ p.T
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):  # macOS Accelerate
+            out = ((np.asarray(x, dtype=np.float64) - mu) / sd - centre) @ p.T  # flags bogus
+        if not np.isfinite(out).all():                                    # errors in matmul
+            raise FloatingPointError("non-finite audio features")
+        return out
     return project
 
 
