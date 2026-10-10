@@ -64,12 +64,14 @@ human chart's SR with the song's real timing, then score:
     rhythm_rep1/2/4/8/16, lane_rep1
                           bars with the rhythm of the bar 1 .. 16 before, and of those 1
                           before, also its lanes (structure.phrase_repeats), human_* likewise
+    tap_rep1, ln_rep1     rhythm_rep1 over the bars of taps / bars starting 2+ long notes
     copy_near/mid/far     bars whose nearest earlier copy (lanes too) is 1-2, 3-8, 9+ bars
                           back (structure.phrase_repeats), human_* likewise
     ln_sections, ln_scattered
                           long notes in bars of long notes / among taps
                           (structure.ln_placement), human_* likewise
     carried_bars          with --carry-rhythm: bars that took an earlier bar's rhythm
+    carried_ln_bars       with --carry-holds: of those, bars with long notes
     tidied_holds          with --ln-tidy: long notes among taps made taps (sampler.tidy_holds)
     rest_bars_cleared     with --rest: bars the rest pass left empty (sampler.rest_bars)
     holes_filled          with --fill-holes: stream holes the pass filled (sampler.fill_holes)
@@ -296,6 +298,11 @@ def main(argv: list[str] | None = None) -> int:
                          "before when the model, with the bar masked, scores it within this many "
                          "nats of its own; its lanes chosen again (sampler.carry_rhythm, tag _rc); "
                          "also on --from-charts")
+    ap.add_argument("--carry-keep", action="store_true",
+                    help="--carry-rhythm: no source with fewer notes than the bar (tag k)")
+    ap.add_argument("--carry-holds", type=float, default=None,
+                    help="--carry-rhythm: bars that start long notes too, at this bias, their "
+                         "lanes permuted as a whole (tag h<bias>)")
     ap.add_argument("--ln-tidy", type=float, default=None,
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds, tag _lt); also on --from-charts")
@@ -415,8 +422,10 @@ def main(argv: list[str] | None = None) -> int:
             tag += "_ot" + "-".join(f"{v:g}" for v in taper)
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
-    if a.carry_rhythm is not None:
-        tag += f"_rc{a.carry_rhythm:g}"
+    carry_tag = "" if a.carry_rhythm is None else f"_rc{a.carry_rhythm:g}" + (
+        "k" if a.carry_keep else "") + (
+        f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
+    tag += carry_tag
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy is not None:
@@ -457,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
-            f"_rc{a.carry_rhythm:g}" if a.carry_rhythm is not None else "") + (
+            carry_tag) + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
             if a.copy_bias is not None else "") + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
@@ -487,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
+        carried_ln0 = STATS["carried_ln_bars"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -512,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
+                                   carry_keep=a.carry_keep, carry_holds=a.carry_holds,
                                    lane_guidance=a.lane_guidance, lane_temperature=a.lane_temp,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
@@ -529,6 +540,7 @@ def main(argv: list[str] | None = None) -> int:
                                    loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
+                                   carry_keep=a.carry_keep, carry_holds=a.carry_holds,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -542,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
             cost["holes_filled"] = STATS["filled_holes"] - fills0
         if a.carry_rhythm is not None:
             cost["carried_bars"] = STATS["carried_bars"] - carried0
+        if a.carry_rhythm is not None and a.carry_holds is not None:
+            cost["carried_ln_bars"] = STATS["carried_ln_bars"] - carried_ln0
         if a.ln_tidy is not None:
             cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
         charts[r["key"]] = tokens
@@ -589,7 +603,8 @@ def main(argv: list[str] | None = None) -> int:
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
-               "carry_rhythm": a.carry_rhythm, "ln_tidy": a.ln_tidy,
+               "carry_rhythm": a.carry_rhythm, "carry_keep": a.carry_keep,
+               "carry_holds": a.carry_holds, "ln_tidy": a.ln_tidy,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

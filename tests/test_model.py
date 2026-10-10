@@ -1088,3 +1088,81 @@ def test_carry_and_tidy_in_generate_song_keep_the_grammar() -> None:
     assert len(grammar_violations(tidied)) == 0         # the same onsets, fewer long notes
     assert np.array_equal(np.isin(tidied, (TAP, 2)), np.isin(plain, (TAP, 2)))
     assert (tidied == 2).sum() <= (plain == 2).sum()
+
+
+def test_place_pattern_moves_long_notes_as_a_whole() -> None:
+    """A source bar's notes, long notes included, replace the bar's own under the lane
+    permutation the model likes; a long note coming in from the bar before stays, the
+    lengths and the rhythm are the source's, and the grammar holds."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import _bar_notes, _place_pattern
+    song = _bars_song([[(0, 0), (24, 1)], [(30, 2)], []])
+    song[BAR - 6, 3], song[BAR - 5:BAR + 4, 3], song[BAR + 4, 3] = HOLD_START, HOLD_BODY, HOLD_END
+    song[BAR + 12, 0], song[BAR + 13:BAR + 20, 0], song[BAR + 20, 0] = HOLD_START, HOLD_BODY, \
+        HOLD_END                                        # bar 1's own long note: replaced
+    notes = [(0, 0, 0), (6, 1, 12), (24, 2, 30), (36, 0, 0)]   # a tap, a long note within
+    #                                                       the bar, one into bar 2, a tap
+    logp = np.full((BAR, K, 5), np.log(0.2))
+    logp[6, 2, HOLD_START] = 5.0                        # the model wants the first long note
+    before = song.copy()                                # in lane 2
+    assert _place_pattern(song, BAR, notes, logp, temperature=0.0,
+                          rng=np.random.default_rng(0), release_gap=2)
+    assert song[BAR + 6, 2] == HOLD_START and song[BAR + 18, 2] == HOLD_END
+    assert np.array_equal(song[BAR - 6:BAR + 5, 3], before[BAR - 6:BAR + 5, 3])   # kept
+    got = sorted((i, n) for i, _, n in _bar_notes(song, BAR))
+    assert got == sorted((i, n) for i, _, n in notes)  # rhythm and lengths as the source's
+    assert len(grammar_violations(song.reshape(-1, L, K))) == 0
+    assert not (song[BAR + 12:BAR + 21, 0] == HOLD_BODY).all()      # the old one is gone
+    blocked = before.copy()                             # every lane busy at row 0 of bar 1:
+    blocked[BAR, :3] = HOLD_BODY                        # no permutation fits, nothing changes
+    blocked[BAR - 1, :3], blocked[BAR + 1, :3] = HOLD_START, HOLD_END
+    blocked[BAR - 1, 3] = EMPTY
+    blocked[BAR, 3] = HOLD_BODY
+    snapshot = blocked.copy()
+    assert not _place_pattern(blocked, BAR, notes, logp, temperature=0.0,
+                              rng=np.random.default_rng(0), release_gap=0)
+    assert np.array_equal(blocked, snapshot)
+
+
+def test_carry_rhythm_in_bars_with_long_notes() -> None:
+    """With holds, a bar that starts long notes takes the rhythm of an earlier one that does
+    too, the source's long notes with it; without, it is left alone; keep_notes leaves out
+    sources with fewer notes than the bar."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, _bar_notes, carry_rhythm
+
+    def hold(x, row, lane, n):
+        x[row, lane], x[row + 1:row + n, lane], x[row + n, lane] = HOLD_START, HOLD_BODY, HOLD_END
+    song = _bars_song([[(12, 1), (36, 3)], [(6, 1), (30, 3)], [(3, 1), (27, 2)], []])
+    for b, rows in ((0, (0, 24)), (1, (18, 42)), (2, (15, 39))):
+        for j, row in enumerate(rows):
+            hold(song, b * BAR + row, 2 * j, 4)         # two long notes in each of bars 0-2
+    logits = torch.zeros(1, L, K, N_CLASSES)
+    logits[..., EMPTY] = 2.0
+    for row in (0, 12, 24, 36):                         # bar 2 expects bar 0's rhythm
+        logits[0, 2 * BAR + row, :, EMPTY] = 0.0
+        logits[0, 2 * BAR + row, :, TAP] = 1.0
+        logits[0, 2 * BAR + row, :, HOLD_START] = 1.0
+    frames = torch.zeros(len(song) * 4, 80)
+
+    def run(x, **kw):
+        return carry_rhythm(Fixed(logits), x, frames, 3.0, lambda row0: 400.0, 3 * BAR, None,
+                            bias=-0.5, rng=np.random.default_rng(0), temperature=0.0, **kw)
+
+    alone = song.copy()
+    assert run(alone) == 0 and np.array_equal(alone, song)          # taps-only carry: none
+    before = STATS["carried_ln_bars"]
+    out = song.copy()
+    assert run(out, holds=-0.5) == 1 and STATS["carried_ln_bars"] == before + 1
+    assert sorted((i, n) for i, _, n in _bar_notes(out, 2 * BAR)) == \
+        sorted((i, n) for i, _, n in _bar_notes(song, 0))          # bar 0's rhythm, lengths
+    lanes_of = {i: k for i, k, _ in _bar_notes(song, 0)}
+    moved = {i: k for i, k, _ in _bar_notes(out, 2 * BAR)}
+    assert moved != lanes_of and moved != {i: 3 - k for i, k in lanes_of.items()}
+    assert np.array_equal(out[:2 * BAR], song[:2 * BAR])
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+    dense = song.copy()                                 # bar 2 one note more than bar 0
+    dense[2 * BAR + 3, 3] = TAP
+    kept = dense.copy()
+    assert run(kept, holds=-0.5, keep_notes=True) == 0 and np.array_equal(kept, dense)
+    assert run(dense.copy(), holds=-0.5) == 1

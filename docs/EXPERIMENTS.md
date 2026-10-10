@@ -1773,6 +1773,119 @@ Predictions:
    in every grade from Normal up (Easy +0.04 to +0.08); copy_far +0.02 to +0.04; SR -0.01 to
    -0.03 in every grade; F1 -0.001 to -0.004; ln_scattered -0.03 to -0.06.
 
+**Results (`run_copies.sh`, night of 10-10/11)** — items 1-5 against the carry at 2 alone
+(`${C}_rc2_fh0.5_rb1`; 0.3797 F1, rhythm_rep1 0.219, copies near / mid / far 0.032 / 0.020 /
+0.007), 6 against `$C`, 7 by grade; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | copies from 1 back: 15-17 a song; rhythm_rep1 0.225-0.24; lane_rep1 0.25-0.30 | 17.4; 0.236; 0.300 | miss (just over), hit, hit |
+| 1 | copy near / mid / far 0.09-0.11 / 0.04-0.05 / 0.015-0.02; F1 ±0.002 | 0.114 / 0.048 / 0.017; 0.3802 | miss (just over), hit, hit; hit |
+| 2 | from 4 back: 7-11 a song; copy_near 0.026-0.036; copy_mid 0.045-0.07; copy_far 0.025-0.045 | 11.8; 0.044; 0.069; 0.020 | miss (over), miss (over), hit, miss (under) |
+| 2 | lane_rep1 0.06-0.09; bar_lane_repeat 0.30-0.45; rhythm_rep1 / 2 within +0.01 | 0.102; 0.438; +0.005 / +0.006 | miss (over), hit, hit |
+| 2 | rhythm_rep4 / 8 / 16 +0.01 to +0.03; rho_in 0.223-0.235 | +0.014 / +0.010 / +0.007; 0.214 | hit, hit, miss; miss (down) |
+| 2 | F1 ±0.002; breaks and run length ±0.02 / ±0.3; SR ±0.01 | 0.0000; +0.007 / -0.02; -0.004 | hit, hit, hit |
+| 3 | from 8 back: 5-8 a song; copy_mid 0.025-0.035; copy_far 0.03-0.05; copy_near as in 2 | 7.4; 0.039; 0.024; 0.037 | hit, miss, miss, miss (at the human 0.036) |
+| 3 | rhythm_rep8 and rep16 +0.01 to +0.02 | +0.008 / +0.006 | miss, miss |
+| 4 | carry 0, copies from 4 back: copy_near 0.022-0.03; mid, far as in 2; rhythm_rep1 0.195-0.21; F1 ±0.002 of 0.3812 | 0.036; 0.060, 0.019; 0.198; 0.3813 | miss, hit, miss; hit; hit |
+| 5 | with tidy 0.5: the copy and rhythm columns as in 2; 18-21 a song; share -0.007 to -0.009; ln_scattered -0.04 to -0.05; ln_sections +0.015 to +0.02; ln_f1 -0.002 to -0.006 | the same; 19.3; -0.008; -0.045; +0.018; -0.0035 | hit ×6 |
+| 6 | `$T` against `$C`: the 79 songs under SR 2.7 identical; SR bias +0.05 to +0.10; density +2 to +4%; F1 ±0.003 | identical; +0.075; +2.5%; -0.0012 | hit ×4 |
+| 6 | weak onsets +0.01 to +0.02 | +0.019 (`$T` with holes and rests against `${C}_fh0.5_rb1`; `$C` has no column) | hit |
+| 7 | rhythm_rep1 +0.06 to +0.10 from Normal up (Easy +0.04 to +0.08) | Normal +0.076, Hard +0.075, Insane +0.101, Expert +0.096, Expert+ +0.106; Easy +0.093 | hit ×3, miss ×3 (a little over) |
+| 7 | copy_far +0.02 to +0.04 | +0.016 (by grade +0.004 to +0.026) | miss |
+| 7 | SR -0.01 to -0.03 in every grade | Easy -0.002, Normal -0.010, Hard -0.013, Insane -0.040, Expert -0.064, Expert+ -0.059 | hit ×2, miss ×4 |
+| 7 | F1 -0.001 to -0.004; ln_scattered -0.03 to -0.06 | -0.0014; -0.048 | hit, hit |
+
+Copies by distance, all after the carry at 2 (per-song means; human 0.036 / 0.055 / 0.068):
+
+| copies | a song | near / mid / far | lane_rep1 (0.064) | bar_lane_repeat (0.334) | run length (7.49) | rho_in (0.228) | F1 |
+|---|---|---|---|---|---|---|---|
+| none | - | 0.032 / 0.020 / 0.007 | 0.071 | 0.189 | 7.68 | 0.2225 | 0.3797 |
+| from 1 back | 17.4 | 0.114 / 0.048 / 0.017 | 0.300 | 0.566 | 8.50 | 0.2144 | 0.3802 |
+| from 4 back | 11.8 | 0.044 / 0.069 / 0.020 | 0.102 | 0.438 | 7.67 | 0.2136 | 0.3797 |
+| from 8 back | 7.4 | 0.037 / 0.039 / 0.024 | 0.085 | 0.342 | 7.50 | 0.2177 | 0.3802 |
+
+What it says:
+
+- **Copies from 8 back are the human mix.** From 4 back the copies still repeat the bar just
+  before (0.044): in a passage of one repeated pattern the bar 4 back equals the bar 1 back.
+  From 8 back the near copies, the whole-bar repeats (bar_lane_repeat) and the run length are
+  at the human level; the far copies triple but stay at a third of the human rate (0.024
+  against 0.068): at bias 0 the model takes few far sources, so a chorus does not come back as
+  a whole. Every copy setting costs some rho_in against the carry alone (a whole bar from
+  elsewhere breaks the local fit the carry gave); from 8 back the least. Adopted, from 8 back
+  (DECISIONS 10-11).
+- **The carry at 2 was too much, where it acts.** The new columns `tap_rep1` / `ln_rep1` split
+  rhythm_rep1 by the kind of bar (patch 0044, computed on the saved charts): human 0.273 /
+  0.235, the reference 0.188 / 0.087, the carry at 0 0.289 / 0.089, at 2 0.337 / 0.090, the
+  candidate on `$T` 0.324 / 0.090. The carry only touches bars of taps, and there the carry at
+  0 is at the human rate (per song in tap charts 0.319 against 0.314, at 2 0.381); the mean
+  over all bars looked short of the human only because the bars with long notes repeat their
+  rhythm at a third of the human rate and the carry never touches them. The carry's repeats
+  also grow with the song's length (correlation with the bar count +0.25 to +0.30; human
+  +0.03). Back to bias 0 (DECISIONS 10-11, replacing the row on 2); the long-note bars next.
+- **The candidate costs SR in the hard grades.** On `$T` it takes Insane from -0.133 to -0.173
+  and Expert/Expert+ from -0.41 to -0.47: a third of the taper's gain in Insane, a fifth in
+  Expert. On `$C` the carry at 2
+  alone takes -0.027 (Insane) and -0.029 (Expert+) at -0.44% notes, the copies -0.008 to
+  -0.010, tidy 0.5 -0.003 to -0.007: mostly the carry's sparser rhythms in dense bars.
+- **The taper base is sound:** the songs under SR 2.7 came out note for note as in `$C`, and
+  the taper moved SR as on 10-08 (+0.075 over all songs). `$T` is the base for what follows.
+
+### 2026-10-11 night · Long-note bars in the rhythm carry (predictions)
+
+The bars that start long notes repeat the rhythm of the bar before at a third of the human
+rate (`ln_rep1` 0.09 against 0.24), whatever the carry does. In the human charts they are
+more of the busy bars than the bars of taps (12,639 against 10,472 that follow a busy bar),
+and 71% of them have a long note across an edge. Humans change the lanes of a repeated
+long-note rhythm 96% of the time (pooled: rhythm 24%, lanes too 4% of those), much as for
+taps (31%, 8%).
+
+`carry_rhythm(holds=B)` (`--carry-holds B`, tag `h<B>`; playtest `rcAhB`): a bar that starts
+long notes may take the rhythm of a bar 1, 2, 4 or 8 before that starts long notes too, at a
+bias B of its own, scored as before (the bar's own long notes taken out of the context, so their tails past the bar do not
+show). The source's notes, long notes with their lengths, replace those that started in the
+bar; long notes coming in from the bar before stay, and so does everything in the next bar.
+Their lanes move as a whole: of the 24 lane permutations under which every note fits (its cells
+empty, the release gaps kept), the one the model likes (sum log p over the bar's cells), never
+the source's own lanes or their mirror (`sampler._place_pattern`). `carry_rhythm(keep_notes=
+True)` (`--carry-keep`, tag `k`) leaves out sources with fewer notes than the bar: the carried
+rhythms were sparser (10-10), and that is what costs SR in dense charts. New columns `tap_rep1`
+/ `ln_rep1`, and in `--by-grade`.
+
+Smoke check (6 val songs with long notes, their saved charts, the carry alone, full-v4 on CPU;
+human ln_rep1 0.25, the charts 0.05): the long-note bars at 0 took 24 sources a song and
+repeated the bar before 0.34 of the time (over the human), at -2 (taps at -2 too) 12.5 and
+0.24, at 0 with keep_notes 13 and 0.17. Before the source's own lanes and their mirror were
+ruled out, the permutation the model liked was often the source's (lane_rep1 0.16, near
+copies 10x the human rate); after, lane_rep1 0.02-0.04 (human 0.06). Notes -1.4% / -0.9% /
++1.0%; no grammar violations. Hence a bias of its own for the long-note bars.
+
+`run_holds.sh` (patch 0044), on `$T` with copies from 8 back, tidy 0.5, holes 0.5 and rests 1
+(the defaults now), against holes and rests on `$T`, by grade:
+
+1. The carry at 0, bars of taps only (the playable default now).
+2. The same, keep_notes.
+3. Bars with long notes carried too, at -2, -1 and 0 (`--carry-holds`; taps at 0).
+4. At -1 with keep_notes.
+
+Predictions (`$T` with holes and rests: rhythm_rep1 0.135, tap_rep1 0.183, ln_rep1 0.087,
+lane_rep1 0.031, copies 0.011 / 0.006 / 0.005, F1 0.3800, SR bias -0.052, hold_share 0.169):
+
+1. Carry at 0: tap_rep1 0.27-0.30 (human 0.273), ln_rep1 0.088-0.095, rhythm_rep1 0.19-0.21;
+   copies near / mid / far 0.025-0.035 / 0.02-0.035 / 0.015-0.025; lane_rep1 0.05-0.08; F1
+   0 to -0.002; SR -0.01 to -0.02 over all, Insane -0.015 to -0.035, Expert/Expert+ -0.02 to
+   -0.045 (about half the cost of last night's candidate); ln_scattered -0.04 to -0.05,
+   hold_share -0.007 to -0.009 (the tidy).
+2. keep_notes: 30-50% fewer bars carried; tap_rep1 0.24-0.28; density at least that of 1
+   + 0.2%; SR over all -0.005 to -0.015, Insane -0.01 to -0.025.
+3. Long-note bars at -2: 4-10 of them carried a song; ln_rep1 0.15-0.20 (human 0.235);
+   lane_rep1 at most 0.08; copy_near +0.005 to +0.015 over 1; hold_share within ±0.005 and
+   hold_beats within ±0.03 of 1; F1 -0.001 to -0.004, ln_f1 -0.003 to -0.015, SR -0.005 to
+   -0.02, all against 1. At -1: ln_rep1 0.18-0.25; at 0: 0.22-0.30 (over the human
+   possible).
+4. At -1 with keep_notes: ln_rep1 0.12-0.18; density at least that of 1.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

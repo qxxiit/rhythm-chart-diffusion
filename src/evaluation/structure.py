@@ -39,8 +39,9 @@
                  the bar 1, 2, 4, 8, 16 before; lane_rep1: of those 1 before, also its lanes
                  (EXPERIMENTS 2026-10-10, means over the 240 val songs: human 0.27 / 0.31 /
                  0.29 / 0.23 / 0.18 and 0.06, the candidate 0.14 / 0.15 / 0.12 / 0.09 / 0.07
-                 and 0.03); copy_near/mid/far: bars that copy a bar 1-2, 3-8, 9+ back,
-                 lanes too (2026-10-11)
+                 and 0.03); tap_rep1 / ln_rep1: rhythm_rep1 over bars of taps / of long
+                 notes; copy_near/mid/far: bars that copy a bar 1-2, 3-8, 9+ back, lanes too
+                 (2026-10-11)
     ln_placement(tokens, n)      ln_sections, ln_scattered: the share of long notes in bars
                  that are mostly long notes / in bars of taps (human 0.48 / 0.19, the
                  candidate 0.34 / 0.29)
@@ -216,6 +217,9 @@ def phrase_repeats(tokens: np.ndarray, n_cells: int) -> dict:
     the share whose lanes are the same too, as they are or mirrored (lane k <-> 3 - k).
     Human charts come back to a rhythm 1, 2, 4, 8 and 16 bars later about twice as often as
     the sampled ones, and 2 and 4 bars later most (EXPERIMENTS 2026-10-10).
+    tap_rep1, ln_rep1: rhythm_rep1 over the bars of taps only (no long-note cell) and over
+    the bars that start 2+ long notes: the carry acts on the first, humans repeat both
+    (EXPERIMENTS 2026-10-11).
     copy_near, copy_mid, copy_far: of the bars with REPEAT_MIN+ onset rows after the first
     bar, the share whose nearest earlier copy (a bar with REPEAT_MIN+ onset rows and the
     same lanes, as they are or mirrored) is 1 to COPY_NEAR bars back, between, COPY_FAR or
@@ -224,8 +228,8 @@ def phrase_repeats(tokens: np.ndarray, n_cells: int) -> dict:
     x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
     n_bars = n_whole_bars(n_cells)
     out = {f"rhythm_rep{k}": float("nan") for k in REPEAT_LAGS}
-    out.update({"lane_rep1": float("nan"), "copy_near": float("nan"), "copy_mid": float("nan"),
-                "copy_far": float("nan")})
+    out.update({"lane_rep1": float("nan"), "tap_rep1": float("nan"), "ln_rep1": float("nan"),
+                "copy_near": float("nan"), "copy_mid": float("nan"), "copy_far": float("nan")})
     if n_bars < 2:
         return out
     starts = np.isin(x[:n_bars * BAR], (TAP, HOLD_START)).reshape(n_bars, BAR, -1)
@@ -237,8 +241,15 @@ def phrase_repeats(tokens: np.ndarray, n_cells: int) -> dict:
         if len(b):
             out[f"rhythm_rep{k}"] = float(np.mean([np.array_equal(rows[i], rows[i - k])
                                                     for i in b]))
-    same = [i for i in np.flatnonzero(busy[1:] & busy[:-1]) + 1
-            if np.array_equal(rows[i], rows[i - 1])]
+    cells = x[:n_bars * BAR].reshape(n_bars, BAR, -1)
+    pairs = np.flatnonzero(busy[1:] & busy[:-1]) + 1
+    kinds = {"tap_rep1": ~np.isin(cells, (HOLD_START, HOLD_BODY, HOLD_END)).any(axis=(1, 2)),
+             "ln_rep1": (cells == HOLD_START).sum(axis=(1, 2)) >= 2}
+    for name, kind in kinds.items():
+        b = pairs[kind[pairs]]
+        if len(b):
+            out[name] = float(np.mean([np.array_equal(rows[i], rows[i - 1]) for i in b]))
+    same = [i for i in pairs if np.array_equal(rows[i], rows[i - 1])]
     if same:
         out["lane_rep1"] = float(np.mean([np.array_equal(masks[i], masks[i - 1])
                                           or np.array_equal(masks[i], _MIRROR[masks[i - 1]])
