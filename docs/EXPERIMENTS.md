@@ -2196,6 +2196,147 @@ F1 0.3820; paired means):
 4. All three: each column as with its pass alone (they touch different notes), SR the sum
    of the three ±0.01.
 
+**Results (`run_feel.sh`, night of 10-11 to 10-12)** — paired means against the new default
+(`rc0kh1`); bars, taps and rows a song and the by-grade means are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | sections at 2 with keep: 1.5-3 bars a song; section_rhythm 0.24-0.29; section_copy 0.11-0.16 | 4.0; 0.240; 0.128 | miss (more), hit (at the edge), hit |
+| 1 | at 4: 3-5 bars; section_rhythm 0.28-0.36; section_copy 0.16-0.26 | 6.1; 0.274; 0.165 | miss (more), miss (just under), hit |
+| 1 | at 4: copy_far +0.01 to +0.03; rhythm_rep8 +0.01 to +0.03 | +0.012; +0.014 | hit, hit |
+| 1 | at 4: density +0.3% to +0.8%; SR 0 to +0.012; F1 -0.003 to +0.001 | +0.30%; +0.0055; -0.0002 | hit (at the edge), hit, hit |
+| 1 | at 4: tap_rep1, ln_rep1, lane_rep1 within ±0.01 | +0.001, -0.009, +0.000 | hit ×3 |
+| 1 | new lanes: section_rhythm as at 4 ±0.01; section_copy 0.01-0.04 under it | +0.002; +0.001 | hit, miss (the lanes came out as they were) |
+| 2 | `--untangle`: 1-3 taps a song; fast_jacks -0.04 to -0.10, Hard to 0.05-0.10 | 2.2; -0.067, Hard 0.121 | hit, hit, miss |
+| 2 | density -0.05% to -0.15%; SR -0.005 to -0.02 (Expert -0.02 to -0.06) | -0.07%; -0.016 (Expert -0.137) | hit, hit (miss) |
+| 2 | F1 within ±0.0005; chords -0.0005 to -0.002 | -0.0000; -0.0007 | hit, hit |
+| 3 | `--chord-cap`: 1-4 rows a song; chord_over Easy and Hard under 0.002, Normal under 0.005 | 4.2; 0.0009 and 0.0011, 0.0006 | miss (just over), hit ×3 |
+| 3 | density -0.1% to -0.5%; SR -0.003 to -0.015 (Normal -0.02 to -0.08) | -0.47%; -0.0175 (Normal -0.055) | hit, miss (just over) (hit) |
+| 3 | chords -0.001 to -0.005; chord_strength -0.005 to -0.02; F1 within ±0.001 | -0.0012; -0.0005; -0.0013 | hit, miss (hardly moved), miss (just over) |
+| 4 | all three: each column as with its pass alone; SR the sum of the three ±0.01 | section_rhythm 0.273, chord_over 0.0010, fast_jacks -0.058 (alone -0.067, sections +0.012); -0.027 (sum -0.028) | hit, hit |
+
+All runs (per song; human: section_rhythm 0.547, section_copy 0.244, copy_far 0.068,
+bar_lane_repeat 0.334, chord_strength 0.829; fast_jacks Hard / Insane / Expert 0.04 / 0.39 /
+1.82; chord_over Easy / Normal / Hard 0.0049 / 0.0284 / 0.0098):
+
+| run | section bars a song | section_rhythm / copy | copy_far | bar_lane_repeat | fast_jacks H / I / E | chord_over E / N / H | chord_strength | SR bias (Easy / Normal / Insane / Expert) | density | F1 | passes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| holes and rests on `$T` | - | 0.122 / 0.002 | 0.005 | 0.135 | 0.12 / 0.80 / 3.25 | 0.0079 / 0.0250 / 0.0076 | 0.802 | -0.052 (+0.079 / +0.066 / -0.133 / -0.265) | 1.014 | 0.3800 | 170 |
+| the new default (`rc0kh1`) | - | 0.195 / 0.069 | 0.026 | 0.280 | 0.14 / 0.74 / 3.34 | 0.0094 / 0.0265 / 0.0073 | 0.763 | -0.046 (+0.094 / +0.074 / -0.125 / -0.259) | 1.021 | 0.3820 | 334 |
+| sections at 2, keep | 4.0 | 0.244 / 0.133 | 0.032 | 0.313 | 0.14 / 0.75 / 3.34 | 0.0094 / 0.0269 / 0.0073 | 0.762 | -0.044 (+0.095 / +0.076 / -0.121 / -0.258) | 1.023 | 0.3821 | 346 |
+| sections at 4, keep | 6.1 | 0.277 / 0.169 | 0.038 | 0.336 | 0.14 / 0.78 / 3.34 | 0.0094 / 0.0270 / 0.0073 | 0.748 | -0.041 (+0.099 / +0.077 / -0.116 / -0.256) | 1.024 | 0.3817 | 346 |
+| sections at 4, keep, new lanes | 6.1 | 0.279 / 0.170 | 0.038 | 0.334 | 0.14 / 0.77 / 3.34 | 0.0094 / 0.0270 / 0.0073 | 0.748 | -0.041 (+0.099 / +0.077 / -0.116 / -0.263) | 1.024 | 0.3818 | 374 |
+| `--untangle` | - | 0.195 / 0.068 | 0.026 | 0.280 | 0.12 / 0.68 / 2.79 | 0.0094 / 0.0265 / 0.0073 | 0.764 | -0.062 (+0.094 / +0.073 / -0.138 / -0.396) | 1.020 | 0.3820 | 334 |
+| `--chord-cap` | - | 0.195 / 0.068 | 0.026 | 0.278 | 0.14 / 0.74 / 3.34 | 0.0009 / 0.0006 / 0.0011 | 0.763 | -0.064 (+0.078 / +0.019 / -0.125 / -0.259) | 1.016 | 0.3807 | 342 |
+| all three | 6.1 | 0.277 / 0.167 | 0.038 | 0.334 | 0.12 / 0.72 / 2.80 | 0.0009 / 0.0006 / 0.0011 | 0.749 | -0.074 (+0.084 / +0.021 / -0.129 / -0.392) | 1.018 | 0.3805 | 354 |
+
+What it says:
+
+- **Sections come back where the carry could not, for nothing.** At 4 with keep, 6.1 bars a
+  song take the notes of where their music was: section_rhythm 0.195 -> 0.274 and
+  section_copy 0.069 -> 0.165 (paired), bar_lane_repeat at the human level (0.336 against
+  0.334), copy_far 0.026 -> 0.038; the SR nearer the target (+0.0055), F1 as it was
+  (-0.0002, CI -0.0008 to +0.0003), notes +0.3%, 12 forward passes a song. The costs are
+  small: chord_strength -0.004 (CI -0.009 to +0.000), fast jacks +0.012 (Insane +0.04). By
+  grade the easy charts gain most: Easy section_copy reaches the human (0.335 against
+  0.331; section_rhythm 0.47 against 0.65), Normal to Expert stay at about half the human
+  (section_rhythm 0.32 / 0.25 / 0.22 / 0.21 against 0.64 / 0.58 / 0.49 / 0.39). Adopted
+  (DECISIONS 10-12).
+- **What keeps the rest out** (40 val songs, the default's charts, the pass at 4 with keep
+  bar by bar, `smoke_diag.py`): of the stretches' bars (48 a song), the 15% note-count check
+  leaves out 32%, keep_notes 25% (the earlier stretch has fewer notes), pieces where neither
+  the notes nor their mirror fit around the long notes 18%, the score at 4 11%; 12% are
+  taken. Humans repeat the rhythm in 72% of the bars of the pieces taken (the score agrees
+  with them), in 55% of those keep_notes leaves out, in 34-38% of the others. Those
+  keep_notes leaves out are the ones to win: next.
+- **New lanes change nothing:** the lane model picks the lanes the earlier bars had
+  (section_copy +0.001), for 28 more passes a song. Not adopted.
+- **Untangling at 1/6 beat takes the jacks out where the SR can least afford it:** 2.2 taps
+  a song, of them 19 a song in Expert and 11 in Expert+, whose SR is short already (Expert
+  -0.26 -> -0.40). In Hard only 0.46 a song: fast jacks 0.14 -> 0.12 (human 0.04), the Hard
+  excess being 1/4 beat apart. Not adopted as it is; by grade, moving the tap, next.
+- **The chord cap is right in Easy only.** 4.2 rows a song (Easy 4.0, Normal 14.3, Hard
+  5.0) cut to the cap. Easy: rows over the cap 0.0094 -> 0.0009 (human 0.0049), SR bias
+  +0.094 -> +0.078 (nearer), notes -0.6%, F1 -0.001. Normal: SR +0.074 -> +0.019 and
+  density 1.025 -> 1.006, both nearer the human, but F1 -0.005 for rows humans pass the cap
+  in as often (0.028), and chord_strength -0.006; Hard: SR -0.003 -> -0.027 (further), F1
+  -0.001. chord_strength over all hardly moves (-0.0005; predicted -0.005 to -0.02).
+  Adopted for Easy (`--chord-cap 2`, DECISIONS 10-12).
+- **The three add up** (SR -0.027 against the sum -0.028; each column as alone).
+
+### 2026-10-12 · Sections either way; jack taps moved, by grade (predictions)
+
+From the night: the section copies are adopted at 4 with keep (DECISIONS 10-12), and what
+keeps most of the remaining stretches out is that the later one has more notes (25% of the
+stretches' bars; humans repeat the rhythm in 55% of those). The jack pass took notes out
+of Expert, where they cost SR, and too few out of Hard, where they are 1/4 beat apart.
+
+1. `copy_sections(back=True)` (`--section-back`, tag `b` after `k`; playtest `csBkb`):
+   where the later stretch has more notes than the bars lag before, those earlier bars take
+   its notes instead, with the same checks (the 15% check, the fit, the score of the
+   earlier bars, masked, with the later rhythm against their own; implies keep_notes), so
+   the two agree with no notes lost. Bars a piece taken wrote or read are not written
+   backwards again, so a copy made earlier in the song stays a copy. STATS `section_back`
+   (column with `--section-back`).
+2. `untangle_jacks(move=True)` (`--untangle-move`, tag `m`) and the window by grade
+   (`--untangle-grades`, tag `g`; `untangle_window`: the guidelines' 1/4 beat up to Hard,
+   1/6 in Insane, none from Expert up): the chord's tap goes to another lane of its row
+   where it makes no jack within the window (the cell EMPTY, past the release gap; of those
+   the lane whose nearest note is furthest away), and out only if there is none; the chord
+   and the note count stay. STATS `untangle_moved` (column with `--untangle-move`).
+3. `--chord-cap` takes an SR: the cap in charts under it (`guideline_cap(below=)`, tag
+   `_cc<sr>`; playtest `ccX`, `cc` alone 4). generate.py and sample.py cap under 2 (Easy) by
+   default and copy sections at 4 with keep (`--no-sections`, `--chord-cap 0` turn them off).
+
+Smoke check (40 val songs: the 10 of 10-11 with many stretches and 30 drawn by grade; the
+pass alone on the new default's saved charts of 10-11, full-v4 on CPU; human section_rhythm
+0.574, section_copy 0.281 on these):
+
+- Sections either way at 4: 11.5 bars a song (5.6 of them backwards) against 5.9 one way;
+  section_rhythm 0.185 -> 0.408 (one way 0.317), section_copy 0.073 -> 0.356 (0.234; the
+  human 0.281: humans keep the lanes in half the bars whose rhythm comes back, the copies
+  in nearly all); notes +0.8% (+0.45%), SR +0.006 (+0.004), chord_strength -0.018
+  (-0.012), fast jacks +0.016 (+0.000); 21 forward passes a song (11). At 8: 15.5 bars (7.9
+  backwards), section_rhythm 0.471, section_copy 0.427, notes +1.05%, SR +0.0135,
+  chord_strength -0.025, fast jacks +0.023; one way at 8: 7.6 bars, 0.348 / 0.265.
+- Jack taps: at 1/6 beat everywhere 0.85 a song, SR -0.008 (Expert -0.019, Expert+ -0.057);
+  moving, 47% of them move, SR -0.006 (Expert -0.011); by grade and moving 0.47 a song (64%
+  moved; Hard 1.0, Insane 1.0, from Expert up none), fast jacks Hard 0.07 -> 0.02, Insane
+  0.34 -> 0.32, SR -0.004 (Hard -0.010, Insane -0.003); by grade without moving SR -0.006
+  (Hard -0.016).
+- No grammar violations.
+
+`run_back.sh` (patch 0047), on `$T` with the new default passes (taps 0, long-note bars at 1,
+sections at 4 with keep, copies from 8 back, tidy 0.5, holes 0.5, rests 1, the chord cap in
+Easy), each against the new default and by grade:
+
+0. The new default.
+1. Sections either way at 4 and at 8.
+2. Jack taps moved, by grade.
+3. Both: sections either way at 4, jack taps moved by grade.
+
+Predictions (the new default: from sections at 4 with keep and the Easy rows of the chord
+cap, section_rhythm 0.274, section_copy 0.165, copy_far 0.038, fast_jacks 0.55 (Hard 0.145,
+Insane 0.78, Expert 3.34), chord_strength 0.748, SR bias -0.044, density 1.023, F1 0.3815;
+paired means):
+
+0. The new default against sections at 4 with keep of 10-12: only the Easy charts change;
+   rows over the cap in Easy 0.0094 -> under 0.002, Easy SR -0.01 to -0.02, Easy F1 -0.0005
+   to -0.002.
+1. Either way at 4: 10-13 bars a song (4.5-6.5 backwards); section_rhythm 0.31-0.35,
+   section_copy 0.21-0.27; copy_far +0.005 to +0.015; notes +0.2% to +0.6%; SR +0.001 to
+   +0.008; F1 -0.001 to +0.001; chord_strength 0 to -0.01; fast_jacks +0.005 to +0.03;
+   8-14 more passes a song. At 8: 14-18 bars (6-9 backwards); section_rhythm 0.33-0.39,
+   section_copy 0.24-0.31; notes +0.4% to +1.0%; SR +0.004 to +0.015; F1 -0.002 to +0.001;
+   chord_strength -0.005 to -0.02; fast_jacks +0.01 to +0.04.
+2. Jack taps moved, by grade: 0.5-1.0 a song (Hard 0.8-1.5, Insane 1.2-1.8, from Expert up
+   none), 55-75% of them moved; fast_jacks -0.03 to -0.06 over all, Hard to 0.03-0.08
+   (human 0.04), Insane 0.70-0.76, Expert as it is; SR -0.001 to -0.005 (Hard -0.003 to
+   -0.012, Insane -0.003 to -0.010, Expert 0); notes within -0.02%; F1 and chords within
+   ±0.0005.
+3. Both: the section columns as either way at 4 (±0.01), fast_jacks in Hard and Insane as
+   with the jack taps moved (±0.02), SR the sum of the two ±0.005.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

@@ -21,12 +21,14 @@
                     comes back); sampled ones almost none.
     copy_sections   afterwards (sections): a stretch of bars whose music comes back from
                     8+ bars before takes the notes of that earlier stretch as a whole
-                    when the model likes their rhythm as well, bar by bar.
+                    when the model likes their rhythm as well, bar by bar (or, back, the
+                    earlier stretch takes the later one's when that has more notes).
     untangle_jacks  near the end (untangle): a chord's tap that takes its lane again within
-                    1/6 beat of a note there goes.
-    cap_chords      last (chord_cap): in Easy, Normal and Hard, rows holding more notes
-                    than the ranking criteria's guidelines allow keep the taps the model
-                    likes most.
+                    1/6 beat of a note there goes (or moves to a lane where it makes no
+                    jack; the window by grade).
+    cap_chords      last (chord_cap): below an SR (Easy by default in generate.py), rows
+                    holding more notes than the ranking criteria's guidelines allow keep
+                    the taps the model likes most.
     clean_holds     afterwards: a release followed too soon by an onset in its lane
                     moves back, and holds shorter than min_hold cells become taps.
                     Cells are sampled one by one, so a hold can be closed by the grammar
@@ -96,12 +98,14 @@ def _neighbour(v: int) -> int | None:
 
 STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "filled_holes": 0, "carried_bars": 0, "carried_ln_bars": 0,
-         "tidied_holds": 0, "section_bars": 0, "capped_rows": 0, "untangled": 0}
+         "tidied_holds": 0, "section_bars": 0, "section_back": 0, "capped_rows": 0,
+         "untangled": 0, "untangle_moved": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
-                                         # into taps, bars of sections copied, rows whose
-                                         # chords were capped, chord taps taken out of jacks
+                                         # into taps, bars of sections copied (of them,
+                                         # backwards), rows whose chords were capped, chord
+                                         # taps out of jacks (of them, moved to a free lane)
                                          # (evaluate.py reports them per song)
 
 
@@ -1204,12 +1208,13 @@ SECTION_MAX = 16                # copy_sections: stretches are decided in pieces
 
 def copy_sections(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
                   n_cells: int, s_audio: np.ndarray | None, *, bias: float,
-                  keep_notes: bool = False, new_lanes: bool = False, lane_model=None,
-                  temperature: float = 0.5, rng: np.random.Generator | None = None,
-                  sim: float = SECTION_SIM, min_bars: int = SECTION_BARS,
-                  min_lag: int = SECTION_LAG, release_gap: int = 0) -> int:
+                  keep_notes: bool = False, back: bool = False, new_lanes: bool = False,
+                  lane_model=None, temperature: float = 0.5,
+                  rng: np.random.Generator | None = None, sim: float = SECTION_SIM,
+                  min_bars: int = SECTION_BARS, min_lag: int = SECTION_LAG,
+                  release_gap: int = 0) -> int:
     """A stretch where the music comes back takes the notes it had where the music was
-    before, as a whole; returns how many bars did.
+    before, as a whole; returns how many bars did (either way, with back).
 
     song      [n_rows, K] tokens of the whole song (no MASK), changed in place
     s_audio   [n_bars, n_bars] audio similarity of the song's bars (structure.ssm_audio)
@@ -1229,10 +1234,16 @@ def copy_sections(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_
     if the sum over its bars + bias * its bars reaches 0 (bias in nats per bar, as
     copy_bias). One forward pass per bar of a piece that fits.
     keep_notes  not from a piece with fewer notes in all than the piece has
+    back        where the piece has more notes than the bars lag before, those bars take
+                its notes instead (the same checks, the earlier bars scored), so the two
+                agree with no notes lost (implies keep_notes): of the bars of pieces that
+                keep_notes left out, humans repeat the rhythm in 55%, as often as in all
+                the stretches' bars (40 val songs, 2026-10-12). Bars a piece taken wrote or
+                read are not written backwards again, so an earlier copy stays a copy
     new_lanes   the bars of taps of a piece taken get their lanes chosen again afterwards, the
                 rhythm and chord sizes kept, as the carry's (_relane_bar, lane_model at the
                 temperature): humans bring back a section's rhythm in half its bars, its
-                lanes too in a fifth
+                lanes too in a fifth. Not adopted: the lanes came out as they were (2026-10-12)
     """
     if s_audio is None:
         return 0
@@ -1241,7 +1252,8 @@ def copy_sections(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_
     n_bars = min(n_cells // BAR, len(s_audio))
     rows = np.arange(BAR)
     versions = (tuple(range(K)), tuple(range(K - 1, -1, -1)))     # as they are, mirrored
-    copied = 0
+    locked = np.zeros(n_bars, dtype=bool)       # bars a piece taken wrote or read
+    copied = backwards = 0
     for t0, length, lag in section_runs(s_audio[:n_bars, :n_bars], sim=sim,
                                         min_bars=min_bars, min_lag=min_lag):
         size = min(SECTION_MAX, lag)
@@ -1252,17 +1264,22 @@ def copy_sections(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_
                 continue
             own = np.isin(song[r0:r0 + m * BAR], (TAP, HOLD_START)).sum(axis=1)
             new = np.isin(song[a0:a0 + m * BAR], (TAP, HOLD_START)).sum(axis=1)
+            dst, src = r0, a0
+            if back and own.sum() > new.sum():
+                if locked[p0 - lag:p0 - lag + m].any():
+                    continue
+                dst, src, own, new = a0, r0, new, own
             if abs(int(new.sum()) - int(own.sum())) > max(m, COPY_DENSITY * own.sum()) \
                     or (keep_notes and new.sum() < own.sum()):
                 continue
-            notes = _bar_notes(song, a0, m * BAR)
-            if not _place_notes(song.copy(), r0, m * BAR, notes, versions,
+            notes = _bar_notes(song, src, m * BAR)
+            if not _place_notes(song.copy(), dst, m * BAR, notes, versions,
                                 np.zeros((m * BAR, K, N_CLASSES)), temperature=0.0, rng=None,
                                 release_gap=release_gap):
                 continue                                # neither way fits: no passes spent
             gain, cell_logp = 0.0, []
             for j in range(m):
-                b0, js = r0 + j * BAR, slice(j * BAR, (j + 1) * BAR)
+                b0, js = dst + j * BAR, slice(j * BAR, (j + 1) * BAR)
                 context = song.copy()
                 _clear_notes(context, b0, _bar_notes(song, b0))
                 p = bar_probs(model, context, frames, s, beat_len, b0)
@@ -1270,14 +1287,17 @@ def copy_sections(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_
                 gain += float(logp[rows, new[js]].sum() - logp[rows, own[js]].sum())
                 cell_logp.append(np.log(p + 1e-12))
             if gain + bias * m >= 0 and _place_notes(
-                    song, r0, m * BAR, notes, versions, np.concatenate(cell_logp),
+                    song, dst, m * BAR, notes, versions, np.concatenate(cell_logp),
                     temperature=0.0, rng=None, release_gap=release_gap):
                 copied += m
+                backwards += m if dst == a0 else 0
+                locked[p0:p0 + m] = locked[p0 - lag:p0 - lag + m] = True
                 for j in range(m) if new_lanes else ():
-                    if _tap_bar(song[r0 + j * BAR:r0 + (j + 1) * BAR]):
-                        _relane_bar(lane_model, song, frames, s, beat_len, r0 + j * BAR,
+                    if _tap_bar(song[dst + j * BAR:dst + (j + 1) * BAR]):
+                        _relane_bar(lane_model, song, frames, s, beat_len, dst + j * BAR,
                                     temperature=temperature, rng=rng, release_gap=release_gap)
     STATS["section_bars"] += copied
+    STATS["section_back"] += backwards
     return copied
 
 
@@ -1356,11 +1376,19 @@ def cap_chords(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len
     return changed
 
 
+CAP_BELOW = 2.0                 # guideline_cap: by default only charts under this SR (Easy):
+                                # there the sampled charts pass the cap twice as often as
+                                # humans, and capping cost F1 0.001 with the SR nearer the
+                                # target; in Normal F1 0.005 for rows humans pass the cap as
+                                # often, in Hard the SR further under it (240 val songs,
+                                # 2026-10-12)
+
+
 def guideline_cap(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
-                  n_cells: int) -> int:
+                  n_cells: int, below: float = CAP_BELOW) -> int:
     """cap_chords with the cap of the target SR's grade (playability.chord_cap; none from
-    Insane up); returns how many rows changed."""
-    cap = chord_cap(s)
+    Insane up) where the SR s is under below; returns how many rows changed."""
+    cap = chord_cap(s) if s < below else None
     if cap is None:
         return 0
     return cap_chords(model, song, frames, s, beat_len, n_cells, cap=cap,
@@ -1376,18 +1404,53 @@ def guideline_cap(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_
 # fast jacks are 1/6 beat apart, 17% of the sampled charts').
 UNTANGLE_BEATS = 1 / 6          # untangle_jacks: a lane taken again within this many beats
                                 # at 180 BPM (56 ms) ...
+UNTANGLE_GRADES = {"Easy": 0.25, "Normal": 0.25, "Hard": 0.25, "Insane": 1 / 6}
+                                # ... or, by the target SR's grade, the guidelines' 1/4 beat
+                                # up to Hard, 1/6 in Insane and none from Expert up: there
+                                # the sampled charts' fast jacks were 3.6 times the human
+                                # rate in Hard, mostly 1/4 beat apart, which 1/6 beat left;
+                                # from Expert up taking the taps out cost 0.14 SR where the SR
+                                # is short already, and chord jacks are a style of their own
+                                # (240 val songs, 2026-10-12)
+
+
+def untangle_window(s: float) -> float | None:
+    """untangle_jacks' max_beats for the target SR s by UNTANGLE_GRADES (None: none)."""
+    return UNTANGLE_GRADES.get(grade_of(s))
+
+
+def _jack_free_lane(song: np.ndarray, onset: np.ndarray, times: np.ndarray, row: int,
+                    lane: int, limit: float, release_gap: int) -> int | None:
+    """Another lane where a tap at row makes no jack within limit ms (no note start there
+    that close before or after, the cell EMPTY and not too soon after a release): of those,
+    the one whose nearest note is furthest away, the lowest lane on a tie (None: none)."""
+    best, best_gap = None, -1.0
+    for j in range(song.shape[1]):
+        if j == lane or song[row, j] != EMPTY or not _fits(song, row, j, 0, release_gap):
+            continue
+        rows = np.flatnonzero(onset[:, j])
+        before, after = rows[rows < row], rows[rows > row]
+        gap = min(times[row] - times[before[-1]] if len(before) else np.inf,
+                  times[after[0]] - times[row] if len(after) else np.inf)
+        if gap > limit and gap > best_gap:
+            best, best_gap = j, gap
+    return best
 
 
 def untangle_jacks(song: np.ndarray, n_cells: int, times: np.ndarray, *,
-                   max_beats: float = UNTANGLE_BEATS) -> int:
+                   max_beats: float = UNTANGLE_BEATS, move: bool = False,
+                   release_gap: int = 0) -> int:
     """A note that takes its lane again within max_beats (at 180 BPM: BEAT_180) of the note
     before in that lane, where one of the two rows starts 2+ notes: the tap of the chord goes
     (of the later row if both are chords; a long note start stays); returns how many went.
-    times [n_cells] ms of each row. Taking taps out keeps the grammar."""
+    move: it goes to another lane of its row where it makes no such jack (_jack_free_lane)
+    if there is one, so the chord and the notes stay, and only otherwise out.
+    times [n_cells] ms of each row. Taking taps out or into an EMPTY cell that fits keeps
+    the grammar."""
     limit = max_beats * BEAT_180 + 1e-6
     onset = np.isin(song[:n_cells], (TAP, HOLD_START))
     size = onset.sum(axis=1)
-    removed = 0
+    removed = moved = 0
     for k in range(song.shape[1]):
         rows = np.flatnonzero(onset[:, k])
         if len(rows) < 2:
@@ -1398,17 +1461,25 @@ def untangle_jacks(song: np.ndarray, n_cells: int, times: np.ndarray, *,
                 prev = cur
                 continue
             if size[cur] >= 2 and song[cur, k] == TAP:
-                song[cur, k] = EMPTY
-                size[cur] -= 1
+                row = cur
+            elif size[prev] >= 2 and song[prev, k] == TAP:
+                row = prev
+            else:
+                prev = cur
+                continue
+            to = _jack_free_lane(song, onset, times, row, k, limit, release_gap) if move else None
+            song[row, k], onset[row, k] = EMPTY, False
+            if to is None:
+                size[row] -= 1
                 removed += 1
-                continue                                    # prev stays the lane's last note
-            if size[prev] >= 2 and song[prev, k] == TAP:
-                song[prev, k] = EMPTY
-                size[prev] -= 1
-                removed += 1
-            prev = cur
-    STATS["untangled"] += removed
-    return removed
+            else:
+                song[row, to], onset[row, to] = TAP, True
+                moved += 1
+            if row != cur:
+                prev = cur                                  # else prev stays the lane's last
+    STATS["untangled"] += removed + moved
+    STATS["untangle_moved"] += moved
+    return removed + moved
 
 
 LANE_PASSES = ("sampled", "forward")
@@ -1456,18 +1527,20 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               lane_temperature: float = 0.5, copy_min_lag: int = 1, carry_keep: bool = False,
               carry_holds: float | None = None, carry_rows: bool = False,
               sections: float | None = None, section_keep: bool = False,
-              section_lanes: bool = False, chord_cap: bool = False,
-              untangle: bool = False) -> np.ndarray:
+              section_back: bool = False, section_lanes: bool = False,
+              chord_cap: float | None = None, untangle: bool = False,
+              untangle_move: bool = False, untangle_grades: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share), carry_rhythm (carry: the bias; its
     lanes with lane_guidance at lane_temperature; carry_keep, carry_rows, carry_holds: its
     keep_notes, keep_rows and bias for bars with long notes), copy_sections (sections: the
-    bias; section_keep, section_lanes: its keep_notes and new_lanes), copy_bars (copy_bias, sources at least copy_min_lag
-    bars back), clean_holds,
+    bias; section_keep, section_back, section_lanes: its keep_notes, back and new_lanes),
+    copy_bars (copy_bias, sources at least copy_min_lag bars back), clean_holds,
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), fill_holes
-    (holes: the threshold), rest_bars (rest: the threshold), untangle_jacks (untangle),
-    guideline_cap (chord_cap, by the SR s; with lane_guidance); a new array."""
+    (holes: the threshold), rest_bars (rest: the threshold), untangle_jacks (untangle;
+    untangle_move: its move; untangle_grades: the window by the SR s, untangle_window),
+    guideline_cap (chord_cap: below that SR; with lane_guidance); a new array."""
     base = model
     if genre is not None or mapper is not None or stats is not None:
         model = Styled(base, genre, mapper, stats=stats)
@@ -1492,8 +1565,9 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                      keep_rows=carry_rows)
     if sections is not None:
         copy_sections(model, song, frames, s, beat_len, n_cells, s_audio, bias=sections,
-                      keep_notes=section_keep, new_lanes=section_lanes, lane_model=lane_model,
-                      temperature=lane_temperature, rng=rng, release_gap=release_gap)
+                      keep_notes=section_keep, back=section_back, new_lanes=section_lanes,
+                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
+                      release_gap=release_gap)
     if copy_bias is not None and s_audio is not None \
             and copy_bars(model, song, frames, s, beat_len, n_cells, s_audio,
                           copy_bias=copy_bias, min_lag=copy_min_lag) \
@@ -1506,11 +1580,21 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                    release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
-    if untangle:
-        untangle_jacks(song, n_cells, _row_times(timing_points, cell_offset, n_cells))
-    if chord_cap:
-        guideline_cap(lane_model, song, frames, s, beat_len, n_cells)
+    _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
+              untangle_grades, release_gap)
+    if chord_cap is not None:
+        guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
+
+
+def _untangle(song: np.ndarray, n_cells: int, s: float, timing_points, cell_offset: int,
+              untangle: bool, move: bool, grades: bool, release_gap: int) -> int:
+    """untangle_jacks as post_song and generate_song ask for it (untangle off: none)."""
+    window = untangle_window(s) if grades else UNTANGLE_BEATS
+    if not untangle or window is None:
+        return 0
+    return untangle_jacks(song, n_cells, _row_times(timing_points, cell_offset, n_cells),
+                          max_beats=window, move=move, release_gap=release_gap)
 
 
 def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: int,
@@ -1532,8 +1616,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   ln_tidy: float | None = None, copy_min_lag: int = 1, carry_keep: bool = False,
                   carry_holds: float | None = None, carry_rows: bool = False,
                   sections: float | None = None, section_keep: bool = False,
-                  section_lanes: bool = False, chord_cap: bool = False,
-                  untangle: bool = False) -> np.ndarray:
+                  section_back: bool = False, section_lanes: bool = False,
+                  chord_cap: float | None = None, untangle: bool = False,
+                  untangle_move: bool = False, untangle_grades: bool = False) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -1584,7 +1669,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     sections      copy_sections with this bias after the carry (None: none): a stretch whose
                   music comes back from 8+ bars before takes the notes it had there, as a
                   whole, when the model likes their rhythm as well; section_keep: not from a
-                  stretch with fewer notes; section_lanes: its bars of taps get new lanes
+                  stretch with fewer notes; section_back: either way, the stretch with
+                  fewer notes taking the other's; section_lanes: its bars of taps get new
+                  lanes
     ln_tidy       tidy_holds after the copies (None: none): in bars of taps, long notes
                   shorter than this many beats become taps
     holes         fill_holes with this threshold before rest_bars (None: none)
@@ -1592,9 +1679,13 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   note starts, asked with the bar MASK and the chart around it, fall
                   below it is left empty
     untangle      untangle_jacks after rest_bars: a chord's tap that takes its lane again
-                  within 1/6 beat (at 180 BPM) of a note there goes
-    chord_cap     guideline_cap last: in Easy, Normal and Hard (by s) rows over the ranking
-                  criteria's chord cap keep the taps the lane passes' model likes most
+                  within 1/6 beat (at 180 BPM) of a note there goes; untangle_move: to a
+                  lane where it makes no jack, if there is one; untangle_grades: within
+                  the grade's window instead (untangle_window: 1/4 beat to Hard, 1/6 in
+                  Insane, none from Expert up)
+    chord_cap     guideline_cap last, where s is under this SR (None: none; 2: Easy, 4: Easy
+                  to Hard): rows over the ranking criteria's chord cap keep the taps the
+                  lane passes' model likes most
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
@@ -1670,8 +1761,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                      keep_rows=carry_rows)
     if sections is not None:
         copy_sections(model, song, frames, s, beat_len, n_cells, s_audio, bias=sections,
-                      keep_notes=section_keep, new_lanes=section_lanes, lane_model=lane_model,
-                      temperature=lane_temperature, rng=rng, release_gap=release_gap)
+                      keep_notes=section_keep, back=section_back, new_lanes=section_lanes,
+                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
+                      release_gap=release_gap)
     copied = copy_bias is not None and s_audio is not None \
         and copy_bars(model, song, frames, s, beat_len, n_cells, s_audio, copy_bias=copy_bias,
                       min_lag=copy_min_lag)
@@ -1684,8 +1776,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                    release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
-    if untangle:
-        untangle_jacks(song, n_cells, _row_times(timing_points, cell_offset, n_cells))
-    if chord_cap:
-        guideline_cap(lane_model, song, frames, s, beat_len, n_cells)
+    _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
+              untangle_grades, release_gap)
+    if chord_cap is not None:
+        guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)

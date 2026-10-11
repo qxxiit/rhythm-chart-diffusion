@@ -1248,6 +1248,12 @@ def test_copy_sections_brings_a_stretch_back_as_a_whole() -> None:
         sparse[BAR + row, k] = TAP
     assert run(sparse.copy(), 5.0, keep_notes=True) == 0
     assert run(sparse.copy(), 5.0) == 4
+    before = STATS["section_back"]                     # back: bars 0-3 take bars 8-11's notes
+    out = sparse.copy()
+    assert run(out, 5.0, back=True) == 4 and STATS["section_back"] == before + 4
+    assert np.array_equal(out[:4 * BAR], sparse[8 * BAR:12 * BAR])
+    assert np.array_equal(out[4 * BAR:], sparse[4 * BAR:])
+    assert run(sparse.copy(), -5.0, back=True) == 0                  # the score still decides
 
     long = np.eye(20)                                   # bars 8-19 as 0-11 (lag 8): pieces
     for t in range(8, 20):                              # 8-15 from 0-7, then 16-19 from
@@ -1256,6 +1262,12 @@ def test_copy_sections_brings_a_stretch_back_as_a_whole() -> None:
     assert run(out, 0.0, s=long) == 12
     assert np.array_equal(out[8 * BAR:16 * BAR], song[:8 * BAR])
     assert np.array_equal(out[16 * BAR:20 * BAR], song[:4 * BAR])
+    denser = song.copy()                                # bar 17 a note more: 16-19 would go
+    denser[17 * BAR + 1, 0] = TAP                       # back into 8-11, just copied: locked
+    out = denser.copy()
+    assert run(out, 5.0, s=long, back=True) == 8
+    assert np.array_equal(out[8 * BAR:16 * BAR], denser[:8 * BAR])
+    assert np.array_equal(out[16 * BAR:], denser[16 * BAR:])
 
 
 def test_sections_in_generate_song_keep_the_grammar() -> None:
@@ -1297,14 +1309,20 @@ def test_cap_chords_keeps_the_taps_the_model_likes() -> None:
     assert np.array_equal(out[1:BAR], song[1:BAR]) and np.array_equal(out[BAR + 1:], song[BAR + 1:])
     assert len(grammar_violations(out.reshape(-1, L, K))) == 0
     kept = song.copy()                                  # Hard caps at 3: nothing to cut
-    assert guideline_cap(Fixed(logits), kept, frames, 3.5, lambda row0: 400.0, 2 * BAR) == 0
-    assert guideline_cap(Fixed(logits), kept, frames, 4.5, lambda row0: 400.0, 2 * BAR) == 0
+    assert guideline_cap(Fixed(logits), kept, frames, 3.5, lambda row0: 400.0, 2 * BAR,
+                         below=4.0) == 0
+    assert guideline_cap(Fixed(logits), kept, frames, 4.5, lambda row0: 400.0, 2 * BAR,
+                         below=9.0) == 0
     assert np.array_equal(kept, song)
     normal = song.copy()                                # Normal: the double on the other hand
     normal[BAR, 1] = EMPTY                              # from the hold is fine
     normal[BAR, 3] = TAP
     assert guideline_cap(Fixed(logits), normal.copy(), frames, 2.5, lambda row0: 400.0,
-                         2 * BAR) == 1                  # only the triple in bar 0
+                         2 * BAR, below=4.0) == 1       # only the triple in bar 0
+    assert guideline_cap(Fixed(logits), normal.copy(), frames, 2.5, lambda row0: 400.0,
+                         2 * BAR) == 0                  # by default Easy only (under 2.0)
+    easy = song.copy()
+    assert guideline_cap(Fixed(logits), easy, frames, 1.5, lambda row0: 400.0, 2 * BAR) == 2
 
 
 def test_chord_cap_in_generate_song() -> None:
@@ -1314,9 +1332,13 @@ def test_chord_cap_in_generate_song() -> None:
     model = Denoiser(TINY)
     mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
     out = generate_song(model, mel, 1.5, chart.timing_points, metas[0].cell_offset, 700,
-                        steps=6, seed=2, lanes="forward", chord_cap=True)
+                        steps=6, seed=2, lanes="forward", chord_cap=2.0)
     assert len(grammar_violations(out)) == 0
     assert not over_cap(out.reshape(-1, K)[:700], 2).any()
+    args = (model, mel, 2.5, chart.timing_points, metas[0].cell_offset, 700)
+    plain = generate_song(*args, steps=6, seed=2, lanes="forward")   # Normal: above 2.0
+    assert np.array_equal(generate_song(*args, steps=6, seed=2, lanes="forward",
+                                        chord_cap=2.0), plain)
 
 
 def test_untangle_jacks_takes_chord_taps_out_of_fast_jacks() -> None:
@@ -1343,3 +1365,29 @@ def test_untangle_jacks_takes_chord_taps_out_of_fast_jacks() -> None:
     slow = song.copy()                                  # the limit is a time (56 ms): at 60
     assert untangle_jacks(slow, 80, times * 3) == 0     # BPM 1/6 beat is 167 ms, slow enough
     assert np.array_equal(slow, song)
+    wide = song.copy()                                  # within 1/4 beat the chord at 30 too
+    assert untangle_jacks(wide, 80, times, max_beats=0.25) == 3
+    assert list(wide[30]) == [EMPTY, EMPTY, TAP, EMPTY]
+
+    before = STATS["untangle_moved"]                    # move: to the free lane whose nearest
+    moved = song.copy()                                 # note is furthest: 2 -> lane 3 (500
+    assert untangle_jacks(moved, 80, times, move=True) == 2   # ms), 20 -> lane 0 (556 ms)
+    assert STATS["untangle_moved"] == before + 2
+    assert list(moved[2]) == [EMPTY, TAP, EMPTY, TAP] and list(moved[20]) == [TAP, EMPTY, TAP, EMPTY]
+    assert np.isin(moved, (TAP, HOLD_START)).sum() == np.isin(song, (TAP, HOLD_START)).sum()
+    boxed = np.full((80, K), EMPTY, dtype=np.int64)     # no lane free of a jack: out
+    boxed[60, [0, 1]] = TAP
+    boxed[61, 1] = TAP
+    boxed[59, 2] = TAP                                  # lane 2 a row before, lane 3 two after
+    boxed[62, 3] = TAP
+    out = boxed.copy()
+    assert untangle_jacks(out, 80, times, move=True) == 1 and STATS["untangle_moved"] == before + 2
+    assert list(out[60]) == [TAP, EMPTY, EMPTY, EMPTY]
+    assert len(grammar_violations(moved)) == 0
+
+
+def test_untangle_window_by_grade() -> None:
+    from src.models.sampler import untangle_window
+    assert untangle_window(1.5) == untangle_window(3.9) == 0.25
+    assert untangle_window(4.5) == pytest.approx(1 / 6)
+    assert untangle_window(5.5) is None and untangle_window(7.0) is None
