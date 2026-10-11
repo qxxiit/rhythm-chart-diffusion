@@ -1832,7 +1832,7 @@ What it says:
 - **The taper base is sound:** the songs under SR 2.7 came out note for note as in `$C`, and
   the taper moved SR as on 10-08 (+0.075 over all songs). `$T` is the base for what follows.
 
-### 2026-10-11 night · Long-note bars in the rhythm carry (predictions)
+### 2026-10-11 · Long-note bars in the rhythm carry (predictions)
 
 The bars that start long notes repeat the rhythm of the bar before at a third of the human
 rate (`ln_rep1` 0.09 against 0.24), whatever the carry does. In the human charts they are
@@ -1843,15 +1843,15 @@ taps (31%, 8%).
 
 `carry_rhythm(holds=B)` (`--carry-holds B`, tag `h<B>`; playtest `rcAhB`): a bar that starts
 long notes may take the rhythm of a bar 1, 2, 4 or 8 before that starts long notes too, at a
-bias B of its own, scored as before (the bar's own long notes taken out of the context, so their tails past the bar do not
-show). The source's notes, long notes with their lengths, replace those that started in the
-bar; long notes coming in from the bar before stay, and so does everything in the next bar.
-Their lanes move as a whole: of the 24 lane permutations under which every note fits (its cells
-empty, the release gaps kept), the one the model likes (sum log p over the bar's cells), never
-the source's own lanes or their mirror (`sampler._place_pattern`). `carry_rhythm(keep_notes=
-True)` (`--carry-keep`, tag `k`) leaves out sources with fewer notes than the bar: the carried
-rhythms were sparser (10-10), and that is what costs SR in dense charts. New columns `tap_rep1`
-/ `ln_rep1`, and in `--by-grade`.
+bias B of its own, scored as before (the bar's own long notes taken out of the context, so
+their tails past the bar do not show). The source's notes, long notes with their lengths,
+replace those that started in the bar; long notes coming in from the bar before stay, and so
+does everything in the next bar. Their lanes move as a whole: of the 24 lane permutations under
+which every note fits (its cells empty, the release gaps kept), the one the model likes (sum
+log p over the bar's cells), never the source's own lanes or their mirror
+(`sampler._place_pattern`). `carry_rhythm(keep_notes=True)` (`--carry-keep`, tag `k`) leaves
+out sources with fewer notes than the bar: the carried rhythms were sparser (10-10), and that
+is what costs SR in dense charts. New columns `tap_rep1` / `ln_rep1`, and in `--by-grade`.
 
 Smoke check (6 val songs with long notes, their saved charts, the carry alone, full-v4 on CPU;
 human ln_rep1 0.25, the charts 0.05): the long-note bars at 0 took 24 sources a song and
@@ -1885,6 +1885,102 @@ lane_rep1 0.031, copies 0.011 / 0.006 / 0.005, F1 0.3800, SR bias -0.052, hold_s
    -0.02, all against 1. At -1: ln_rep1 0.18-0.25; at 0: 0.22-0.30 (over the human
    possible).
 4. At -1 with keep_notes: ln_rep1 0.12-0.18; density at least that of 1.
+
+**Results (`run_holds.sh`, afternoon of 10-11)** — against holes and rests on `$T`
+(paired means as `compare_runs` prints them), item 3 also against 1; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | carry 0: tap_rep1 0.27-0.30; ln_rep1 0.088-0.095; rhythm_rep1 0.19-0.21 | 0.290; 0.0885; 0.199 | hit ×3 |
+| 1 | copies near / mid / far 0.025-0.035 / 0.02-0.035 / 0.015-0.025; lane_rep1 0.05-0.08 | 0.031 / 0.031 / 0.023; 0.078 | hit ×4 |
+| 1 | F1 0 to -0.002; SR -0.01 to -0.02 over all | +0.0005; -0.023 | miss (a little up), miss (a little over) |
+| 1 | SR Insane -0.015 to -0.035, Expert / Expert+ -0.02 to -0.045 | -0.035; -0.057 / -0.079 | hit (edge), miss ×2 |
+| 1 | ln_scattered -0.04 to -0.05; hold_share -0.007 to -0.009 | -0.049; -0.0086 | hit, hit |
+| 2 | keep_notes: 30-50% fewer bars carried; tap_rep1 0.24-0.28 | 7.6 against 13.5 a song (-44%); 0.242 | hit, hit |
+| 2 | density at least 1's + 0.2%; SR over all -0.005 to -0.015, Insane -0.01 to -0.025 | +0.6% over 1; -0.002, +0.001 | hit; miss, miss (no cost at all) |
+| 3 | at -2: 4-10 long-note bars carried a song; ln_rep1 0.15-0.20; lane_rep1 at most 0.08 | 13.4; 0.181; 0.073 | miss (over), hit, hit |
+| 3 | copy_near +0.005 to +0.015 over 1; hold_share ±0.005 and hold_beats ±0.03 of 1 | +0.006; +0.0003, +0.003 | hit ×3 |
+| 3 | against 1: F1 -0.001 to -0.004; ln_f1 -0.003 to -0.015; SR -0.005 to -0.02 | +0.0013; -0.0011; -0.020 | miss (up), miss (smaller), hit (edge) |
+| 3 | ln_rep1 at -1 0.18-0.25; at 0 0.22-0.30 | 0.206; 0.241 | hit, hit |
+| 4 | at -1 with keep_notes: ln_rep1 0.12-0.18; density at least 1's | 0.149; 1.018 against 1.009 | hit, hit |
+
+All runs (human: tap_rep1 0.273, ln_rep1 0.235, lane_rep1 0.064, chords 0.372):
+
+| run | carried a song (long-note bars) | tap_rep1 | ln_rep1 | lane_rep1 | chords | SR bias (Insane / Expert) | density | F1 |
+|---|---|---|---|---|---|---|---|---|
+| holes and rests on `$T` | - | 0.183 | 0.087 | 0.031 | 0.366 | -0.052 (-0.133 / -0.265) | 1.014 | 0.3800 |
+| carry 0 | 13.5 | 0.290 | 0.089 | 0.078 | 0.377 | -0.075 (-0.168 / -0.323) | 1.009 | 0.3805 |
+| carry 0, keep | 7.6 | 0.242 | 0.088 | 0.067 | 0.374 | -0.054 (-0.132 / -0.278) | 1.015 | 0.3813 |
+| long notes at -2 | 27.0 (13.4) | 0.305 | 0.181 | 0.073 | 0.388 | -0.095 (-0.181 / -0.369) | 1.005 | 0.3818 |
+| at -1 | 30.2 (16.7) | 0.305 | 0.206 | 0.073 | 0.389 | -0.098 (-0.187 / -0.369) | 1.004 | 0.3818 |
+| at 0 | 34.2 (20.7) | 0.307 | 0.241 | 0.078 | 0.391 | -0.102 (-0.201 / -0.379) | 1.003 | 0.3815 |
+| keep, at -1 | 16.2 (8.6) | 0.252 | 0.149 | 0.053 | 0.381 | -0.051 (-0.124 / -0.283) | 1.018 | 0.3824 |
+
+What it says:
+
+- **keep_notes takes the carry's SR cost away.** The carry at 0 cost 0.023 SR over all, 0.035
+  in Insane and 0.057 in Expert; with keep_notes 0.002, none and 0.013, the density goes up
+  instead of down, and F1 rises (+0.0013). It carries 44% fewer bars (37-48% in every grade),
+  and tap_rep1 0.242 closes two thirds of the gap to the human instead of overshooting it.
+  By grade it lands on the human in Easy (0.364 against 0.364) and Hard (0.25 against 0.24)
+  and stays under in Insane (0.19 against 0.29) and Expert (0.12 against 0.23), as the carry
+  without keep_notes did (0.25, 0.17): the dense grades want more than bias 0 gives.
+- **The long-note bars take sources readily, and without keep_notes they cost SR.** At -2 /
+  -1 / 0, 13.4 / 16.7 / 20.7 of them a song, the bar before repeated 0.181 / 0.206 / 0.241 of
+  the time (human 0.235), F1 up (+0.0013 over the carry alone) and ln_f1 hardly moved
+  (-0.001 to -0.003); but the SR fell 0.020-0.026 more than with the carry alone (Hard -0.05,
+  Expert -0.10 against the reference), the density 0.4-0.6%, and the chords rose to
+  0.388-0.391 (in long-note songs 0.42-0.43 against the human 0.38). tap_rep1 rose 0.015
+  too, likely carried long-note bars that the tidy then made bars of taps.
+- **With keep_notes at -1 the SR stays and F1 is the best of the six runs.** 8.6 long-note bars a
+  song, ln_rep1 0.149, tap_rep1 0.252, lane_rep1 0.053 (human 0.064), SR +0.0005 over the
+  reference (Expert -0.017), density +0.4%, F1 +0.0023, steady bars +0.038, rho_in +0.007.
+  The one cost is the chords (0.381 against 0.366; human 0.372). Adopted with keep_notes as
+  the default (DECISIONS 10-11).
+- **The chords come from fewer onset rows.** Of the bars the carry changed under keep_notes
+  (copies left out), 45% of the bars of taps and 53% of the long-note bars got fewer onset
+  rows than they had, with +0.6 / +0.8 chord rows and +0.6 notes a bar: in the carried bars of
+  taps the chord rows went from 0.32 to 0.38 of the onset rows. The score sums log P(onset
+  count) row by row, and every onset row costs where the model is unsure where the notes
+  go: it likes the notes in fewer, fuller rows, as it liked fewer notes before keep_notes.
+  Next: no source with fewer onset rows either, and higher biases now that the sources are
+  fewer.
+
+### 2026-10-11 night · The carry's biases under keep_notes; sources with no fewer onset rows (predictions)
+
+From the afternoon: keep_notes takes the carry's SR cost away, so the biases can go up where
+the repeats are still short of the human: the bars of taps at 0.252 (human 0.273; Insane and
+Expert well under), the long-note bars at 0.149 (0.235). The chords are the one cost (0.381
+against 0.372), from sources with fewer onset rows. `carry_rhythm(keep_rows=True)`
+(`--carry-rows`, tag `r` after `k`; playtest `rc0krh-1`) leaves those out as well.
+
+`run_keep.sh` (patch 0045), on `$T` with the default passes (copies from 8 back, tidy 0.5,
+holes 0.5, rests 1) and keep_notes, against holes and rests on `$T` and against the default
+(`rc0kh-1`), by grade:
+
+1. Bars of taps at 1 and at 2 (long-note bars at -1).
+2. Long-note bars at 1 and at 3 (taps at 0).
+3. Both raised: taps at 2, long-note bars at 1.
+4. keep_rows: at the default, and with both raised as in 3.
+
+Predictions (the default: 16.2 bars carried a song, 8.6 of them long-note bars; tap_rep1
+0.252, ln_rep1 0.149, lane_rep1 0.053, chords 0.381, SR bias -0.051, density 1.018, F1 0.3824;
+paired means against the reference):
+
+1. Taps at 1: 8.5-10 bars of taps carried a song (7.6), tap_rep1 0.26-0.275; at 2: 9.5-12,
+   tap_rep1 0.27-0.29, by grade Easy 0.38-0.41 (human 0.364), Insane 0.22-0.25 (0.286),
+   Expert 0.18-0.22 (0.231); SR within ±0.01 of the default (Expert ±0.03), chords +0.002
+   to +0.006, F1 within ±0.001, ln_rep1 within ±0.005.
+2. Long-note bars at 1: 11-14 of them carried a song, ln_rep1 0.17-0.20; at 3: 13-18,
+   ln_rep1 0.20-0.24, chords +0.004 to +0.012, SR 0 to -0.015, ln_f1 0 to -0.004,
+   hold_share within ±0.003 of the default; tap_rep1 within ±0.015.
+3. Taps at 2 and long-note bars at 1: tap_rep1 as at 2 in 1 and ln_rep1 as at 1 in 2 (each
+   within ±0.01: they act on different bars); chords 0.385-0.395; SR within ±0.015 of the
+   default.
+4. keep_rows at the default: 9.5-12.5 bars carried a song (-25 to -40%), tap_rep1
+   0.225-0.245, ln_rep1 0.115-0.14, chords 0.368-0.376; SR within ±0.01, density within
+   ±0.3% and F1 within ±0.001 of the default. With both raised, against 3: chords -0.008 to
+   -0.015, tap_rep1 and ln_rep1 -0.01 to -0.03 each.
 
 ## Phase 3 Ablation A: Diffusion Design
 

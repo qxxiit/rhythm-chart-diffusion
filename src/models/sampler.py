@@ -1070,7 +1070,8 @@ def carry_rhythm(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
                  n_cells: int, s_audio: np.ndarray | None, *, bias: float, lane_model=None,
                  lags=CARRY_LAGS, temperature: float = 0.5,
                  rng: np.random.Generator | None = None, release_gap: int = 0,
-                 keep_notes: bool = False, holds: float | None = None) -> int:
+                 keep_notes: bool = False, holds: float | None = None,
+                 keep_rows: bool = False) -> int:
     """Let a bar take over the rhythm of an earlier bar when the model likes it as well;
     returns how many bars did.
 
@@ -1087,14 +1088,19 @@ def carry_rhythm(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
     the chart in view (_relane_bar, lane_model at the temperature), so the rhythm goes on
     and the lanes move, as in human charts. A carried bar can pass its rhythm on.
     keep_notes  sources with fewer notes than the bar are left out: the masked-bar score
-                likes sparser rhythms (2026-10-11), and in dense charts that costs SR
+                likes sparser rhythms, and in dense charts that cost SR (240 val songs,
+                2026-10-11: the carry at 0 -0.023, with keep_notes -0.002)
+    keep_rows   sources with fewer onset rows than the bar are left out too: the score sums
+                log P(onset count) row by row, so it likes the notes in fewer rows, and the
+                carried bars had more chords (with keep_notes, chord rows 0.32 -> 0.38 of the
+                onset rows, 2026-10-11)
     holds       the bias for bars that start long notes (None: they stay as they are): they
                 take part too, from sources that start long notes; the source's notes, long
                 notes as they are, replace those that started in the bar, under the lane
                 permutation the model likes (_place_pattern; scored with the bar's own long
-                notes taken out). The long-note bars took sources more readily than the bars
-                of taps (6 val songs, 2026-10-11: at 0 they repeated the bar before more
-                often than humans, at -2 as often)
+                notes taken out). The long-note bars take sources more readily than the bars
+                of taps: 240 val songs, 2026-10-11, the bar before repeated 0.18 / 0.21 / 0.24
+                of the time at -2 / -1 / 0 (human 0.235), 0.15 at -1 with keep_notes
     """
     rng = rng or np.random.default_rng()
     lane_model = lane_model or model
@@ -1120,7 +1126,8 @@ def carry_rhythm(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
             c = np.isin(src, (TAP, HOLD_START)).sum(axis=1)
             if (c > 0).sum() < COPY_MIN_ONSETS or np.array_equal(c > 0, now > 0) \
                     or abs(int(c.sum()) - int(now.sum())) > max(1, COPY_DENSITY * now.sum()) \
-                    or (keep_notes and c.sum() < now.sum()):
+                    or (keep_notes and c.sum() < now.sum()) \
+                    or (keep_rows and (c > 0).sum() < (now > 0).sum()):
                 continue
             sim = float(s_audio[b, b - lag]) if s_audio is not None and b < len(s_audio) else 0.0
             sources.append((-sim, lag, c, src.copy() if tap_bar else _bar_notes(song, a0)))
@@ -1229,13 +1236,13 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               holes: float | None = None, carry: float | None = None,
               ln_tidy: float | None = None, lane_guidance: float | None = None,
               lane_temperature: float = 0.5, copy_min_lag: int = 1, carry_keep: bool = False,
-              carry_holds: float | None = None) -> np.ndarray:
+              carry_holds: float | None = None, carry_rows: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share), carry_rhythm (carry: the bias; its
-    lanes with lane_guidance at lane_temperature; carry_keep, carry_holds: its keep_notes and
-    its bias for bars with long notes), copy_bars (copy_bias, sources at least
-    copy_min_lag bars back), clean_holds,
+    lanes with lane_guidance at lane_temperature; carry_keep, carry_rows, carry_holds: its
+    keep_notes, keep_rows and bias for bars with long notes), copy_bars (copy_bias, sources
+    at least copy_min_lag bars back), clean_holds,
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), fill_holes
     (holes: the threshold), rest_bars (rest: the threshold); a new array."""
     base = model
@@ -1258,7 +1265,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
-                     release_gap=release_gap, keep_notes=carry_keep, holds=carry_holds)
+                     release_gap=release_gap, keep_notes=carry_keep, holds=carry_holds,
+                     keep_rows=carry_rows)
     if copy_bias is not None and s_audio is not None \
             and copy_bars(model, song, frames, s, beat_len, n_cells, s_audio,
                           copy_bias=copy_bias, min_lag=copy_min_lag) \
@@ -1291,7 +1299,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   onset_taper=None, rest: float | None = None,
                   holes: float | None = None, carry: float | None = None,
                   ln_tidy: float | None = None, copy_min_lag: int = 1, carry_keep: bool = False,
-                  carry_holds: float | None = None) -> np.ndarray:
+                  carry_holds: float | None = None, carry_rows: bool = False) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -1337,7 +1345,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     carry         carry_rhythm with this bias after refine_holds (None: none): a bar takes
                   the rhythm of an earlier bar (1, 2, 4 or 8 before) the model likes as well,
                   its lanes chosen again by the lane passes' model; carry_keep: no source
-                  with fewer notes; carry_holds: bars with long notes too, at this bias
+                  with fewer notes; carry_rows: nor with fewer onset rows; carry_holds: bars
+                  with long notes too, at this bias
     ln_tidy       tidy_holds after the copies (None: none): in bars of taps, long notes
                   shorter than this many beats become taps
     holes         fill_holes with this threshold before rest_bars (None: none)
@@ -1415,7 +1424,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
-                     release_gap=release_gap, keep_notes=carry_keep, holds=carry_holds)
+                     release_gap=release_gap, keep_notes=carry_keep, holds=carry_holds,
+                     keep_rows=carry_rows)
     copied = copy_bias is not None and s_audio is not None \
         and copy_bars(model, song, frames, s, beat_len, n_cells, s_audio, copy_bias=copy_bias,
                       min_lag=copy_min_lag)

@@ -84,8 +84,9 @@ sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry
 --copy-bias, --ln-tidy, --fill-holes, --rest, in that order): minutes instead of hours.
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
-are those of the passes run here. Writes to DIR_hr_rc<bias>_cp<bias>[l<lag>]_lt<beats>_fh<p>_rb<n>
-(the parts asked for), then the stats tag and, with --carry-rhythm, _lg<weight>.
+are those of the passes run here. Writes to
+DIR_hr_rc<bias>[k][r][h<bias>]_cp<bias>[l<lag>]_lt<beats>_fh<p>_rb<n> (the parts asked for),
+then the stats tag and, with --carry-rhythm, _lg<weight>.
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
 --style-guidance W adds classifier-free guidance towards that style and / or the chart
@@ -300,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
                          "also on --from-charts")
     ap.add_argument("--carry-keep", action="store_true",
                     help="--carry-rhythm: no source with fewer notes than the bar (tag k)")
+    ap.add_argument("--carry-rows", action="store_true",
+                    help="--carry-rhythm: no source with fewer onset rows than the bar (tag r)")
     ap.add_argument("--carry-holds", type=float, default=None,
                     help="--carry-rhythm: bars that start long notes too, at this bias, their "
                          "lanes permuted as a whole (tag h<bias>)")
@@ -423,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.refine_holds or a.hold_share is not None:
         tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
     carry_tag = "" if a.carry_rhythm is None else f"_rc{a.carry_rhythm:g}" + (
-        "k" if a.carry_keep else "") + (
+        "k" if a.carry_keep else "") + ("r" if a.carry_rows else "") + (
         f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
     tag += carry_tag
     if a.copy_bias is not None:
@@ -523,6 +526,7 @@ def main(argv: list[str] | None = None) -> int:
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
                                    carry_keep=a.carry_keep, carry_holds=a.carry_holds,
+                                   carry_rows=a.carry_rows,
                                    lane_guidance=a.lane_guidance, lane_temperature=a.lane_temp,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
@@ -541,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
                                    carry_keep=a.carry_keep, carry_holds=a.carry_holds,
+                                   carry_rows=a.carry_rows,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -604,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
                "carry_rhythm": a.carry_rhythm, "carry_keep": a.carry_keep,
-               "carry_holds": a.carry_holds, "ln_tidy": a.ln_tidy,
+               "carry_rows": a.carry_rows, "carry_holds": a.carry_holds, "ln_tidy": a.ln_tidy,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

@@ -1127,7 +1127,7 @@ def test_place_pattern_moves_long_notes_as_a_whole() -> None:
 def test_carry_rhythm_in_bars_with_long_notes() -> None:
     """With holds, a bar that starts long notes takes the rhythm of an earlier one that does
     too, the source's long notes with it; without, it is left alone; keep_notes leaves out
-    sources with fewer notes than the bar."""
+    sources with fewer notes than the bar, keep_rows those with fewer onset rows."""
     from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
     from src.models.sampler import STATS, _bar_notes, carry_rhythm
 
@@ -1166,3 +1166,10 @@ def test_carry_rhythm_in_bars_with_long_notes() -> None:
     kept = dense.copy()
     assert run(kept, holds=-0.5, keep_notes=True) == 0 and np.array_equal(kept, dense)
     assert run(dense.copy(), holds=-0.5) == 1
+    chord = song.copy()                                 # as many notes, but bar 0 has a chord:
+    chord[12, 3] = TAP                                  # fewer onset rows than bar 2
+    chord[2 * BAR + 45, 3] = TAP
+    rows_kept = chord.copy()
+    assert run(rows_kept, holds=-0.5, keep_notes=True, keep_rows=True) == 0
+    assert np.array_equal(rows_kept, chord)
+    assert run(chord.copy(), holds=-0.5, keep_notes=True) == 1

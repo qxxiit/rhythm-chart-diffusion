@@ -80,19 +80,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
-    ap.add_argument("--copy-min-lag", type=int, default=8,   # 2026-10-12
+    ap.add_argument("--copy-min-lag", type=int, default=8,   # 2026-10-11
                     help="copies only from bars at least this many bars back (1: any)")
-    ap.add_argument("--carry-rhythm", type=float, default=0.0,   # 2026-10-12
+    ap.add_argument("--carry-rhythm", type=float, default=0.0,   # 2026-10-11
                     help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
                          "before when the model, with the bar masked, scores it within this many "
                          "nats of its own; its lanes chosen again (sampler.carry_rhythm)")
     ap.add_argument("--no-carry", action="store_true", help="no rhythms carried over")
-    ap.add_argument("--carry-keep", action="store_true",
+    ap.add_argument("--carry-keep", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-11
                     help="--carry-rhythm: no source with fewer notes than the bar")
-    ap.add_argument("--carry-holds", type=float, default=None,
+    ap.add_argument("--carry-rows", action=argparse.BooleanOptionalAction, default=False,
+                    help="--carry-rhythm: nor with fewer onset rows (tag r)")
+    ap.add_argument("--carry-holds", type=float, default=-1.0,   # 2026-10-11
                     help="--carry-rhythm: bars that start long notes too, at this bias, their "
                          "lanes permuted as a whole")
-    ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-12
+    ap.add_argument("--no-carry-holds", action="store_true",
+                    help="bars with long notes keep their rhythm")
+    ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-11
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds); 0 = off")
     ap.add_argument("--refine-holds", action="store_true",
@@ -162,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         a.copy_bias = None
     if a.no_carry:
         a.carry_rhythm = None
+    if a.no_carry_holds:
+        a.carry_holds = None
 
     row = next((r for r in read_manifest(a.manifest) if r["key"] == a.key), None)
     if row is None:
@@ -218,7 +225,8 @@ def main(argv: list[str] | None = None) -> int:
                            rest=a.rest or None,
                            onset_taper=taper, holes=a.holes or None,
                            carry=a.carry_rhythm, carry_keep=a.carry_keep, carry_holds=a.carry_holds,
-                           ln_tidy=a.ln_tidy or None, copy_min_lag=a.copy_min_lag,
+                           carry_rows=a.carry_rows, ln_tidy=a.ln_tidy or None,
+                           copy_min_lag=a.copy_min_lag,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
     chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
@@ -247,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
+            "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")

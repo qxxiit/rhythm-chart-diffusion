@@ -33,18 +33,21 @@ start where nothing in the music starts (--onset-bias 1; 0 turns it off), which 
 notes off the human rhythm by a fifth (EXPERIMENTS 2026-10-07). From SR 2.7 up the gate
 weakens, to 0.35 of it from SR 5 (--onset-taper 2.7,5,0.35; off keeps it full), since
 hard charts start many notes on weak onsets: that brought the SR of the hard grades back
-near the target (EXPERIMENTS 2026-10-08). After the lane passes a bar of taps takes the
-rhythm of the bar 1, 2, 4 or 8 before where the model, asked about the whole bar, likes
-it as well as its own, its lanes chosen again (--carry-rhythm 0; --no-carry turns it
-off): bars of taps then repeat a rhythm as often as in human charts (EXPERIMENTS
-2026-10-10, 10-11). Whole bars are copied only from 8 or more bars back where the audio
-repeats (--copy-bias 0 --copy-min-lag 8; --no-copy turns it off), as humans copy a
-section that comes back, and long notes under half a beat among taps become taps
-(--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one note gets it where the
-model would start one with probability 0.5 or more (--holes 0.5; 0 turns it off). Last,
-bars where the model expects under one note start, asked about the whole bar with the
-chart around it, are left empty (--rest 1; 0 turns it off), which brought the bars
-without a note to the human count (EXPERIMENTS 2026-10-07 night).
+near the target (EXPERIMENTS 2026-10-08). After the lane passes a bar takes the rhythm
+of the bar 1, 2, 4 or 8 before, if that bar has no fewer notes and the model, asked
+about the whole bar, likes it as well as its own; its lanes are chosen again
+(--carry-rhythm 0, --carry-keep; --no-carry turns it off). A bar that starts long notes
+takes the earlier bar's long notes along, their lanes moved as a whole, where the model
+likes that bar by a nat more (--carry-holds -1; --no-carry-holds leaves those bars as
+they are). Bars then repeat a rhythm nearer the human rate with the SR as it was
+(EXPERIMENTS 2026-10-10, 10-11). Whole bars are copied only from 8 or more bars back
+where the audio repeats (--copy-bias 0 --copy-min-lag 8; --no-copy turns it off), as
+humans copy a section that comes back, and long notes under half a beat among taps
+become taps (--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one note gets
+it where the model would start one with probability 0.5 or more (--holes 0.5; 0 turns it
+off). Last, bars where the model expects under one note start, asked about the whole bar
+with the chart around it, are left empty (--rest 1; 0 turns it off), which brought the
+bars without a note to the human count (EXPERIMENTS 2026-10-07 night).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -256,19 +259,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the lane passes, copy earlier bars with similar audio when the "
                          "model scores the copy within this many nats (sampler.copy_bars)")
     ap.add_argument("--no-copy", action="store_true", help="no bar copies")
-    ap.add_argument("--copy-min-lag", type=int, default=8,   # 2026-10-12
+    ap.add_argument("--copy-min-lag", type=int, default=8,   # 2026-10-11
                     help="copies only from bars at least this many bars back (1: any)")
-    ap.add_argument("--carry-rhythm", type=float, default=0.0,   # 2026-10-12
+    ap.add_argument("--carry-rhythm", type=float, default=0.0,   # 2026-10-11
                     help="after the lane passes, a bar takes the rhythm of the bar 1, 2, 4 or 8 "
                          "before when the model, with the bar masked, scores it within this many "
                          "nats of its own; its lanes chosen again (sampler.carry_rhythm)")
     ap.add_argument("--no-carry", action="store_true", help="no rhythms carried over")
-    ap.add_argument("--carry-keep", action="store_true",
+    ap.add_argument("--carry-keep", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-11
                     help="--carry-rhythm: no source with fewer notes than the bar")
-    ap.add_argument("--carry-holds", type=float, default=None,
+    ap.add_argument("--carry-rows", action=argparse.BooleanOptionalAction, default=False,
+                    help="--carry-rhythm: nor with fewer onset rows (tag r)")
+    ap.add_argument("--carry-holds", type=float, default=-1.0,   # 2026-10-11
                     help="--carry-rhythm: bars that start long notes too, at this bias, their "
                          "lanes permuted as a whole")
-    ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-12
+    ap.add_argument("--no-carry-holds", action="store_true",
+                    help="bars with long notes keep their rhythm")
+    ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-11
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds); 0 = off")
     ap.add_argument("--refine-holds", action="store_true",
@@ -338,6 +346,8 @@ def main(argv: list[str] | None = None) -> int:
         a.copy_bias = None
     if a.no_carry:
         a.carry_rhythm = None
+    if a.no_carry_holds:
+        a.carry_holds = None
     if a.list_styles:
         return list_styles(load_denoiser(a.ckpt, "cpu"))
     if a.audio is None:
@@ -425,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
+            "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
@@ -469,8 +480,8 @@ def main(argv: list[str] | None = None) -> int:
                                rest=a.rest or None,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
-                               carry_holds=a.carry_holds, ln_tidy=a.ln_tidy or None,
-                               copy_min_lag=a.copy_min_lag,
+                               carry_holds=a.carry_holds, carry_rows=a.carry_rows,
+                               ln_tidy=a.ln_tidy or None, copy_min_lag=a.copy_min_lag,
                                lane_guidance=a.lane_guidance, **style)
         bad = len(grammar_violations(tokens))
         chart = decode(tokens, make_metas(tps, cell_offset, len(tokens), sr))
