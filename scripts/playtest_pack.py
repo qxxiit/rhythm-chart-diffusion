@@ -125,9 +125,14 @@ def parse_setting(text: str) -> dict:
     onset-strength gate (sampler.onset_gate); ot, the gate tapered by SR
     (sampler.GATE_TAPER); rcB, rhythms carried over at bias B (sampler.carry_rhythm;
     rcBk without sources with fewer notes than the bar, rcBkr nor fewer onset rows, rcBhC
-    bars with long notes too at bias C); ltX, long notes among taps under X beats made taps (sampler.tidy_holds); fhX,
+    bars with long notes too at bias C); csB, stretches whose music comes back take the
+    notes they had there at bias B (sampler.copy_sections; csBk not from fewer notes,
+    csBn or csBkn the bars of taps with new lanes);
+    ltX, long notes among taps under X beats made taps (sampler.tidy_holds); fhX,
     stream holes filled at X (sampler.fill_holes); rbX, bars left empty below X expected
-    note starts (sampler.rest_bars)."""
+    note starts (sampler.rest_bars); uj, chord taps taken out of jacks within 1/6 beat
+    (sampler.untangle_jacks); cc, chords cut to the ranking criteria's cap in Easy, Normal
+    and Hard (sampler.guideline_cap)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -147,6 +152,7 @@ def parse_setting(text: str) -> dict:
     loud_side, stats, lane_guidance, onset, rest = "both", None, None, 0.0, 0.0
     taper, holes, carry, ln_tidy, copy_min_lag = None, 0.0, None, None, 1
     carry_keep, carry_rows, carry_holds = False, False, None
+    sections, section_keep, section_lanes, chord_cap, untangle = None, False, False, False, False
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -197,10 +203,20 @@ def parse_setting(text: str) -> dict:
             carry_holds = float(held) if held else None
         elif head.startswith("lt") and not t:
             ln_tidy = float(head[2:])
+        elif head == "cc" and not t:
+            chord_cap = True
+        elif head == "uj" and not t:
+            untangle = True
+        elif head.startswith("cs") and not t:
+            value = head[2:]
+            section_lanes = value.endswith("n")
+            value = value.removesuffix("n")
+            section_keep = value.endswith("k")
+            sections = float(value.removesuffix("k"))
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
                              "jbX, cpX[lN], style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, ot, "
-                             "rcB[k][r][hC], ltX, fhX, rbX, st, stsample")
+                             "rcB[k][r][hC], csB[k][n], ltX, fhX, rbX, uj, cc, st, stsample")
     if (guidance or lane_guidance) and not style and not stats:
         raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
                          "st or stsample")
@@ -221,6 +237,8 @@ def parse_setting(text: str) -> dict:
         + ([f"rc{carry:g}" + ("k" if carry_keep else "") + ("r" if carry_rows else "")
             + (f"h{carry_holds:g}" if carry_holds is not None else "")]
            if carry is not None else []) \
+        + ([f"cs{sections:g}" + ("k" if section_keep else "") + ("n" if section_lanes else "")]
+           if sections is not None else []) \
         + ([f"cp{copy_bias:g}" + (f"l{copy_min_lag}" if copy_min_lag > 1 else "")]
            if copy_bias is not None else []) \
         + ([f"lt{ln_tidy:g}"] if ln_tidy is not None else []) \
@@ -228,7 +246,8 @@ def parse_setting(text: str) -> dict:
         + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
         + ([f"lg{lane_guidance:g}"] if lane_guidance is not None else []) \
         + ([f"og{onset:g}"] if onset else []) + (["ot"] if taper is not None else []) \
-        + ([f"fh{holes:g}"] if holes else []) + ([f"rb{rest:g}"] if rest else [])
+        + ([f"fh{holes:g}"] if holes else []) + ([f"rb{rest:g}"] if rest else []) \
+        + (["uj"] if untangle else []) + (["cc"] if chord_cap else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
             "refine": refine, "lane_temperature": lane_temp, "lanes": lanes, "spread": spread,
@@ -238,7 +257,9 @@ def parse_setting(text: str) -> dict:
             "loud_side": loud_side, "stats": stats, "lane_guidance": lane_guidance,
             "onset_bias": onset, "rest": rest, "onset_taper": taper, "holes": holes,
             "carry": carry, "carry_keep": carry_keep, "carry_rows": carry_rows,
-            "carry_holds": carry_holds, "ln_tidy": ln_tidy, "copy_min_lag": copy_min_lag, "name": name_}
+            "carry_holds": carry_holds, "ln_tidy": ln_tidy, "copy_min_lag": copy_min_lag,
+            "sections": sections, "section_keep": section_keep, "section_lanes": section_lanes,
+            "chord_cap": chord_cap, "untangle": untangle, "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -374,7 +395,10 @@ def build(a) -> int:
                                    rest=s["rest"] or None, onset_taper=s["onset_taper"],
                                    holes=s["holes"] or None, carry=s["carry"],
                                    carry_keep=s["carry_keep"], carry_holds=s["carry_holds"],
-                                   carry_rows=s["carry_rows"],
+                                   carry_rows=s["carry_rows"], sections=s["sections"],
+                                   section_keep=s["section_keep"],
+                                   section_lanes=s["section_lanes"], chord_cap=s["chord_cap"],
+                                   untangle=s["untangle"],
                                    ln_tidy=s["ln_tidy"], copy_min_lag=s["copy_min_lag"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),

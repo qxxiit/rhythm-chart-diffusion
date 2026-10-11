@@ -56,11 +56,16 @@ METRICS = [
     ("tap_rep1", "human_tap_rep1"), ("ln_rep1", "human_ln_rep1"),
     ("copy_near", "human_copy_near"), ("copy_mid", "human_copy_mid"),
     ("copy_far", "human_copy_far"),
+    ("section_rhythm", "human_section_rhythm"), ("section_copy", "human_section_copy"),
+    ("chord_strength", "human_chord_strength"), ("chord_over", "human_chord_over"),
+    ("fast_jacks", "human_fast_jacks"), ("anchor_over", "human_anchor_over"),
+    ("ln_short", "human_ln_short"), ("release_close", "human_release_close"),
     ("ln_sections", "human_ln_sections"), ("ln_scattered", "human_ln_scattered"),
     ("passes", None), ("seconds", None),
 ]
 GRADE_METRICS = ("f1@50", "sr_bias", "density_ratio", "weak_onsets", "steady_bars",
-                 "motion_pred", "tap_rep1", "ln_rep1", "copy_far", "ln_scattered")
+                 "motion_pred", "tap_rep1", "ln_rep1", "copy_far", "section_rhythm",
+                 "ln_scattered", "chord_strength", "chord_over", "fast_jacks")
 # per-song style: does each song get its own amount, as its human chart has it?
 FOLLOW_METRICS = ("hold_share", "move_jack", "move_trill", "move_stair", "chord_share")
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")

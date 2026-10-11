@@ -1982,6 +1982,220 @@ paired means against the reference):
    ±0.3% and F1 within ±0.001 of the default. With both raised, against 3: chords -0.008 to
    -0.015, tap_rep1 and ln_rep1 -0.01 to -0.03 each.
 
+**Results (`run_keep.sh`, evening of 10-11)** — paired means against holes and rests on `$T`
+where the prediction is a level, against the default (`rc0kh-1`) where it is a change; bars
+carried and the by-grade means are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | taps at 1: 8.5-10 bars of taps carried a song; tap_rep1 0.26-0.275 | 10.2; 0.266 | miss (just over), hit |
+| 1 | taps at 2: 9.5-12; tap_rep1 0.27-0.29 | 12.2; 0.274 | miss (just over), hit |
+| 1 | at 2 by grade: Easy 0.38-0.41, Insane 0.22-0.25, Expert 0.18-0.22 | 0.383, 0.221, 0.180 | hit ×3 (the last two at the edge) |
+| 1 | SR within ±0.01 of the default (Expert ±0.03) | +0.004 / +0.007 (Expert +0.002 / +0.015) | hit ×4 |
+| 1 | chords +0.002 to +0.006; F1 ±0.001; ln_rep1 ±0.005 | +0.0016 / +0.0025; -0.0002 / -0.0002; +0.002 / +0.002 | miss (just under), hit; hit ×4 |
+| 2 | long-note bars at 1: 11-14 of them carried a song; ln_rep1 0.17-0.20 | 14.8; 0.195 | miss (just over), hit |
+| 2 | at 3: 13-18; ln_rep1 0.20-0.24 | 19.4; 0.218 | miss (over), hit |
+| 2 | at 3 against the default: chords +0.004 to +0.012; SR 0 to -0.015 | +0.0033; +0.011 | miss (just under), miss (up, not down) |
+| 2 | ln_f1 0 to -0.004; hold_share ±0.003; tap_rep1 ±0.015 | -0.0021; -0.0004; +0.0065 | hit ×3 |
+| 3 | taps at 2, long-note bars at 1: tap_rep1 as taps at 2 ±0.01, ln_rep1 as long-note bars at 1 ±0.01 | 0.279 (0.274); 0.196 (0.195) | hit, hit |
+| 3 | chords 0.385-0.395; SR within ±0.015 of the default | 0.387; +0.011 | hit, hit |
+| 4 | keep_rows at the default: 9.5-12.5 carried a song; tap_rep1 0.225-0.245; ln_rep1 0.115-0.14 | 8.9 (-45%); 0.2249; 0.120 | miss (fewer), miss (at the edge), hit |
+| 4 | chords 0.368-0.376; SR ±0.01; density ±0.3%; F1 ±0.001 | 0.368 (0.3677); -0.004; -0.17%; -0.0018 | miss (at the edge), hit, hit, miss |
+| 4 | with both raised, against 3: chords -0.008 to -0.015; tap_rep1, ln_rep1 -0.01 to -0.03 | -0.023; -0.036, -0.043 | miss ×3 (more) |
+
+All runs (human: tap_rep1 0.273, ln_rep1 0.235, lane_rep1 0.064, chords 0.372;
+section_rhythm, rescored: 0.547; SR bias per song with Insane / Expert):
+
+| run | carried a song (long-note bars) | tap_rep1 | ln_rep1 | lane_rep1 | chords | SR bias (Insane / Expert) | density | F1 | section_rhythm |
+|---|---|---|---|---|---|---|---|---|---|
+| holes and rests on `$T` | - | 0.183 | 0.087 | 0.031 | 0.366 | -0.052 (-0.133 / -0.265) | 1.014 | 0.3800 | 0.122 |
+| default (taps 0, long-note bars -1) | 16.2 (8.6) | 0.252 | 0.149 | 0.053 | 0.381 | -0.051 (-0.124 / -0.283) | 1.018 | 0.3824 | 0.189 |
+| taps at 1 | 18.9 (8.6) | 0.266 | 0.150 | 0.063 | 0.383 | -0.047 (-0.117 / -0.281) | 1.020 | 0.3821 | 0.195 |
+| taps at 2 | 20.9 (8.6) | 0.274 | 0.151 | 0.066 | 0.384 | -0.044 (-0.115 / -0.268) | 1.021 | 0.3822 | 0.197 |
+| long-note bars at 1 | 22.4 (14.8) | 0.256 | 0.195 | 0.059 | 0.384 | -0.046 (-0.125 / -0.259) | 1.021 | 0.3820 | 0.195 |
+| long-note bars at 3 | 27.0 (19.4) | 0.257 | 0.218 | 0.060 | 0.385 | -0.041 (-0.123 / -0.242) | 1.023 | 0.3813 | 0.199 |
+| taps at 2, long-note bars at 1 | 27.1 (14.8) | 0.279 | 0.196 | 0.068 | 0.387 | -0.041 (-0.117 / -0.243) | 1.024 | 0.3819 | 0.204 |
+| keep_rows | 8.9 (4.3) | 0.225 | 0.120 | 0.054 | 0.368 | -0.056 (-0.136 / -0.284) | 1.016 | 0.3806 | 0.177 |
+| keep_rows, taps at 2, long-note bars at 1 | 17.5 (9.0) | 0.243 | 0.153 | 0.063 | 0.364 | -0.047 (-0.126 / -0.254) | 1.021 | 0.3793 | 0.186 |
+
+What it says:
+
+- **Raising the bias for bars of taps reaches the human tap_rep1 over all songs, but in the
+  wrong songs.** At 1 / 2 tap_rep1 is 0.266 / 0.274 (human 0.273), F1 unchanged, SR +0.004
+  / +0.007 against the default. By grade the easy charts go over the human (at 2: Easy
+  0.383, Normal 0.265, Hard 0.270 against 0.364 / 0.234 / 0.243) while Insane and Expert
+  stay under per song (0.221 / 0.180 against 0.286 / 0.231). Pooled over bar pairs,
+  Insane and up are near the human already (at 2: 0.278 against 0.289; the default
+  0.248): the carry's repeats gather in long songs. Against the audio
+  (`outputs/feel/repeat_vs_audio.py`), the default repeats the bar before as often as
+  humans where the two bars sound unalike (cosine of their log-Mel under 0.2: 0.145 against
+  0.145) and a little less where they sound alike (0.8 and over: 0.45 against 0.51); at 2
+  the unlike bars go over (0.173). Players praise repetition where the music repeats and
+  blame it elsewhere (EXPERIMENTS 2026-10-12): bias 0 stays.
+- **The long-note bars take more sources than predicted, and the SR goes up.** At 1 / 3,
+  14.8 / 19.4 of them a song, ln_rep1 0.195 / 0.218 (human 0.235), SR +0.005 / +0.011
+  against the default (keep_notes keeps the sources at least as full), F1 -0.0004 / -0.0010,
+  chords +0.003. At 3 Easy goes over (0.327 against 0.279). Against the audio, at 1 the
+  long-note bars repeat the bar before more at every similarity (0.10 where unalike, 0.29
+  where alike; human 0.13, 0.42; the default 0.08, 0.25). Adopted at 1 (DECISIONS 10-12).
+- **The two biases act on different bars:** taps at 2 with long-note bars at 1 give each
+  what it gives alone (tap_rep1 0.279, ln_rep1 0.196).
+- **keep_rows takes the chords to the human level, at a price.** At the default the chords
+  fall to 0.368 (human 0.372; long-note songs 0.3755 against 0.3750, tap songs 0.352
+  against 0.367), but 45% of the carried bars go, the repeats fall back (tap_rep1 0.225,
+  ln_rep1 0.120, rhythm_rep1 0.175) and F1 drops 0.0018. Not adopted; the chord excess is
+  in the long-note songs only (0.390 against 0.375; tap songs 0.365 against 0.367).
+- **None of the carry settings brings a section back.** Rescored with the new
+  `section_rhythm` (EXPERIMENTS 2026-10-12), every run gives 0.18-0.20 against the human
+  0.547: the carry looks at the bars just before, not at where the music was.
+
+### 2026-10-12 · What players praise and blame, measured; sections that come back, jacks in chords, chords over the cap (predictions)
+
+What makes a 4K chart "good to play" (치기 좋은 채보, 치는 맛) and what gets it panned: a survey
+of the osu!mania ranking criteria and mapping guides, osu!, Etterna, FFR and Quaver forums and
+contest judging, Japanese and Korean rhythm-game communities, and the papers on generated
+charts (the UGRP project's `claude/chart_quality_research_1011.md`; Reddit could not be read,
+the Korean side is DC Inside search results). In short:
+
+- Praise sits on two axes. The music: notes on sounds you can hear, the same sound with the
+  same pattern every time, chords on the strong sounds, the sounds chosen rather than all of
+  them charted. The hands: stressful and restful patterns in turn, intensity that rises and
+  falls with the song. Repetition is praised where the music repeats (a motif, a chorus that
+  comes back) and blamed elsewhere.
+- Blame falls on four things and sync: "random" patterning (no audible link between sound
+  and pattern), difficulty the music does not justify (spikes, chords and streams of notes
+  for their own sake), boredom (repetition the music does not ask for, flat load), and
+  patterns that tangle the hands (fast one-finger jacks, one-hand trills, long anchors,
+  hammering under a held long note). Being hard is not blamed as such.
+- Long notes are welcome on sustained sounds, released where the sound ends.
+- osu! has banned generative tools from Ranked since 2025-07-24; Korean players panned the
+  charts O2Jam was said to have made with AI (September-October 2026) for sync, unnatural
+  patterns and no play-testing.
+
+The evaluation already measures several of these against the audio: notes on weak onsets
+(`weak_onsets`), density following loudness (`loud_slope`), the chart repeating where the
+audio repeats bar to bar (`rho_*`), all near the human. New columns, also in `rescore.py`:
+
+- `section_rhythm` / `section_copy` (`structure.section_repeats`): `structure.section_runs`
+  finds the stretches of 4+ bars whose audio comes back 8+ bars later (cosine 0.5 or more
+  with the bar `lag` before; the longest first, a bar in one stretch at most): 5.0 a song,
+  9.7 bars each, 40% of the bars. Of their bars with 4+ onset rows, the share with the
+  rhythm of the bar where the music was before, and with its lanes too (as they are or
+  mirrored).
+- `chord_over`, `fast_jacks`, `anchor_over`, `ln_short`, `release_close`
+  (`playability.guideline_checks`): the ranking criteria's 4K guidelines for the chart's
+  grade, in time at the guidelines' 180 BPM: rows holding more notes than Easy / Normal /
+  Hard allow (2 / 2 / 3, long notes held counting, a double on the other hand from a hold
+  fine in Normal); notes per 100 back in their lane within 1/4 beat; anchors over 2 notes
+  (Normal) or 4 (Hard) per 100 onset rows; long notes under 1 / 1/2 / 1/4 beat; releases
+  within 1 / 1/2 beat of the one before (Easy / Normal).
+- `chord_strength` (`playability.chord_strength`): the onset strength (z within the song)
+  under chords less that under single notes: chords on the strong sounds.
+
+Per song (240 val songs; the new default is long-note bars at 1, below; by grade where the
+guideline is):
+
+| column | human | holes and rests on `$T` | the new default |
+|---|---|---|---|
+| section_rhythm / section_copy (208 songs) | 0.547 / 0.244 | 0.122 / 0.002 | 0.195 / 0.069 |
+| chord_strength | 0.829 | 0.802 | 0.763 |
+| chord_over Easy / Normal / Hard | 0.0049 / 0.0284 / 0.0098 | 0.0079 / 0.0250 / 0.0076 | 0.0094 / 0.0265 / 0.0073 |
+| fast_jacks (per 100 notes) Hard / Insane / Expert | 0.04 / 0.39 / 1.82 | 0.12 / 0.80 / 3.25 | 0.14 / 0.74 / 3.34 |
+| anchor_over Normal / Hard | 0.020 / 0.004 | 0 / 0.002 | 0 / 0.001 |
+| ln_short Easy / Normal / Hard | 0.29 / 0.14 / 0.05 | 0.41 / 0.14 / 0.04 | 0.41 / 0.14 / 0.03 |
+| release_close Easy / Normal | 0.18 / 0.07 | 0.15 / 0.06 | 0.15 / 0.07 |
+
+What stands out against what players say:
+
+- **Sections do not come back.** Where the music of 4+ bars returns, humans bring its rhythm
+  back in 55% of the bars (its notes in 24%), the default in 19% (7%). Humans copy sections,
+  not bars: of their bars that copy a bar 3+ back, 26% do it alone and the rest in runs at
+  one lag (11% in runs of 16+), the default's 70% alone; per stretch, humans bring most of it
+  back or none (37% of the stretches 75%+ of their bars, 27% none), the default seldom much
+  (5% 75%+, 49% none). Bar by bar the earlier bar seldom qualifies: of the human far copies,
+  the default's two bars pass copy_bars' checks in 14% (onset counts within 15% in 48%, no
+  long note across an edge in 47%), and as a carry source in 18%. The audio finds the
+  source: the human source of a copy 9+ back is the bar most like it in sound 8+ back 57% of
+  the time (78% among the 3 most alike).
+- **Jacks inside chords.** The default has 3-4 times the human fast jacks in Hard and twice
+  from Insane up. Pooled, the human charts' in Hard are 70% two single notes 1/4 beat apart;
+  the default's have a chord at one end in 87% and are 1/6 beat apart in half (from Insane
+  up: 17% at 1/6 beat, human 6%): the minijacks players blame, made by chords.
+- **Chords lean off the strong sounds a little** (0.763 against 0.829, the carry -0.04), and
+  rows over the chord cap are twice the human's in Easy; in Normal and Hard humans pass the
+  cap as often (long notes held counting).
+- Long notes under a beat in Easy are 41% against 29% (`hold_rules` lets Easy holds go to
+  half a beat); the human charts break the guideline too, and the long-note share is low
+  already, so this is left as it is.
+- Anchors, hand bias and taps under a held long note are at or under the human level.
+
+Three passes, all off by default, on trial:
+
+1. `copy_sections` (`--copy-sections B`, `--section-keep`, `--section-lanes`; tag
+   `_cs<B>[k][n]`, playtest `cs<B>[k][n]`), after the carry and before the copies: each
+   stretch, in time order and in pieces of at most 16 bars and at most its lag, takes the
+   notes that start in the bars `lag` before, long notes with their lengths, as they are or
+   mirrored for the whole piece (whichever the model likes, sum log p over the cells, of the
+   two that fit around the long notes coming in and the notes after). The two must have as
+   many notes within 15% (one a bar); `--section-keep`: not from fewer. The rhythm decides
+   bar by bar as in copy_bars (with the bar MASK, log P(onset count) row by row, the earlier
+   bar's rhythm against its own), summed over the piece: taken if the sum + B x bars >= 0.
+   `--section-lanes`: the bars of taps of a piece taken get their lanes chosen again, as
+   the carry's.
+2. `untangle_jacks` (`--untangle`, tag `_uj`), after the rests: a note that takes its lane
+   again within 1/6 beat at 180 BPM (56 ms) of the note before there, where one of the two
+   rows is a chord: the chord's tap goes (the later one's if both are chords).
+3. `guideline_cap` (`--chord-cap`, tag `_cc`), last: in Easy, Normal and Hard, rows over the
+   cap keep the taps the lane model likes most (one forward pass a row, the row's taps MASK).
+
+Smoke check (the 10 val songs with many stretches of 10-11, the default of 10-11's saved
+charts, each pass alone, full-v4 on CPU; on these songs human section_rhythm 0.70 and
+section_copy 0.32, the charts 0.23 and 0.05):
+
+- Sections: the model prefers each piece's own rhythm (per bar, median -1.2 nats, quartiles
+  -4.2 / -0.2), and how much it prefers it does not follow where humans repeat (correlation
+  -0.06 over 37 pieces): the bias sets how much comes back, the score keeps out pieces that
+  fit badly (-10 to -25 nats a bar). Without the 15% check an almost empty stretch scored 3
+  nats a bar over a full one. At 0 / 2 / 4: 6.5 / 10.3 / 14.4 bars a song, section_rhythm
+  0.39 / 0.51 / 0.66, section_copy 0.24 / 0.40 / 0.58, SR -0.023 / -0.026 / -0.019; with
+  `--section-keep` at 2 / 4: 2.9 / 5.2 bars, 0.33 / 0.43, 0.16 / 0.29, notes +0.3% / +1.1%,
+  SR +0.002 / +0.007; with new lanes at 4: section_copy 0.26 (the lane model often picks the
+  lanes the earlier bars had). About 20 forward passes a song.
+- `--untangle`: 1.2 taps a song, fast_jacks 0.52 -> 0.46 per 100 notes (Expert 2.25 -> 2.00),
+  SR -0.021 (Expert -0.064: jacks weigh in the SR), chords -0.0006.
+- `--chord-cap`: 10.1 rows a song, most in one Normal long-note chart; chord_over 0.023 ->
+  0.002, notes -0.8%, SR -0.022 (Normal -0.11: taps under held long notes went), chords
+  -0.006, chord_strength -0.014.
+- No grammar violations.
+
+`run_feel.sh` (patch 0046), on `$T` with the new default passes (taps 0, long-note bars at 1,
+copies from 8 back, tidy 0.5, holes 0.5, rests 1):
+
+0. The new columns rescored into holes and rests on `$T`, the old default and the new one.
+1. Sections with `--section-keep` at 2 and at 4, and at 4 with new lanes.
+2. `--untangle` alone, `--chord-cap` alone.
+3. All three: sections at 4 with `--section-keep`, `--untangle`, `--chord-cap`.
+
+Compared against holes and rests on `$T` and against the new default, by grade.
+
+Predictions (against the new default: section_rhythm 0.195, section_copy 0.069, copy_far
+0.026, fast_jacks 0.54, chord_strength 0.763, chords 0.384, SR bias -0.046, density 1.021,
+F1 0.3820; paired means):
+
+1. Sections at 2 with keep: 1.5-3 bars a song; section_rhythm 0.24-0.29, section_copy
+   0.11-0.16. At 4: 3-5 bars; section_rhythm 0.28-0.36, section_copy 0.16-0.26; copy_far
+   +0.01 to +0.03, rhythm_rep8 +0.01 to +0.03; density +0.3% to +0.8%, SR 0 to +0.012, F1
+   -0.003 to +0.001; tap_rep1, ln_rep1 and lane_rep1 within ±0.01. With new lanes:
+   section_rhythm as at 4 ±0.01, section_copy 0.01-0.04 under it.
+2. `--untangle`: 1-3 taps a song; fast_jacks -0.04 to -0.10 (Hard to 0.05-0.10); density
+   -0.05% to -0.15%; SR -0.005 to -0.02 (Expert -0.02 to -0.06); F1 within ±0.0005;
+   chords -0.0005 to -0.002.
+3. `--chord-cap`: 1-4 rows a song; chord_over Easy and Hard under 0.002, Normal under 0.005;
+   density -0.1% to -0.5%; SR -0.003 to -0.015 over all (Normal -0.02 to -0.08); chords
+   -0.001 to -0.005; chord_strength -0.005 to -0.02; F1 within ±0.001.
+4. All three: each column as with its pass alone (they touch different notes), SR the sum
+   of the three ±0.01.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

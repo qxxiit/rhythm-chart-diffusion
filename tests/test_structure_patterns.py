@@ -352,3 +352,56 @@ def test_phrase_repeats_copy_distance() -> None:
     assert r["copy_far"] == 0.0
     y = song([a, c, c, c, c, c, c, c, c, c, b, a])
     assert phrase_repeats(y, len(y))["copy_far"] == pytest.approx(1 / 11)   # 11 back
+
+
+def test_section_runs() -> None:
+    from src.evaluation.structure import section_runs
+    s = np.eye(30) * 0.0
+    for t in range(12, 18):                             # bars 12-17 sound as 0-5 (lag 12)
+        s[t, t - 12] = s[t - 12, t] = 0.9
+    for t in range(20, 23):                             # bars 20-22 as 10-12: under 4 bars
+        s[t, t - 10] = s[t - 10, t] = 0.9
+    for t in range(24, 30):                             # bars 24-29 as 16-21 (lag 8), but
+        s[t, t - 8] = s[t - 8, t] = 0.6                 # bar 26 only at 0.4
+    s[26, 18] = s[18, 26] = 0.4
+    assert section_runs(s) == [(12, 6, 12)]
+    assert section_runs(s, min_bars=3) == [(12, 6, 12), (20, 3, 10), (27, 3, 8)]
+    assert section_runs(s, sim=0.95) == []
+    assert section_runs(s, min_lag=13) == []
+    s[26, 18] = s[18, 26] = 0.6
+    assert section_runs(s) == [(12, 6, 12), (24, 6, 8)]
+    long = np.zeros((40, 40))                           # the music repeats every 8 bars from
+    for t in range(16, 40):                             # bar 8 on: bars 16-39 at lag 8 and
+        for lag in (8, 16, 24, 32):                     # 16, 24-39 at 24 too ...
+            if t - lag >= 8:
+                long[t, t - lag] = long[t - lag, t] = 0.8
+    assert section_runs(long) == [(16, 24, 8)]          # one stretch, at the smaller lag
+    cut = long.copy()                                   # lag 8 only to bar 29: lag 16 is
+    for t in range(30, 40):                             # longer (24-39) and goes first; lag
+        cut[t, t - 8] = cut[t - 8, t] = 0.0             # 8 keeps what is left of 16-29
+    assert section_runs(cut) == [(16, 8, 8), (24, 16, 16)]
+
+
+def test_section_repeats() -> None:
+    from src.evaluation.structure import section_repeats
+    a, b = (0, 12, 24, 36), (0, 6, 24, 30)
+
+    def song(bars):                                     # each bar: (onset rows, their lanes)
+        x = np.full((len(bars) * BAR, 4), EMPTY)
+        for i, bar in enumerate(bars):
+            for r, k in zip(*(bar or ((), ())), strict=True):
+                x[i * BAR + r, k] = TAP
+        return x
+    first = [(a, [0, 1, 2, 3]), (b, [0, 1, 2, 3]), (a, [1, 1, 2, 2]), (b, [3, 2, 1, 0])]
+    later = [(a, [0, 1, 2, 3]), (b, [0, 1, 2, 3][::-1]), (a, [0, 0, 1, 1]), (a, [3, 2, 1, 0])]
+    x = song(first + [None] * 4 + later)                # bars 8-11 where the music of 0-3 is
+    s = np.zeros((12, 12))
+    for t in range(8, 12):
+        s[t, t - 8] = s[t - 8, t] = 0.7
+    r = section_repeats(x, s, len(x))
+    assert r["section_rhythm"] == pytest.approx(3 / 4)  # bar 11 has another rhythm
+    assert r["section_copy"] == pytest.approx(2 / 4)    # bar 8 the same, 9 mirrored; 10 not
+    x[11 * BAR:] = EMPTY                                # under 4 onset rows: not counted
+    x[11 * BAR, 0] = TAP
+    assert section_repeats(x, s, len(x))["section_rhythm"] == 1.0
+    assert all(np.isnan(v) for v in section_repeats(x, np.zeros((12, 12)), len(x)).values())

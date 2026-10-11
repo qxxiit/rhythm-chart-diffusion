@@ -38,16 +38,21 @@ of the bar 1, 2, 4 or 8 before, if that bar has no fewer notes and the model, as
 about the whole bar, likes it as well as its own; its lanes are chosen again
 (--carry-rhythm 0, --carry-keep; --no-carry turns it off). A bar that starts long notes
 takes the earlier bar's long notes along, their lanes moved as a whole, where the model
-likes that bar by a nat more (--carry-holds -1; --no-carry-holds leaves those bars as
-they are). Bars then repeat a rhythm nearer the human rate with the SR as it was
-(EXPERIMENTS 2026-10-10, 10-11). Whole bars are copied only from 8 or more bars back
+likes that bar within a nat of its own (--carry-holds 1; --no-carry-holds leaves those
+bars as they are). Bars then repeat a rhythm nearer the human rate, as often as humans
+where two bars sound unalike, with the SR as it was (EXPERIMENTS 2026-10-10 to 10-12). Whole bars are copied only from 8 or more bars back
 where the audio repeats (--copy-bias 0 --copy-min-lag 8; --no-copy turns it off), as
 humans copy a section that comes back, and long notes under half a beat among taps
 become taps (--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one note gets
 it where the model would start one with probability 0.5 or more (--holes 0.5; 0 turns it
 off). Last, bars where the model expects under one note start, asked about the whole bar
 with the chart around it, are left empty (--rest 1; 0 turns it off), which brought the
-bars without a note to the human count (EXPERIMENTS 2026-10-07 night).
+bars without a note to the human count (EXPERIMENTS 2026-10-07 night). On trial and off
+by default (EXPERIMENTS 2026-10-12): --copy-sections B, a stretch whose music comes back
+from 8 or more bars before takes the notes it had there, as a whole (--section-keep, not
+from fewer notes; --section-lanes, its bars of taps with new lanes); --untangle, a chord's
+tap 1/6 beat after a note in its lane goes; --chord-cap, Easy to Hard keep to the ranking
+criteria's chord sizes.
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -271,11 +276,29 @@ def main(argv: list[str] | None = None) -> int:
                     help="--carry-rhythm: no source with fewer notes than the bar")
     ap.add_argument("--carry-rows", action=argparse.BooleanOptionalAction, default=False,
                     help="--carry-rhythm: nor with fewer onset rows (tag r)")
-    ap.add_argument("--carry-holds", type=float, default=-1.0,   # 2026-10-11
+    ap.add_argument("--carry-holds", type=float, default=1.0,   # 2026-10-12
                     help="--carry-rhythm: bars that start long notes too, at this bias, their "
                          "lanes permuted as a whole")
     ap.add_argument("--no-carry-holds", action="store_true",
                     help="bars with long notes keep their rhythm")
+    ap.add_argument("--copy-sections", type=float, default=None,
+                    help="after the carry, a stretch of 4+ bars whose music comes back from 8+ "
+                         "bars before takes the notes it had there, as a whole, when the model "
+                         "scores their rhythm within this many nats a bar of its own "
+                         "(sampler.copy_sections); default: off (on trial, 2026-10-11)")
+    ap.add_argument("--section-keep", action=argparse.BooleanOptionalAction, default=False,
+                    help="--copy-sections: not from a stretch with fewer notes")
+    ap.add_argument("--section-lanes", action=argparse.BooleanOptionalAction, default=False,
+                    help="--copy-sections: the bars of taps of a stretch taken get new lanes, "
+                         "the rhythm kept")
+    ap.add_argument("--untangle", action=argparse.BooleanOptionalAction, default=False,
+                    help="near the end, a chord's tap that takes its lane again within 1/6 beat "
+                         "(at 180 BPM) of a note there goes (sampler.untangle_jacks); on trial, "
+                         "2026-10-12")
+    ap.add_argument("--chord-cap", action=argparse.BooleanOptionalAction, default=False,
+                    help="last, in Easy, Normal and Hard rows over the ranking criteria's chord "
+                         "cap (2, 2, 3 notes) keep the taps the model likes most "
+                         "(sampler.guideline_cap); on trial, 2026-10-12")
     ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-11
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds); 0 = off")
@@ -437,6 +460,9 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
             "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
+    if a.copy_sections is not None:
+        order += f"-cs{a.copy_sections:g}" + ("k" if a.section_keep else "") + (
+            "n" if a.section_lanes else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy:
@@ -445,6 +471,10 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
+    if a.untangle:
+        order += "-uj"
+    if a.chord_cap:
+        order += "-cc"
     if a.genre is not None:
         order += f"-{safe(a.genre)}"
     if a.mapper is not None:
@@ -477,10 +507,13 @@ def main(argv: list[str] | None = None) -> int:
                                jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
                                loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
-                               rest=a.rest or None,
+                               rest=a.rest or None, chord_cap=a.chord_cap,
+                               untangle=a.untangle,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
                                carry_holds=a.carry_holds, carry_rows=a.carry_rows,
+                               sections=a.copy_sections, section_keep=a.section_keep,
+                               section_lanes=a.section_lanes,
                                ln_tidy=a.ln_tidy or None, copy_min_lag=a.copy_min_lag,
                                lane_guidance=a.lane_guidance, **style)
         bad = len(grammar_violations(tokens))

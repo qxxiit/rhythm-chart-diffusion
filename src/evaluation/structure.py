@@ -42,6 +42,11 @@
                  and 0.03); tap_rep1 / ln_rep1: rhythm_rep1 over bars of taps / of long
                  notes; copy_near/mid/far: bars that copy a bar 1-2, 3-8, 9+ back, lanes too
                  (2026-10-11)
+    section_runs(s_audio)        the stretches of 4+ bars whose audio comes back 8+ bars later
+    section_repeats(tokens, s_audio, n)
+                 section_rhythm / section_copy: in those stretches, the bars with the rhythm
+                 / also the lanes of the bar where the music was before (human 0.55 / 0.24,
+                 the default of 10-11 0.19 / 0.07; 2026-10-11)
     ln_placement(tokens, n)      ln_sections, ln_scattered: the share of long notes in bars
                  that are mostly long notes / in bars of taps (human 0.48 / 0.19, the
                  candidate 0.34 / 0.29)
@@ -266,6 +271,76 @@ def phrase_repeats(tokens: np.ndarray, n_cells: int) -> dict:
         out["copy_near"] = float(np.mean((dist >= 1) & (dist <= COPY_NEAR)))
         out["copy_mid"] = float(np.mean((dist > COPY_NEAR) & (dist < COPY_FAR)))
         out["copy_far"] = float(np.mean(dist >= COPY_FAR))
+    return out
+
+
+SECTION_SIM = 0.5               # section_runs: bars whose audio cosine with the bar `lag` back
+SECTION_BARS = 4                # is at least this, this many or more in a row, at a lag of
+SECTION_LAG = 8                 # this many bars or more: a stretch of music that comes back
+
+
+def section_runs(s_audio: np.ndarray, *, sim: float = SECTION_SIM, min_bars: int = SECTION_BARS,
+                 min_lag: int = SECTION_LAG) -> list[tuple[int, int, int]]:
+    """(first bar, bars, lag) of the stretches where the music comes back, in time order.
+
+    Along each diagonal of the bars' audio similarity (ssm_audio) at a lag of min_lag or
+    more, the maximal runs of bars t whose similarity with the bar t - lag is at least sim,
+    min_bars or longer. The longest are kept first (then the smaller lag, then the earlier);
+    a bar is in one stretch at most, so a run that cuts across those kept before keeps its
+    longest free part, if that is still min_bars long. A stretch may be longer than its lag
+    (a passage that repeats every lag bars). On 240 val songs (2026-10-11) 40% of the bars
+    are in one, 9.7 bars a stretch, 5 stretches a song; of the human charts' copies from 9+
+    bars back, the source is the bar most like it in sound 8+ bars back for 57% (78% among
+    the 3 most alike)."""
+    n = len(s_audio)
+    found = []
+    for lag in range(max(min_lag, 1), n):
+        hit = np.diagonal(s_audio, offset=-lag) >= sim          # s[t, t - lag], t = lag ..
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], hit.astype(np.int8), [0]])))
+        for a, b in zip(edges[::2], edges[1::2], strict=True):
+            if b - a >= min_bars:
+                found.append((int(b - a), lag, int(a) + lag))
+    taken = np.zeros(n, dtype=bool)
+    out = []
+    for length, lag, t0 in sorted(found, key=lambda f: (-f[0], f[1], f[2])):
+        best, start, run = 0, 0, 0
+        for k, free in enumerate(~taken[t0:t0 + length]):
+            run = run + 1 if free else 0
+            if run > best:
+                best, start = run, k - run + 1
+        if best >= min_bars:
+            taken[t0 + start:t0 + start + best] = True
+            out.append((t0 + start, best, lag))
+    return sorted(out)
+
+
+def section_repeats(tokens: np.ndarray, s_audio: np.ndarray, n_cells: int) -> dict:
+    """section_rhythm, section_copy: of the bars of the stretches where the music comes back
+    (section_runs) that have REPEAT_MIN+ onset rows, as the bar lag back has, the share with
+    the rhythm (onset rows) of that bar, and with its lanes too, as they are or mirrored.
+    Per song, human charts 0.55 / 0.24, the default of 10-11 0.19 / 0.07, without the carry
+    and copies 0.12 / 0.002 (208 of 240 val songs, 2026-10-11): when a section comes back,
+    humans bring its rhythm back, the sampled charts seldom. nan where there is no such
+    bar."""
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
+    n_bars = min(n_whole_bars(n_cells), len(s_audio))
+    out = {"section_rhythm": float("nan"), "section_copy": float("nan")}
+    if n_bars < 2:
+        return out
+    starts = np.isin(x[:n_bars * BAR], (TAP, HOLD_START)).reshape(n_bars, BAR, -1)
+    rows = starts.any(axis=2)
+    masks = (starts * (1 << np.arange(starts.shape[2]))).sum(axis=2)
+    busy = rows.sum(axis=1) >= REPEAT_MIN
+    same_rows, same_lanes = [], []
+    for t0, length, lag in section_runs(s_audio[:n_bars, :n_bars]):
+        for t in range(t0, t0 + length):
+            if busy[t] and busy[t - lag]:
+                same_rows.append(np.array_equal(rows[t], rows[t - lag]))
+                same_lanes.append(np.array_equal(masks[t], masks[t - lag])
+                                  or np.array_equal(masks[t], _MIRROR[masks[t - lag]]))
+    if same_rows:
+        out["section_rhythm"] = float(np.mean(same_rows))
+        out["section_copy"] = float(np.mean(same_lanes))
     return out
 
 

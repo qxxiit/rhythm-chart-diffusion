@@ -92,11 +92,29 @@ def main(argv: list[str] | None = None) -> int:
                     help="--carry-rhythm: no source with fewer notes than the bar")
     ap.add_argument("--carry-rows", action=argparse.BooleanOptionalAction, default=False,
                     help="--carry-rhythm: nor with fewer onset rows (tag r)")
-    ap.add_argument("--carry-holds", type=float, default=-1.0,   # 2026-10-11
+    ap.add_argument("--carry-holds", type=float, default=1.0,   # 2026-10-12
                     help="--carry-rhythm: bars that start long notes too, at this bias, their "
                          "lanes permuted as a whole")
     ap.add_argument("--no-carry-holds", action="store_true",
                     help="bars with long notes keep their rhythm")
+    ap.add_argument("--copy-sections", type=float, default=None,
+                    help="after the carry, a stretch of 4+ bars whose music comes back from 8+ "
+                         "bars before takes the notes it had there, as a whole, when the model "
+                         "scores their rhythm within this many nats a bar of its own "
+                         "(sampler.copy_sections); default: off (on trial, 2026-10-11)")
+    ap.add_argument("--section-keep", action=argparse.BooleanOptionalAction, default=False,
+                    help="--copy-sections: not from a stretch with fewer notes")
+    ap.add_argument("--section-lanes", action=argparse.BooleanOptionalAction, default=False,
+                    help="--copy-sections: the bars of taps of a stretch taken get new lanes, "
+                         "the rhythm kept")
+    ap.add_argument("--untangle", action=argparse.BooleanOptionalAction, default=False,
+                    help="near the end, a chord's tap that takes its lane again within 1/6 beat "
+                         "(at 180 BPM) of a note there goes (sampler.untangle_jacks); on trial, "
+                         "2026-10-12")
+    ap.add_argument("--chord-cap", action=argparse.BooleanOptionalAction, default=False,
+                    help="last, in Easy, Normal and Hard rows over the ranking criteria's chord "
+                         "cap (2, 2, 3 notes) keep the taps the model likes most "
+                         "(sampler.guideline_cap); on trial, 2026-10-12")
     ap.add_argument("--ln-tidy", type=float, default=0.5,   # 2026-10-11
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds); 0 = off")
@@ -222,10 +240,13 @@ def main(argv: list[str] | None = None) -> int:
                            jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                            holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
                            loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
-                           rest=a.rest or None,
+                           rest=a.rest or None, chord_cap=a.chord_cap,
+                           untangle=a.untangle,
                            onset_taper=taper, holes=a.holes or None,
                            carry=a.carry_rhythm, carry_keep=a.carry_keep, carry_holds=a.carry_holds,
                            carry_rows=a.carry_rows, ln_tidy=a.ln_tidy or None,
+                           sections=a.copy_sections, section_keep=a.section_keep,
+                           section_lanes=a.section_lanes,
                            copy_min_lag=a.copy_min_lag,
                            lane_guidance=a.lane_guidance, **style)
     bad = len(grammar_violations(tokens))
@@ -257,6 +278,9 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
             "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
+    if a.copy_sections is not None:
+        order += f"-cs{a.copy_sections:g}" + ("k" if a.section_keep else "") + (
+            "n" if a.section_lanes else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.ln_tidy:
@@ -265,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
+    if a.untangle:
+        order += "-uj"
+    if a.chord_cap:
+        order += "-cc"
     if "genre" in style:
         order += "-style"
     if style.get("style_guidance"):

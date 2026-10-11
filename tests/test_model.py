@@ -1173,3 +1173,173 @@ def test_carry_rhythm_in_bars_with_long_notes() -> None:
     assert run(rows_kept, holds=-0.5, keep_notes=True, keep_rows=True) == 0
     assert np.array_equal(rows_kept, chord)
     assert run(chord.copy(), holds=-0.5, keep_notes=True) == 1
+
+
+def _taps_song(bars: list[list[tuple[int, int]]], n_rows: int) -> np.ndarray:
+    """Whole bars of taps, (row in bar, lane) each, EMPTY to n_rows - L, then PAD."""
+    from src.data.tokenizer import BAR
+    song = np.full((n_rows, K), PAD, dtype=np.int64)
+    song[:n_rows - L] = EMPTY
+    for b, taps in enumerate(bars):
+        for row, lane in taps:
+            song[b * BAR + row, lane] = TAP
+    return song
+
+
+def test_copy_sections_brings_a_stretch_back_as_a_whole() -> None:
+    """A stretch whose audio comes back 8+ bars later takes the earlier notes as a whole,
+    as they are or mirrored, when the model likes their rhythm as well, bar by bar (bias per
+    bar); a long note coming in stays (the mirrored version fits around it); keep_notes
+    leaves out a sparser stretch; a stretch longer than its lag goes in pieces of the lag."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, copy_sections
+    rng = np.random.default_rng(0)
+
+    def bar():                                          # 4 taps on 4 rows: every such bar
+        rows = sorted(rng.choice(np.arange(0, BAR, 3), 4, replace=False))   # scores the
+        return [(int(r), int(rng.integers(K))) for r in rows]               # same (uniform)
+    bars = [bar() for _ in range(20)]
+    song = _taps_song(bars, 4 * L)                       # 20 bars, 4 empty, PAD
+    sims = np.eye(20)
+    for t in range(8, 12):                              # bars 8-11 sound as 0-3
+        sims[t, t - 8] = sims[t - 8, t] = 0.9
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))
+    frames = torch.zeros(len(song) * 4, 80)
+
+    def run(x, bias, s=sims, **kw):
+        return copy_sections(uniform, x, frames, 3.0, lambda row0: 400.0, 20 * BAR, s,
+                             bias=bias, **kw)
+
+    strict = song.copy()
+    assert run(strict, -0.5) == 0 and np.array_equal(strict, song)   # must fit better
+    before = STATS["section_bars"]
+    out = song.copy()
+    assert run(out, 0.0) == 4 and STATS["section_bars"] == before + 4
+    assert np.array_equal(out[8 * BAR:12 * BAR], song[:4 * BAR])     # as they are (a tie)
+    assert np.array_equal(out[:8 * BAR], song[:8 * BAR])
+    assert np.array_equal(out[12 * BAR:], song[12 * BAR:])
+    picky = torch.zeros(1, L, K, N_CLASSES)             # new lanes: the lane model wants
+    picky[..., 0, TAP] = 8.0                            # lane 0; the rhythm stays
+    relaned = song.copy()
+    assert run(relaned, 0.0, new_lanes=True, lane_model=Fixed(picky),
+               rng=np.random.default_rng(0)) == 4
+    rhythm = np.isin(relaned[8 * BAR:12 * BAR], (TAP, HOLD_START)).any(axis=1)
+    assert np.array_equal(rhythm, np.isin(song[:4 * BAR], (TAP, HOLD_START)).any(axis=1))
+    assert (relaned[8 * BAR:12 * BAR, 0] == TAP).sum() == 16
+
+    held = song.copy()                                  # a long note from bar 7 into bar 8,
+    held[8 * BAR - 3:8 * BAR + 2] = EMPTY               # in a lane bar 0 uses early on
+    lane = bars[0][0][1]
+    held[0:3, :] = EMPTY
+    held[1, lane] = TAP
+    held[8 * BAR - 3, lane], held[8 * BAR - 2:8 * BAR + 1, lane], held[8 * BAR + 1, lane] = \
+        HOLD_START, HOLD_BODY, HOLD_END
+    held[8 * BAR + 2:8 * BAR + 5, :] = EMPTY
+    out = held.copy()
+    assert run(out, 0.0, release_gap=2) == 4            # mirrored, around the long note
+    assert np.array_equal(out[8 * BAR - 3:8 * BAR + 2, lane], held[8 * BAR - 3:8 * BAR + 2, lane])
+    starts = np.isin(out[8 * BAR:12 * BAR], (TAP, HOLD_START))
+    assert np.array_equal(starts, np.isin(held[:4 * BAR], (TAP, HOLD_START))[:, ::-1])
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+
+    sparse = song.copy()                                # bar 1 one note short: with
+    sparse[BAR:2 * BAR] = EMPTY                         # keep_notes no source; a loose bias
+    for row, k in bars[1][:3]:                          # takes it otherwise
+        sparse[BAR + row, k] = TAP
+    assert run(sparse.copy(), 5.0, keep_notes=True) == 0
+    assert run(sparse.copy(), 5.0) == 4
+
+    long = np.eye(20)                                   # bars 8-19 as 0-11 (lag 8): pieces
+    for t in range(8, 20):                              # 8-15 from 0-7, then 16-19 from
+        long[t, t - 8] = long[t - 8, t] = 0.9           # 8-11, as just copied
+    out = song.copy()
+    assert run(out, 0.0, s=long) == 12
+    assert np.array_equal(out[8 * BAR:16 * BAR], song[:8 * BAR])
+    assert np.array_equal(out[16 * BAR:20 * BAR], song[:4 * BAR])
+
+
+def test_sections_in_generate_song_keep_the_grammar() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import STATS
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    loop = np.random.default_rng(1).normal(size=(2 * BAR * 4, 80))      # two bars of audio
+    mel = np.tile(loop, (len(tokens) * L * 4 // len(loop) + 1, 1))      # bar b sounds as b - 2
+    args = (model, mel, 3.0, chart.timing_points, metas[0].cell_offset, 700)
+    before = STATS["section_bars"]
+    out = generate_song(*args, steps=6, seed=2, lanes="forward", hold_bias=-np.inf,
+                        sections=1e6).reshape(-1, K)
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+    assert STATS["section_bars"] - before == 6          # bars 8-13 as 0-5
+    onsets = np.isin(out, (TAP, 2))
+    assert np.array_equal(onsets[8 * BAR:14 * BAR], onsets[:6 * BAR]) \
+        or np.array_equal(onsets[8 * BAR:14 * BAR], onsets[:6 * BAR, ::-1])
+
+
+def test_cap_chords_keeps_the_taps_the_model_likes() -> None:
+    """Rows over the guideline's cap (starts plus long notes held) keep the likeliest taps;
+    long notes stay; the cap follows the target SR's grade, none from Insane up."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, cap_chords, guideline_cap
+    song = _taps_song([[(0, 0), (0, 1), (0, 2), (12, 3)], [(0, 1), (0, 2)]], 2 * L)
+    song[BAR - 4, 0], song[BAR - 3:BAR + 3, 0], song[BAR + 3, 0] = HOLD_START, HOLD_BODY, HOLD_END
+    logits = torch.zeros(1, L, K, N_CLASSES)
+    logits[..., 2, TAP] = 3.0                           # lane 2 the likeliest, then lane 0
+    logits[..., 0, TAP] = 1.0
+    frames = torch.zeros(len(song) * 4, 80)
+    out = song.copy()
+    before = STATS["capped_rows"]
+    assert cap_chords(Fixed(logits), out, frames, 1.5, lambda row0: 400.0, 2 * BAR,
+                      cap=2) == 2 and STATS["capped_rows"] == before + 2
+    assert list(out[0]) == [TAP, EMPTY, TAP, EMPTY]     # the triple keeps lanes 2 and 0
+    assert list(out[BAR]) == [HOLD_BODY, EMPTY, TAP, EMPTY]   # under the hold: one tap left
+    assert np.array_equal(out[1:BAR], song[1:BAR]) and np.array_equal(out[BAR + 1:], song[BAR + 1:])
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+    kept = song.copy()                                  # Hard caps at 3: nothing to cut
+    assert guideline_cap(Fixed(logits), kept, frames, 3.5, lambda row0: 400.0, 2 * BAR) == 0
+    assert guideline_cap(Fixed(logits), kept, frames, 4.5, lambda row0: 400.0, 2 * BAR) == 0
+    assert np.array_equal(kept, song)
+    normal = song.copy()                                # Normal: the double on the other hand
+    normal[BAR, 1] = EMPTY                              # from the hold is fine
+    normal[BAR, 3] = TAP
+    assert guideline_cap(Fixed(logits), normal.copy(), frames, 2.5, lambda row0: 400.0,
+                         2 * BAR) == 1                  # only the triple in bar 0
+
+
+def test_chord_cap_in_generate_song() -> None:
+    from src.evaluation.playability import over_cap
+    chart, tokens, metas, _, _ = song_fixture()
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    mel = np.random.default_rng(1).normal(size=(len(tokens) * L * 4, 80))
+    out = generate_song(model, mel, 1.5, chart.timing_points, metas[0].cell_offset, 700,
+                        steps=6, seed=2, lanes="forward", chord_cap=True)
+    assert len(grammar_violations(out)) == 0
+    assert not over_cap(out.reshape(-1, K)[:700], 2).any()
+
+
+def test_untangle_jacks_takes_chord_taps_out_of_fast_jacks() -> None:
+    from src.data.tokenizer import HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, untangle_jacks
+    song = np.full((80, K), EMPTY, dtype=np.int64)
+    song[0, 0] = TAP                                    # a note, then a chord 1/6 beat later
+    song[2, [0, 1]] = TAP                               # in its lane: the chord's tap goes
+    song[[10, 12], 2] = TAP                             # two single notes: they stay
+    song[20, [2, 3]] = TAP                              # a chord, then a note in its lane:
+    song[22, 3] = TAP                                   # the chord's tap goes
+    song[30, [1, 2]] = TAP                              # 1/4 beat later: not that fast
+    song[33, 1] = TAP
+    song[40, 0], song[41, 0], song[42, 0] = HOLD_START, HOLD_BODY, HOLD_END
+    song[40, 1] = TAP                                   # a long note starting in a chord stays
+    song[44, 0] = TAP
+    times = np.arange(80) * 60000.0 / 180 / 12
+    before = STATS["untangled"]
+    out = song.copy()
+    assert untangle_jacks(out, 80, times) == 2 and STATS["untangled"] == before + 2
+    assert list(out[2]) == [EMPTY, TAP, EMPTY, EMPTY] and list(out[20]) == [EMPTY, EMPTY, TAP, EMPTY]
+    changed = np.argwhere(out != song)
+    assert sorted(map(tuple, changed.tolist())) == [(2, 0), (20, 3)]
+    slow = song.copy()                                  # the limit is a time (56 ms): at 60
+    assert untangle_jacks(slow, 80, times * 3) == 0     # BPM 1/6 beat is 167 ms, slow enough
+    assert np.array_equal(slow, song)

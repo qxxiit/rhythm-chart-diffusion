@@ -337,7 +337,7 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert summary["carry_rows"]
     assert sample.main([*common, "--key", key, "--stats", "oracle", "--carry-rhythm", "0",
                         "--ln-tidy", "1"]) == 0
-    assert list((tmp_path / "cs" / "samples").glob("*-rc0kh-1-cp0l8-lt1-*.osu"))
+    assert list((tmp_path / "cs" / "samples").glob("*-rc0kh1-cp0l8-lt1-*.osu"))
     assert sample.main([*common, "--key", key, "--stats", "oracle", "--no-carry-keep",
                         "--carry-rows", "--no-carry-holds", "--ln-tidy", "1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob("*-rc0r-cp0l8-lt1-*.osu"))
@@ -457,7 +457,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
-    made = "*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-rc0kh-1-cp0l8-lt0.5-fh0.5-rb1_T4_*"
+    made = "*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-rc0kh1-cp0l8-lt0.5-fh0.5-rb1_T4_*"
     assert list((tmp_path / "r" / "samples").glob(made + ".osu"))
     import zipfile
     osz = next((tmp_path / "r" / "samples").glob(made + ".osz"))
@@ -479,7 +479,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-lbq0.1-og1-ot-rc0kh-1-cp0l8-lt0.5-fh0.5-rb1]" in p.name for p in charts)
+    assert all("-lbq0.1-og1-ot-rc0kh1-cp0l8-lt0.5-fh0.5-rb1]" in p.name for p in charts)
     # quiet bars, onset gate tapered by SR, rhythms carried over, copies from 8 back, short
     # long notes among taps made taps, stream holes, rests
     assert generate.main([*common, "--bpm", "120", "--sr", "2", "--onset-taper", "5,2,1",
@@ -764,6 +764,17 @@ def test_playtest_settings() -> None:
         (1.5, True, True, -1)
     assert rows["name"].endswith("rc1.5krh-1") and not both["carry_rows"]
     assert parse_setting("random:128:continue:fwd+cp2")["copy_min_lag"] == 1
+    back = parse_setting("random:128:continue:fwd+rc0kh-1+cs1k+cp0l8")
+    assert (back["sections"], back["section_keep"]) == (1, True)
+    assert back["name"].endswith("rc0kh-1 cs1k cp0l8")
+    assert parse_setting("random:128:continue:fwd+cs-0.5")["section_keep"] is False
+    lanes = parse_setting("random:128:continue:fwd+cs4kn")
+    assert (lanes["sections"], lanes["section_keep"], lanes["section_lanes"]) == (4, True, True)
+    assert lanes["name"].endswith("cs4kn") and not back["section_lanes"]
+    capped = parse_setting("random:128:continue:fwd+ref2+st+lg2+og1+ot+rc0kh1+cp0l8+fh0.5+rb1+uj+cc")
+    assert capped["chord_cap"] and capped["untangle"] and capped["name"].endswith("fh0.5 rb1 uj cc")
+    assert not parse_setting("random:128")["chord_cap"]
+    assert parse_setting("random:128")["sections"] is None
     with pytest.raises(ValueError):
         parse_setting("random:128:continue:bogus")
 
