@@ -1386,6 +1386,80 @@ def test_untangle_jacks_takes_chord_taps_out_of_fast_jacks() -> None:
     assert len(grammar_violations(moved)) == 0
 
 
+def test_align_alike_gives_a_bar_the_rhythm_of_the_bars_that_sound_like_it() -> None:
+    """Bars 0, 4 and 8 sound alike; 0 and 4 share a rhythm, 8 has its own: bar 8 takes theirs
+    (the nearest of the most alike first), lanes chosen again; the bars sharing a rhythm stay.
+    The model's score decides (bias), keep_notes leaves out sources with fewer notes."""
+    from src.data.tokenizer import BAR
+    from src.models.sampler import STATS, align_alike
+    rng = np.random.default_rng(3)
+
+    def bar(rows):
+        return [(int(r), int(rng.integers(K))) for r in rows]
+    bars = [bar(sorted(rng.choice(np.arange(0, BAR, 3), 4, replace=False))) for _ in range(12)]
+    bars[0], bars[4], bars[8] = bar([0, 12, 24, 36]), bar([0, 12, 24, 36]), bar([0, 6, 18, 30])
+    song = _taps_song(bars, 3 * L)                      # 12 bars, then EMPTY, then PAD
+    sims = np.eye(12)
+    for i, j in ((0, 4), (0, 8), (4, 8)):
+        sims[i, j] = sims[j, i] = 0.9
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))
+    frames = torch.zeros(len(song) * 4, 80)
+
+    def run(x, bias, **kw):
+        return align_alike(uniform, x, frames, 3.0, lambda row0: 400.0, 12 * BAR, sims,
+                           bias=bias, rng=np.random.default_rng(0), **kw)
+    before = STATS["aligned_bars"]
+    out = song.copy()
+    assert run(out, 0.0) == 1 and STATS["aligned_bars"] == before + 1
+    onsets = np.isin(out, (TAP, 2)).any(axis=1)
+    assert np.array_equal(onsets[8 * BAR:9 * BAR], onsets[4 * BAR:5 * BAR])
+    assert np.array_equal(out[:8 * BAR], song[:8 * BAR])
+    assert np.array_equal(out[9 * BAR:], song[9 * BAR:])
+    assert len(grammar_violations(out.reshape(-1, L, K))) == 0
+    assert run(song.copy(), -1.0) == 0                  # must score as well
+    denser = song.copy()                                # bar 8 a note more than 0 and 4 (the
+    denser[8 * BAR + 42, 0] = TAP                       # uniform model likes its fifth row)
+    assert run(denser.copy(), 5.0) == 1
+    assert run(denser.copy(), 5.0, keep_notes=True) == 0
+
+
+def test_strong_chords_moves_a_chord_tap_onto_the_stronger_onset() -> None:
+    """In beat 0 a chord on a weak onset gives a tap to the single note on the strong one, in
+    a free lane with no note near; the notes stay as many; not when the onsets are close
+    (delta) or every free lane there has a note within 1/4 beat; long note starts stay."""
+    from src.data.tokenizer import HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, strong_chords
+    n = 240
+    song = np.full((n + L, K), PAD, dtype=np.int64)
+    song[:n] = EMPTY
+    for r in range(24, n, 6):                           # single notes, lanes in turn
+        song[r, (r // 6) % K] = TAP
+    song[0, 3] = TAP                                    # beat 0: a single note, strong onset
+    song[6, [0, 1]] = TAP                               # a chord, weak onset
+    strength = np.ones(n)
+    strength[0], strength[6] = 6.0, 0.0
+    times = np.arange(n) * 60000.0 / 180 / 12
+    before = STATS["strong_moved"]
+    out = song.copy()
+    assert strong_chords(out, n, strength, times, 0, delta=1.0) == 1
+    assert STATS["strong_moved"] == before + 1
+    assert (out[0] == TAP).sum() == 2 and (out[6] == TAP).sum() == 1
+    assert np.isin(out, (TAP, HOLD_START)).sum() == np.isin(song, (TAP, HOLD_START)).sum()
+    assert np.array_equal(out[7:], song[7:])
+    assert strong_chords(song.copy(), n, strength, times, 0, delta=50.0) == 0
+    boxed = song.copy()                                 # lanes 0-2 taken 2 rows after the
+    boxed[2, [0, 1, 2]] = TAP                           # strong onset (56 ms), as strong
+    strength[2] = 6.0
+    assert strong_chords(boxed, n, strength, times, 0, delta=1.0) == 0
+    held = song.copy()                                  # the chord starts a long note in lane
+    held[6, 0], held[7:10, 0], held[10, 0] = HOLD_START, HOLD_BODY, HOLD_END   # 0: the tap
+    strength[2] = 1.0                                   # in lane 1 is the one that moves
+    out = held.copy()
+    assert strong_chords(out, n, strength, times, 0, delta=1.0) == 1
+    assert out[6, 0] == HOLD_START and out[6, 1] == EMPTY and (out[0] == TAP).sum() == 2
+    assert len(grammar_violations(out[:n])) == 0
+
+
 def test_untangle_window_by_grade() -> None:
     from src.models.sampler import untangle_window
     assert untangle_window(1.5) == untangle_window(3.9) == 0.25

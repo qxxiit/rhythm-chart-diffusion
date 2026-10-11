@@ -2337,6 +2337,148 @@ paired means):
 3. Both: the section columns as either way at 4 (±0.01), fast_jacks in Hard and Insane as
    with the jack taps moved (±0.02), SR the sum of the two ±0.005.
 
+**Results (`run_back.sh`, early morning of 10-12)** — paired means against the new default
+(sections at 4 with keep, the chord cap in Easy) where the prediction is a change; bars, taps
+and the by-grade means are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 0 | only the Easy charts change; rows over the cap in Easy under 0.002; Easy SR -0.01 to -0.02; Easy F1 -0.0005 to -0.002 | the rest as they were; 0.0009; -0.015; -0.0011 | hit ×4 |
+| 1 | either way at 4: 10-13 bars a song (4.5-6.5 backwards) | 10.5 (4.3) | hit, miss (just under) |
+| 1 | section_rhythm 0.31-0.35, section_copy 0.21-0.27 | 0.346, 0.245 | hit, hit |
+| 1 | copy_far +0.005 to +0.015; notes +0.2% to +0.6%; SR +0.001 to +0.008; F1 -0.001 to +0.001 | +0.013; +0.26%; +0.0013 (CI -0.002 to +0.005); +0.0005 | hit ×4 |
+| 1 | chord_strength 0 to -0.01; fast_jacks +0.005 to +0.03; 8-14 more passes a song | -0.002; +0.002; +9.6 | hit, miss (hardly moved), hit |
+| 1 | at 8: 14-18 bars (6-9 backwards); section_rhythm 0.33-0.39, section_copy 0.24-0.31 | 15.7 (6.6); 0.430, 0.336 | hit, hit, miss (more), miss (more) |
+| 1 | at 8: notes +0.4% to +1.0%; SR +0.004 to +0.015; F1 -0.002 to +0.001 | +0.52%; +0.0046; +0.0006 | hit ×3 (SR at the edge) |
+| 1 | at 8: chord_strength -0.005 to -0.02; fast_jacks +0.01 to +0.04 | -0.004; +0.003 | miss (less), miss (hardly moved) |
+| 2 | jack taps moved by grade: 0.5-1.0 a song (Hard 0.8-1.5, Insane 1.2-1.8, from Expert up none); 55-75% moved | 1.05 (2.07, 1.50, none); 48% (Hard 38%, Insane 63%) | miss (just over), miss, hit, hit; miss (fewer) |
+| 2 | fast_jacks -0.03 to -0.06; Hard to 0.03-0.08; Insane 0.70-0.76; Expert as it is | -0.047; 0.036 (human 0.039); 0.732; as it is | hit ×4 |
+| 2 | SR -0.001 to -0.005 (Hard -0.003 to -0.012, Insane -0.003 to -0.010, Expert 0) | -0.0049 (-0.010, -0.006, 0) | hit ×4 (over all at the edge) |
+| 2 | notes within -0.02%; F1 and chords within ±0.0005 | -0.03%; +0.0000, -0.0002 | miss (just over), hit, hit |
+| 3 | both: the section columns as either way at 4 ±0.01; fast_jacks Hard and Insane as moved ±0.02; SR the sum ±0.005 | 0.346 / 0.244; 0.036 / 0.736; -0.0041 (sum -0.0036) | hit ×3 |
+
+All runs (per song; human: section_rhythm 0.547, section_copy 0.244, bar_lane_repeat 0.334,
+copy_far 0.068, chord_strength 0.829, chords 0.372; fast_jacks Hard / Insane / Expert 0.04 /
+0.39 / 1.82):
+
+| run | section bars a song (backwards) | section_rhythm / copy | bar_lane_repeat | copy_far | fast_jacks H / I / E | chord_strength | chords | SR bias (Easy / Normal / Hard / Insane / Expert) | density | F1 | passes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| the new default (sections at 4, keep; cap in Easy) | 6.1 | 0.277 / 0.169 | 0.335 | 0.038 | 0.14 / 0.78 / 3.34 | 0.748 | 0.386 | -0.044 (+0.084 / +0.077 / +0.002 / -0.116 / -0.256) | 1.023 | 0.3815 | 347 |
+| sections either way at 4 | 10.5 (4.3) | 0.346 / 0.245 | 0.385 | 0.051 | 0.15 / 0.78 / 3.35 | 0.746 | 0.389 | -0.043 (+0.086 / +0.077 / +0.002 / -0.114 / -0.253) | 1.025 | 0.3820 | 357 |
+| sections either way at 8 | 15.7 (6.6) | 0.430 / 0.336 | 0.440 | 0.067 | 0.15 / 0.79 / 3.33 | 0.744 | 0.389 | -0.039 (+0.090 / +0.079 / +0.010 / -0.116 / -0.245) | 1.028 | 0.3822 | 357 |
+| jack taps moved, by grade | 6.1 | 0.277 / 0.168 | 0.333 | 0.038 | 0.04 / 0.73 / 3.34 | 0.749 | 0.385 | -0.049 (+0.084 / +0.074 / -0.008 / -0.122 / -0.256) | 1.022 | 0.3816 | 347 |
+| both (either way at 4, jacks moved) | 10.5 (4.3) | 0.346 / 0.244 | 0.383 | 0.050 | 0.04 / 0.74 / 3.35 | 0.747 | 0.388 | -0.048 (+0.086 / +0.075 / -0.009 / -0.121 / -0.253) | 1.025 | 0.3821 | 357 |
+
+What it says:
+
+- **Sections either way at 4 bring the exact copies to the human level.** section_copy 0.169
+  -> 0.245 (human 0.244), section_rhythm 0.277 -> 0.346 (0.547), copy_far 0.038 -> 0.051
+  (0.068), with F1 +0.0005, SR +0.0013 (not significant), notes +0.26%, 10 more passes a
+  song; chord_strength and fast jacks do not move (-0.002, +0.002, both within noise).
+  bar_lane_repeat goes over the human (0.385 against 0.334). By grade: section_rhythm Easy
+  0.57 (human 0.65), Normal 0.35 (0.64), Hard 0.33 (0.58), Insane 0.28 (0.49), Expert 0.28
+  (0.39); section_copy over the human in Easy (0.44 against 0.33) and Expert (0.22 against
+  0.18). Adopted (DECISIONS 10-12).
+- **At 8 the copies run past the human.** section_rhythm 0.430 (Easy at the human 0.648), but
+  section_copy 0.336 against 0.244 (Easy 0.51 against 0.33, Hard 0.33 against 0.22) and
+  bar_lane_repeat 0.440 against 0.334: humans keep the lanes in 45% of the bars whose rhythm
+  comes back, these copies in 78%, the "copy pasted with zero variation" players blame. Not
+  adopted: more of the rhythm without more exact copies is the next question.
+- **Jack taps moved by grade bring Hard to the human level.** Fast jacks in Hard 0.145 ->
+  0.036 (human 0.039), Insane 0.78 -> 0.73 (0.39), Normal 0.022 -> 0.007 (0), Expert as it
+  was; 1.05 taps a song (Hard 2.1, Insane 1.5), half of them moved (Hard 38%, Insane 63%);
+  SR -0.005 (Hard -0.010, Insane -0.006), F1 and chords as they were. Adopted.
+- **The two add up**, each column as with its pass alone.
+
+### 2026-10-12 · Bars that sound the same; chords on the strong sounds (predictions)
+
+The charts of the default were rated by what players praise and blame (the UGRP project's
+`claude/chart_quality_research_1011.md`; the rating, `claude/chart_eval_1012.md`, 240 val
+songs, human against the default of run_feel): notes on audible sounds (weak onsets 0.151
+against 0.152), density following the music (rank correlation of notes and loudness per bar
+0.52 against 0.53, the densest bars as loud as the human's) and the load's ups and downs
+(0.30 against 0.31) are at the human level, and so are the hands but for chord jacks (fast
+one-hand trills, anchors, taps under a held long note on the same hand at or under the
+human). Furthest from the human:
+
+- **The same sound, the same pattern.** Of the pairs of bars whose audio is nearly the same
+  (ssm_audio cosine 0.8 or more, both with 4+ onset rows, any distance), humans give 62% the
+  same rhythm, the default 29% (the raw samples 17%), and 19% of them note counts more than a
+  quarter apart (human 8.6%; Normal 18% against 5%), which the mapping guide calls wrong
+  ("different amounts of notes for the same sounds"). The copies leave those alone: they ask
+  for counts within 15%; the carry looks only 1, 2, 4 and 8 bars back. In a bar whose count
+  is off the median of the bars that sound like it by over a quarter, the human count is
+  nearer that median twice as often as the sampled one (`alike_consensus.py`).
+- **Chords on the strong sounds.** 0.75 against 0.83, the raw samples 0.80: the carry and the
+  copies bring the chord sizes of the bars they copy. Chords on the weakest fifth of the onset
+  rows 14% (human 11%); in beats with a chord and a single note, the chord on the stronger
+  onset 79% (82%).
+- Easy is over-charted (notes +12%, SR +0.08 with the cap): fewer gaps of 2 beats between
+  notes (2.8% of the gaps against 4.2%) and fewer light bars (0.037 against 0.055); left for later.
+- The "breaks" (a pattern with one note off, then on again) the rating counted at 3.3 times
+  the human are 0.13 a song (human 0.04): not worth a pass.
+
+New columns (evaluate.py, rescore.py, compare_runs.py): `alike_rhythm`, `alike_counts_off`
+(`structure.alike_repeats`): of the pairs of bars that sound nearly the same, those with the
+same rhythm and those with note counts a quarter apart.
+
+Two passes, off by default, on trial:
+
+1. `align_alike` (`--alike B`, `--alike-keep`; tag `_al<B>[k]`, playtest `alB[k]`), after the
+   copies: a bar with 4+ onset rows that sounds like others (cosine 0.8+) but shares the
+   rhythm of none of them takes the rhythm of one of them whose note count is within a
+   quarter of the group's median (the bar's own included), the most alike first, of its kind
+   (taps / long notes), when the model scores it within B nats of its own (as the carry); the
+   lanes are chosen again (a long-note bar: its lanes permuted). `--alike-keep`: not from
+   fewer notes. A bar so aligned is a match for the bars after it.
+2. `strong_chords` (`--strong-chords Z`; tag `_sc<Z>` after the carry's, playtest `scZ`), right
+   after the carry: in each beat a chord on an onset Z (z of the onset strength over the
+   chart's onset rows) weaker than a single note's gives one of its taps to that note, in a
+   lane free there with no note within 1/4 beat (at 180 BPM); the notes, the chords and the
+   rhythm stay. Done before the copies so that they keep it.
+
+Smoke checks (full-v4 on CPU):
+
+- On the default's saved charts (run_back's both, 40 val songs of 10-12), the passes alone:
+  `--alike 2` aligns 6.5 bars a song: the alike pairs' same rhythm 0.26 -> 0.48 (human 0.66
+  on these songs), counts a quarter apart 0.20 -> 0.15 (0.08), section_rhythm 0.35 -> 0.43
+  (0.57), section_copy -0.002, notes -0.7%, SR -0.010 (Normal -0.019), chord_strength -0.003;
+  at 0 / 4: 5.2 / 7.1 bars, 0.42 / 0.50. With `--alike-keep` at 2: 3.0 bars, 0.34, 0.19,
+  section_rhythm 0.37, notes +0.3%, SR +0.003, fast jacks +0.010. Only the bars off their
+  group's median (the first version): 0.8 bars, 0.28, 0.16.
+- `strong_chords` after the rests at Z 1 (0.5): 9.4 (20.6) taps a song, chord_strength 0.757
+  -> 0.833 (0.869; human 0.849), section_copy -0.022 (-0.046).
+- On the whole default pipeline from the raw samples (11 val songs, 2 a grade): after the
+  rests chord_strength +0.077 and section_copy -0.036; right after the carry +0.067,
+  section_copy +0.002, the alike pairs' same rhythm +0.017, 12 taps a song: right after the
+  carry it is.
+- No grammar violations.
+
+`run_alike.sh` (patch 0048), on `$T` with the new default passes (taps 0, long-note bars at 1,
+sections either way at 4 with keep, copies from 8 back, tidy 0.5, holes 0.5, rests 1, jack taps
+moved by grade, the chord cap in Easy), against the new default (run_back's both, rescored for
+the new columns), by grade:
+
+1. `--alike 2`; `--alike 2 --alike-keep`.
+2. `--strong-chords 1`.
+3. `--alike 2` with `--strong-chords 1`.
+
+Predictions (the new default: alike_rhythm 0.30-0.34, alike_counts_off 0.17-0.20 per song
+from the rating of 10-12, section_rhythm 0.346, section_copy 0.244, chord_strength 0.747,
+chords 0.388, SR bias -0.048, density 1.025, F1 0.3821; paired means):
+
+1. `--alike 2`: 4-8 bars a song; alike_rhythm +0.12 to +0.22, alike_counts_off -0.03 to
+   -0.06; section_rhythm +0.04 to +0.09, section_copy within ±0.01; notes -0.3% to -0.8%, SR
+   -0.004 to -0.014; F1 within ±0.001; chord_strength 0 to -0.008; 30-50 more passes a song.
+   With keep: 2-4 bars; alike_rhythm +0.05 to +0.10, alike_counts_off -0.01 to -0.03,
+   section_rhythm +0.01 to +0.04; notes +0.1% to +0.5%, SR 0 to +0.006; fast_jacks 0 to
+   +0.015.
+2. `--strong-chords 1`: 8-14 taps a song; chord_strength +0.05 to +0.08 (to 0.80-0.83); chords
+   within ±0.002, notes within ±0.05%, section_copy within ±0.01, alike_rhythm 0 to +0.03; F1
+   within ±0.001, SR within ±0.005, fast_jacks 0 to +0.015.
+3. Both: each column as with its pass alone (alike_rhythm and chord_strength each within
+   0.02 of it), SR the sum ±0.005.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

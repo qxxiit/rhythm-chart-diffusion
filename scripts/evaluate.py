@@ -71,6 +71,10 @@ human chart's SR with the song's real timing, then score:
                           where the music of 4+ bars comes back 8+ bars later, the bars with
                           the rhythm / also the lanes they had there (structure.section_repeats),
                           human_* likewise
+    alike_rhythm, alike_counts_off
+                          of the pairs of bars that sound nearly the same, those with the same
+                          rhythm / with note counts a quarter apart (structure.alike_repeats),
+                          human_* likewise
     chord_over, fast_jacks, anchor_over, ln_short, release_close
                           the ranking criteria's 4K guidelines for the chart's grade (chords
                           over the cap, jacks within 1/4 beat, anchors too long, long notes
@@ -92,6 +96,10 @@ human chart's SR with the song's real timing, then score:
     untangled             with --untangle: chord taps taken out of jacks within 1/6 beat, or
                           the grade's window (sampler.untangle_jacks)
     untangle_moved        with --untangle-move: of those, taps moved to a lane with no jack
+    aligned_bars          with --alike: bars that took the rhythm of a bar that sounds like
+                          them (sampler.align_alike)
+    strong_moved          with --strong-chords: chord taps moved to a single note of the beat
+                          on a stronger onset (sampler.strong_chords)
     tidied_holds          with --ln-tidy: long notes among taps made taps (sampler.tidy_holds)
     rest_bars_cleared     with --rest: bars the rest pass left empty (sampler.rest_bars)
     holes_filled          with --fill-holes: stream holes the pass filled (sampler.fill_holes)
@@ -101,13 +109,13 @@ human chart's SR with the song's real timing, then score:
                           style inputs, whether the chart's mapper is in its vocab
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
 sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry-rhythm,
---copy-sections, --copy-bias, --ln-tidy, --fill-holes, --rest, --untangle, --chord-cap,
-in that order): minutes instead of hours.
+--strong-chords, --copy-sections, --copy-bias, --alike, --ln-tidy, --fill-holes, --rest,
+--untangle, --chord-cap, in that order): minutes instead of hours.
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
 are those of the passes run here. Writes to
-DIR_hr_rc<bias>[k][r][h<bias>]_cs<bias>[k][b][n]_cp<bias>[l<lag>]_lt<beats>_fh<p>_rb<n>_uj[m][g]_cc<sr>
-(the parts asked for),
+DIR_hr_rc<bias>[k][r][h<bias>]_sc<z>_cs<bias>[k][b][n]_cp<bias>[l<lag>]_al<bias>[k]_lt<beats>_fh<p>
+_rb<n>_uj[m][g]_cc<sr> (the parts asked for),
 then the stats tag and, with --carry-rhythm, _lg<weight>.
 --style oracle (a model trained with --style) generates every chart with the genre
 and mapper of the human chart it is scored against, --style none without labels;
@@ -150,6 +158,7 @@ from src.evaluation.playability import chord_strength, guideline_checks
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
 from src.evaluation.structure import (
     BAR,
+    alike_repeats,
     bar_kinds,
     dynamics,
     ln_placement,
@@ -212,6 +221,7 @@ def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: i
         row.update({f"{who}{k}": v for k, v in bar_kinds(flat, n_cells).items()})
         row.update({f"{who}{k}": v for k, v in phrase_repeats(flat, n_cells).items()})
         row.update({f"{who}{k}": v for k, v in section_repeats(flat, s_audio, n_cells).items()})
+        row.update({f"{who}{k}": v for k, v in alike_repeats(flat, s_audio, n_cells).items()})
         if times is not None and grade is not None:
             row.update({f"{who}{k}": v for k, v in guideline_checks(flat, times, grade).items()})
         row[f"{who}chord_strength"] = chord_strength(flat, strength)
@@ -364,6 +374,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="near the end, a chord's tap that takes its lane again within 1/6 beat "
                          "(at 180 BPM) of a note there goes (sampler.untangle_jacks, tag _uj); "
                          "also on --from-charts")
+    ap.add_argument("--alike", type=float, default=None,
+                    help="after the copies, a bar that sounds like others (audio cosine 0.8+) but "
+                         "shares the rhythm of none takes the rhythm of one of them near their "
+                         "median note count when the model scores it within this many nats "
+                         "(sampler.align_alike, tag _al); also on --from-charts")
+    ap.add_argument("--alike-keep", action="store_true",
+                    help="--alike: not from a bar with fewer notes (tag k)")
+    ap.add_argument("--strong-chords", type=float, default=None,
+                    help="after the carry, a chord gives a tap to a single note of its beat on "
+                         "an onset this many z stronger (sampler.strong_chords, tag _sc); also "
+                         "on --from-charts")
     ap.add_argument("--untangle-move", action="store_true",
                     help="--untangle: the tap moves to a lane of its row where it makes no jack, "
                          "if there is one (tag m)")
@@ -497,15 +518,19 @@ def main(argv: list[str] | None = None) -> int:
         "k" if a.carry_keep else "") + ("r" if a.carry_rows else "") + (
         f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
     tag += carry_tag
+    strong_tag = "" if a.strong_chords is None else f"_sc{a.strong_chords:g}"
+    tag += strong_tag
     section_tag = "" if a.copy_sections is None else f"_cs{a.copy_sections:g}" + (
         "k" if a.section_keep else "") + ("b" if a.section_back else "") + (
         "n" if a.section_lanes else "")
     tag += section_tag
+    alike_tag = "" if a.alike is None else f"_al{a.alike:g}" + ("k" if a.alike_keep else "")
     end_tag = ("_uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
                if a.untangle else "") + (
         f"_cc{a.chord_cap:g}" if a.chord_cap is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
+    tag += alike_tag
     if a.ln_tidy is not None:
         tag += f"_lt{a.ln_tidy:g}"
     if a.fill_holes is not None:
@@ -545,9 +570,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
                   if a.refine_holds or a.hold_share is not None else "") + (
-            carry_tag) + section_tag + (
+            carry_tag) + strong_tag + section_tag + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
-            if a.copy_bias is not None else "") + (
+            if a.copy_bias is not None else "") + alike_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
             f"_rb{a.rest:g}" if a.rest is not None else "") + (
@@ -579,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
         capped0, untangled0 = STATS["capped_rows"], STATS["untangled"]
         back0, moved0 = STATS["section_back"], STATS["untangle_moved"]
+        aligned0, strong0 = STATS["aligned_bars"], STATS["strong_moved"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -599,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
                     or a.rest is not None or a.fill_holes is not None \
                     or a.carry_rhythm is not None or a.ln_tidy is not None \
                     or a.copy_sections is not None or a.chord_cap is not None \
-                    or a.untangle:
+                    or a.untangle or a.alike is not None or a.strong_chords is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
                                    copy_min_lag=a.copy_min_lag,
@@ -611,7 +637,8 @@ def main(argv: list[str] | None = None) -> int:
                                    section_keep=a.section_keep, section_back=a.section_back,
                                    section_lanes=a.section_lanes, chord_cap=a.chord_cap,
                                    untangle=a.untangle, untangle_move=a.untangle_move,
-                                   untangle_grades=a.untangle_grades,
+                                   untangle_grades=a.untangle_grades, alike=a.alike,
+                                   alike_keep=a.alike_keep, strong=a.strong_chords,
                                    lane_guidance=a.lane_guidance, lane_temperature=a.lane_temp,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
@@ -634,7 +661,8 @@ def main(argv: list[str] | None = None) -> int:
                                    section_keep=a.section_keep, section_back=a.section_back,
                                    section_lanes=a.section_lanes, chord_cap=a.chord_cap,
                                    untangle=a.untangle, untangle_move=a.untangle_move,
-                                   untangle_grades=a.untangle_grades,
+                                   untangle_grades=a.untangle_grades, alike=a.alike,
+                                   alike_keep=a.alike_keep, strong=a.strong_chords,
                                    lane_guidance=a.lane_guidance, **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -660,6 +688,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["untangled"] = STATS["untangled"] - untangled0
         if a.untangle and a.untangle_move:
             cost["untangle_moved"] = STATS["untangle_moved"] - moved0
+        if a.alike is not None:
+            cost["aligned_bars"] = STATS["aligned_bars"] - aligned0
+        if a.strong_chords is not None:
+            cost["strong_moved"] = STATS["strong_moved"] - strong0
         if a.ln_tidy is not None:
             cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
         charts[r["key"]] = tokens
@@ -715,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
                "section_back": a.section_back, "section_lanes": a.section_lanes,
                "chord_cap": a.chord_cap, "untangle": a.untangle,
                "untangle_move": a.untangle_move, "untangle_grades": a.untangle_grades,
+               "alike": a.alike, "alike_keep": a.alike_keep, "strong_chords": a.strong_chords,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

@@ -10,7 +10,8 @@ structure.ln_placement, so pattern, long-note and phrase columns added after the
 playability.guideline_checks for the chart's grade (chord_over, fast_jacks, anchor_over,
 ln_short, release_close); with the log-Mel in the cache also structure.section_repeats
 (section_rhythm, section_copy: the bars' audio similarity tells where the music comes
-back) and playability.chord_strength (--no-mel leaves those out). per_song.csv is updated
+back), structure.alike_repeats (alike_rhythm, alike_counts_off: bars that sound the same)
+and playability.chord_strength (--no-mel leaves those out). per_song.csv is updated
 in place (the first rescore keeps the original as per_song.orig.csv) and summary.json
 gets the new means. rho is left as it was.
 """
@@ -33,7 +34,14 @@ from src.data.tokenizer import K, L
 from src.evaluation.holds import hold_stats
 from src.evaluation.patterns import summarize
 from src.evaluation.playability import chord_strength, guideline_checks
-from src.evaluation.structure import BAR, ln_placement, phrase_repeats, section_repeats, ssm_audio
+from src.evaluation.structure import (
+    BAR,
+    alike_repeats,
+    ln_placement,
+    phrase_repeats,
+    section_repeats,
+    ssm_audio,
+)
 
 
 def scores(flat: np.ndarray) -> dict:
@@ -72,6 +80,8 @@ def rescore(run: Path, cache: Path, mel: bool = True) -> int:
             s_audio = ssm_audio(frames, n_cells // BAR)
             r.update(section_repeats(gen, s_audio, n_cells))
             r.update({f"human_{k}": v for k, v in section_repeats(human, s_audio, n_cells).items()})
+            r.update(alike_repeats(gen, s_audio, n_cells))
+            r.update({f"human_{k}": v for k, v in alike_repeats(human, s_audio, n_cells).items()})
             strength = onset_strength(frames, n_cells)
             r["chord_strength"] = chord_strength(gen, strength)
             r["human_chord_strength"] = chord_strength(human, strength)

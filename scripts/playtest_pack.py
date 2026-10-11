@@ -134,7 +134,10 @@ def parse_setting(text: str) -> dict:
     note starts (sampler.rest_bars); uj, chord taps taken out of jacks within 1/6 beat
     (sampler.untangle_jacks; ujm moved to a lane with no jack where one is free, ujg within
     the grade's window, ujmg both); ccX, chords cut to the ranking criteria's cap in the
-    charts under SR X (sampler.guideline_cap; cc alone: X = 4, Easy to Hard)."""
+    charts under SR X (sampler.guideline_cap; cc alone: X = 4, Easy to Hard); alB, a bar that
+    sounds like others takes the rhythm of one of them at bias B (sampler.align_alike; alBk
+    not from fewer notes); scZ, a chord gives a tap to a single note of its beat on an onset
+    Z stronger (sampler.strong_chords)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -156,6 +159,7 @@ def parse_setting(text: str) -> dict:
     carry_keep, carry_rows, carry_holds = False, False, None
     sections, section_keep, section_back, section_lanes = None, False, False, False
     chord_cap, untangle, untangle_move, untangle_grades = None, False, False, False
+    alike, alike_keep, strong = None, False, None
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -210,6 +214,11 @@ def parse_setting(text: str) -> dict:
             chord_cap = float(head[2:]) if head[2:] else 4.0
         elif head in ("uj", "ujm", "ujg", "ujmg") and not t:
             untangle, untangle_move, untangle_grades = True, "m" in head[2:], "g" in head[2:]
+        elif head.startswith("al") and not t:
+            alike_keep = head.endswith("k")
+            alike = float(head[2:].removesuffix("k"))
+        elif head.startswith("sc") and not t:
+            strong = float(head[2:])
         elif head.startswith("cs") and not t:
             value = head[2:]
             section_lanes = value.endswith("n")
@@ -221,8 +230,8 @@ def parse_setting(text: str) -> dict:
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
                              "jbX, cpX[lN], style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, ot, "
-                             "rcB[k][r][hC], csB[k][b][n], ltX, fhX, rbX, uj[m][g], cc[X], st, "
-                             "stsample")
+                             "rcB[k][r][hC], csB[k][b][n], alB[k], ltX, fhX, rbX, scZ, uj[m][g], "
+                             "cc[X], st, stsample")
     if (guidance or lane_guidance) and not style and not stats:
         raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
                          "st or stsample")
@@ -243,10 +252,12 @@ def parse_setting(text: str) -> dict:
         + ([f"rc{carry:g}" + ("k" if carry_keep else "") + ("r" if carry_rows else "")
             + (f"h{carry_holds:g}" if carry_holds is not None else "")]
            if carry is not None else []) \
+        + ([f"sc{strong:g}"] if strong is not None else []) \
         + ([f"cs{sections:g}" + ("k" if section_keep else "") + ("b" if section_back else "")
             + ("n" if section_lanes else "")] if sections is not None else []) \
         + ([f"cp{copy_bias:g}" + (f"l{copy_min_lag}" if copy_min_lag > 1 else "")]
            if copy_bias is not None else []) \
+        + ([f"al{alike:g}" + ("k" if alike_keep else "")] if alike is not None else []) \
         + ([f"lt{ln_tidy:g}"] if ln_tidy is not None else []) \
         + (["style"] if style else []) + ([f"sg{guidance:g}"] if guidance else []) \
         + ({"human": ["st"], "sample": ["stsample"]}[stats] if stats else []) \
@@ -268,7 +279,8 @@ def parse_setting(text: str) -> dict:
             "carry_holds": carry_holds, "ln_tidy": ln_tidy, "copy_min_lag": copy_min_lag,
             "sections": sections, "section_keep": section_keep, "section_back": section_back,
             "section_lanes": section_lanes, "chord_cap": chord_cap, "untangle": untangle,
-            "untangle_move": untangle_move, "untangle_grades": untangle_grades, "name": name_}
+            "untangle_move": untangle_move, "untangle_grades": untangle_grades,
+            "alike": alike, "alike_keep": alike_keep, "strong": strong, "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -409,7 +421,8 @@ def build(a) -> int:
                                    section_back=s["section_back"],
                                    section_lanes=s["section_lanes"], chord_cap=s["chord_cap"],
                                    untangle=s["untangle"], untangle_move=s["untangle_move"],
-                                   untangle_grades=s["untangle_grades"],
+                                   untangle_grades=s["untangle_grades"], alike=s["alike"],
+                                   alike_keep=s["alike_keep"], strong=s["strong"],
                                    ln_tidy=s["ln_tidy"], copy_min_lag=s["copy_min_lag"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),

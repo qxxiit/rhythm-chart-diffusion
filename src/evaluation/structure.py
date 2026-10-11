@@ -344,6 +344,38 @@ def section_repeats(tokens: np.ndarray, s_audio: np.ndarray, n_cells: int) -> di
     return out
 
 
+ALIKE_SIM = 0.8                 # alike_repeats: bar pairs this alike in sound (ssm_audio)
+ALIKE_OFF = 0.25                # ... note counts more than this share apart
+
+
+def alike_repeats(tokens: np.ndarray, s_audio: np.ndarray, n_cells: int) -> dict:
+    """alike_rhythm, alike_counts_off: of the pairs of bars (any distance) whose audio is
+    nearly the same (cosine ALIKE_SIM or more) and that both have REPEAT_MIN+ onset rows, the
+    share with the same rhythm (onset rows), and the share whose note counts are more than
+    ALIKE_OFF (of the larger) apart: "the same sound, the same pattern", and "different
+    amounts of notes for the same sounds", which the mapping guide says feels wrong. Per
+    song, human charts 0.62 / 0.086, the default of 10-12 0.29 / 0.19 (240 val songs,
+    2026-10-12). nan with under 5 such pairs."""
+    x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
+    n_bars = min(n_whole_bars(n_cells), len(s_audio))
+    out = {"alike_rhythm": float("nan"), "alike_counts_off": float("nan")}
+    if n_bars < 2:
+        return out
+    starts = np.isin(x[:n_bars * BAR], (TAP, HOLD_START)).reshape(n_bars, BAR, -1)
+    rows = starts.any(axis=2)
+    count = starts.sum(axis=(1, 2))
+    busy = rows.sum(axis=1) >= REPEAT_MIN
+    a, b = np.triu_indices(n_bars, 1)
+    ok = busy[a] & busy[b] & (s_audio[:n_bars, :n_bars][a, b] >= ALIKE_SIM)
+    if ok.sum() < 5:
+        return out
+    a, b = a[ok], b[ok]
+    out["alike_rhythm"] = float((rows[a] == rows[b]).all(axis=1).mean())
+    out["alike_counts_off"] = float(np.mean(np.abs(count[a] - count[b])
+                                            > ALIKE_OFF * np.maximum(count[a], count[b])))
+    return out
+
+
 LN_SECTION = 0.5                # ln_placement: a long-note bar starts at least this share
 LN_SCATTER = 0.25               # of its notes as long notes; a bar of taps under this share
 

@@ -43,9 +43,11 @@ bars as they are). Bars then repeat a rhythm nearer the human rate, as often as 
 where two bars sound unalike, with the SR as it was (EXPERIMENTS 2026-10-10 to 10-12). A
 stretch of 4 or more bars whose music comes back from 8 or more bars before then takes
 the notes it had there, as a whole, if that stretch has no fewer notes and the model
-likes its rhythm within 4 nats a bar (--copy-sections 4 --section-keep; --no-sections
-turns it off): the charts bring back a returning section's rhythm in 27% of its bars
-instead of 19% (human 55%), with the SR and F1 as they were (EXPERIMENTS 2026-10-12).
+likes its rhythm within 4 nats a bar; where the returning stretch has more notes, the
+earlier one takes its notes instead (--copy-sections 4 --section-keep --section-back;
+--no-sections turns it off): the charts bring back a returning section's rhythm in 35%
+of its bars instead of 19% (human 55%), its very notes as often as humans (24%), with the
+SR and F1 as they were (EXPERIMENTS 2026-10-12).
 Whole bars are copied only from 8 or more bars back
 where the audio repeats (--copy-bias 0 --copy-min-lag 8; --no-copy turns it off), as
 humans copy a section that comes back, and long notes under half a beat among taps
@@ -53,13 +55,16 @@ become taps (--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one no
 it where the model would start one with probability 0.5 or more (--holes 0.5; 0 turns it
 off). Bars where the model expects under one note start, asked about the whole bar
 with the chart around it, are left empty (--rest 1; 0 turns it off), which brought the
-bars without a note to the human count (EXPERIMENTS 2026-10-07 night). Last, in charts
-under SR 2 (Easy) no row holds more than 2 notes, long notes held counting, as the ranking
-criteria ask (--chord-cap 2; 0 turns it off, 4 caps Normal and Hard too). On trial and off
-by default (EXPERIMENTS 2026-10-12): --section-back, a returning stretch with more notes
-gives them back to where its music was; --untangle, a chord's tap 1/6 beat after a note in
-its lane goes (--untangle-move: to a lane where it makes no jack, if there is one;
---untangle-grades: within 1/4 beat up to Hard, 1/6 in Insane, not from Expert up).
+bars without a note to the human count (EXPERIMENTS 2026-10-07 night). A chord's tap that
+comes back to its lane within the guidelines' 1/4 beat (up to Hard; 1/6 in Insane, none
+from Expert up) moves to a lane of its row where it makes no jack, or goes (--untangle
+--untangle-move --untangle-grades; --no-untangle turns it off), which brought the fast
+jacks of Hard to the human level (EXPERIMENTS 2026-10-12). Last, in charts under SR 2
+(Easy) no row holds more than 2 notes, long notes held counting, as the ranking criteria
+ask (--chord-cap 2; 0 turns it off, 4 caps Normal and Hard too). On trial and off by
+default (EXPERIMENTS 2026-10-12): --alike B, a bar that sounds like others but shares the
+rhythm of none takes the rhythm of one of them (--alike-keep: not from fewer notes);
+--strong-chords Z, a chord gives a tap to a single note of its beat on a stronger onset.
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -297,22 +302,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--section-keep", action=argparse.BooleanOptionalAction,
                     default=True,   # 2026-10-12
                     help="--copy-sections: not from a stretch with fewer notes")
-    ap.add_argument("--section-back", action=argparse.BooleanOptionalAction, default=False,
+    ap.add_argument("--section-back", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="--copy-sections: either way, the stretch with fewer notes taking the "
-                         "other's; on trial, 2026-10-12")
+                         "other's")
     ap.add_argument("--section-lanes", action=argparse.BooleanOptionalAction, default=False,
                     help="--copy-sections: the bars of taps of a stretch taken get new lanes, "
                          "the rhythm kept")
-    ap.add_argument("--untangle", action=argparse.BooleanOptionalAction, default=False,
+    ap.add_argument("--untangle", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="near the end, a chord's tap that takes its lane again within 1/6 beat "
-                         "(at 180 BPM) of a note there goes (sampler.untangle_jacks); on trial, "
-                         "2026-10-12")
-    ap.add_argument("--untangle-move", action=argparse.BooleanOptionalAction, default=False,
+                         "(at 180 BPM) of a note there goes (sampler.untangle_jacks)")
+    ap.add_argument("--untangle-move", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="--untangle: the tap moves to a lane where it makes no jack, if there "
-                         "is one; on trial, 2026-10-12")
-    ap.add_argument("--untangle-grades", action=argparse.BooleanOptionalAction, default=False,
+                         "is one")
+    ap.add_argument("--untangle-grades", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="--untangle: within the grade's window, 1/4 beat to Hard, 1/6 in "
-                         "Insane, none from Expert up; on trial, 2026-10-12")
+                         "Insane, none from Expert up")
+    ap.add_argument("--alike", type=float, default=None,
+                    help="after the copies, a bar that sounds like others but shares the rhythm "
+                         "of none takes the rhythm of one of them near their median note count "
+                         "when the model scores it within this many nats (sampler.align_alike); "
+                         "on trial, 2026-10-12")
+    ap.add_argument("--alike-keep", action=argparse.BooleanOptionalAction, default=False,
+                    help="--alike: not from a bar with fewer notes")
+    ap.add_argument("--strong-chords", type=float, default=None,
+                    help="after the carry, a chord gives a tap to a single note of its beat on "
+                         "an onset this many z stronger (sampler.strong_chords); on trial, "
+                         "2026-10-12")
     ap.add_argument("--chord-cap", type=float, default=2.0,   # 2026-10-12
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap (Easy and Normal 2 notes, Hard 3) keep "
@@ -480,11 +499,15 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
             "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
+    if a.strong_chords is not None:
+        order += f"-sc{a.strong_chords:g}"
     if a.copy_sections is not None:
         order += f"-cs{a.copy_sections:g}" + ("k" if a.section_keep else "") + (
             "b" if a.section_back else "") + ("n" if a.section_lanes else "")
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
+    if a.alike is not None:
+        order += f"-al{a.alike:g}" + ("k" if a.alike_keep else "")
     if a.ln_tidy:
         order += f"-lt{a.ln_tidy:g}"
     if a.holes:
@@ -529,7 +552,8 @@ def main(argv: list[str] | None = None) -> int:
                                loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                                rest=a.rest or None, chord_cap=a.chord_cap or None,
                                untangle=a.untangle, untangle_move=a.untangle_move,
-                               untangle_grades=a.untangle_grades,
+                               untangle_grades=a.untangle_grades, alike=a.alike,
+                               alike_keep=a.alike_keep, strong=a.strong_chords,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
                                carry_holds=a.carry_holds, carry_rows=a.carry_rows,
