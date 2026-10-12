@@ -2839,6 +2839,47 @@ than on 10-07 (no bite) and on 10-04 (no patterns), more on the low levels' dens
 jacks from Insane up; the long-note charts not given away by their long notes (10-06: PT13's
 human chart gave itself away by its committed long-note style).
 
+**Results (`run_check.sh`, afternoon of 10-12)** — the default (`F`) against run_wide's M, paired
+means; bars and taps a song and the by-grade means are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | Easy 7-9 bars a song thinned, Normal 2.5-4 | 8.2, 3.1 | hit, hit |
+| 1 | bars with one or two onset rows Easy 0.14-0.16, Normal 0.05-0.06 (human 0.129 / 0.038) | 0.152, 0.053 | hit, hit |
+| 2 | Insane fast jacks 0.48-0.56; 4-6 taps a song moved, none taken out; Expert 3.28 ± 0.02 | 0.518; 5.8 moved, none out; 3.281 | hit ×4 |
+| 3 | SR bias -0.042 to -0.048 (Easy +0.08 to +0.09, Insane -0.105 to -0.112) | -0.0428 (+0.086, -0.104) | hit (at the edge), hit, miss (just short) |
+| 3 | density 1.012-1.016; F1 0.3822-0.3830; hold_share 0.214-0.218 | 1.0136; 0.3825; 0.2161 | hit ×3 |
+
+| | M (run_wide) | F (the default) | human |
+|---|---|---|---|
+| bars thinned a song, Easy / Normal | 4.3 / 1.7 | 8.2 / 3.1 | |
+| bars with one or two onset rows, Easy / Normal | 0.126 / 0.044 | 0.152 / 0.053 | 0.129 / 0.038 |
+| light_bars, Easy / Normal | 0.050 / 0.057 | 0.055 / 0.062 | 0.056 / 0.045 |
+| jack taps a song, Insane: moved / taken out | 1.0 / 0.6 | 5.8 / 0 | |
+| fast_jacks, Hard / Insane / Expert | 0.036 / 0.728 / 3.281 | 0.036 / 0.518 / 3.281 | 0.039 / 0.390 / 1.819 |
+| SR bias (Easy / Normal / Hard / Insane / Expert) | -0.040 (+0.091 / +0.079 / -0.015 / -0.096 / -0.228) | -0.043 (+0.086 / +0.079 / -0.015 / -0.104 / -0.228) | 0 |
+| density (Easy) | 1.018 (1.086) | 1.014 (1.068) | 1 |
+| bar_lane_repeat / section_copy / alike_rhythm | 0.346 / 0.227 / 0.489 | 0.339 / 0.224 / 0.486 | 0.334 / 0.244 / 0.622 |
+| F1@50 (Easy) | 0.3828 (0.2593) | 0.3825 (0.2576) | |
+
+What it says:
+
+- **The default came out as the two passes of run_wide added** (13 of 14). The one miss is the
+  Insane SR, which fell less than predicted (-0.008 against -0.009 to -0.016): with the window at
+  1/4 beat and keep, a tap with no free lane stays, where in M the 1/6-beat window took 0.6 a song
+  out; the trial of run_wide ran the wide pass after M's, so it had both. Its fast jacks fall a
+  little less for it (0.518 against 0.501 in the trial).
+- Against M: F1 -0.0004 (CI -0.0007 to -0.0001; Easy -0.0017), bar_lane_repeat towards the human
+  (0.346 -> 0.339; 0.334), light bars over all at the human level (0.0625 against 0.0626).
+- **Past the human:** Easy's bars with one or two onset rows (0.152 against 0.129) and Normal's
+  (0.053 against 0.038; light bars 0.062 against 0.045). Easy is still denser than the human
+  charts (1.068) and over the target SR (+0.086), so the thinning is where the notes are; Normal's
+  is a third over. The playtest has 4 Easy and 4 Normal songs (and 6 Hard, 2 Insane): whether the
+  thinner bars play as empty is one of its questions.
+- The default is held here: `run_playtest.sh` next. The 16 songs (`outputs/playtest_1012_keys.txt`):
+  Easy 4 (SR 1.52-1.94), Normal 4 (2.14-2.68), Hard 6 (2.90-3.73), Insane 2 (4.24, 4.50); the
+  long-note charts at SR 1.52 (0.37), 3.23 (0.45) and 3.33 (0.39); 45-146 s.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
