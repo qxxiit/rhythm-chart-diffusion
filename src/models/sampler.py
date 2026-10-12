@@ -1685,21 +1685,28 @@ UNTANGLE_GRADES = {"Easy": 0.25, "Normal": 0.25, "Hard": 0.25, "Insane": 1 / 6}
                                 # (240 val songs, 2026-10-12)
 
 
-UNTANGLE_WIDE = {"Easy": 0.25, "Normal": 0.25, "Hard": 0.25, "Insane": 0.25, "Expert": 1 / 6}
+UNTANGLE_INSANE = {**UNTANGLE_GRADES, "Insane": 0.25}
+                                # untangle_window(insane=True): 1/4 beat in Insane too, where
+                                # moving the taps brought the fast jacks from 0.73 to 0.50 per
+                                # 100 notes (human 0.39) for SR -0.013 (run_wide, 2026-10-12)
+UNTANGLE_WIDE = {**UNTANGLE_INSANE, "Expert": 1 / 6}
                                 # untangle_window(wide=True): 1/4 beat in Insane too, 1/6 in
                                 # Expert. The default's fast jacks were 0.73 per 100 notes in
                                 # Insane against the human 0.39, two thirds with a chord; in
                                 # Expert 18% of them 1/6 beat apart (0.5 per 100 notes against
                                 # the human 0.02; 240 val songs, 2026-10-12)
-UNTANGLE_KEEP = ("Insane", "Expert")    # ... where, wide, a tap with no free lane stays: taking
-                                # them out cost Insane 0.022 SR on 9 smoke songs (10-12), where
-                                # the SR is under the target already
+UNTANGLE_KEEP = ("Insane", "Expert")    # ... where, wide or insane, a tap with no free lane
+                                # stays: taking them out cost Insane 0.022 SR on 9 smoke songs
+                                # (10-12), where the SR is under the target already. In Expert
+                                # the moves cost SR -0.037 for 15 taps a song (run_wide): the
+                                # jacks carry the SR there, and humans keep 1.8 per 100 notes
 
 
-def untangle_window(s: float, wide: bool = False) -> float | None:
-    """untangle_jacks' max_beats for the target SR s by UNTANGLE_GRADES, or UNTANGLE_WIDE
-    (None: none)."""
-    return (UNTANGLE_WIDE if wide else UNTANGLE_GRADES).get(grade_of(s))
+def untangle_window(s: float, wide: bool = False, insane: bool = False) -> float | None:
+    """untangle_jacks' max_beats for the target SR s by UNTANGLE_GRADES, or UNTANGLE_WIDE,
+    or UNTANGLE_INSANE (None: none)."""
+    table = UNTANGLE_WIDE if wide else UNTANGLE_INSANE if insane else UNTANGLE_GRADES
+    return table.get(grade_of(s))
 
 
 def _jack_free_lane(song: np.ndarray, onset: np.ndarray, times: np.ndarray, row: int,
@@ -1885,7 +1892,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               untangle_move: bool = False, untangle_grades: bool = False,
               alike: float | None = None, alike_keep: float | bool | None = None,
               strong: float | None = None, light: float | None = None,
-              light_alike: bool = False, untangle_wide: bool = False) -> np.ndarray:
+              light_alike: bool = False, untangle_wide: bool = False,
+              untangle_insane: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more), carry_rhythm
@@ -1899,7 +1907,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     beats it turns into a tap), fill_holes (holes: the threshold), rest_bars (rest: the
     threshold), thin_bars (light: the threshold; light_alike: its look-alikes thinned
     alike), untangle_jacks (untangle; untangle_move: its move; untangle_grades: the window
-    by the SR s, untangle_window; untangle_wide: its wide table), guideline_cap (chord_cap:
+    by the SR s, untangle_window; untangle_wide, untangle_insane: its wide and Insane
+    tables), guideline_cap (chord_cap:
     below that SR; with lane_guidance); a new array."""
     base = model
     if genre is not None or mapper is not None or stats is not None:
@@ -1951,7 +1960,7 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
         thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
                   s_audio=s_audio if light_alike else None)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
-              untangle_grades, release_gap, untangle_wide)
+              untangle_grades, release_gap, untangle_wide, untangle_insane)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
@@ -1977,14 +1986,14 @@ def _strong(song: np.ndarray, n_cells: int, mel: np.ndarray, timing_points, cell
 
 def _untangle(song: np.ndarray, n_cells: int, s: float, timing_points, cell_offset: int,
               untangle: bool, move: bool, grades: bool, release_gap: int,
-              wide: bool = False) -> int:
+              wide: bool = False, insane: bool = False) -> int:
     """untangle_jacks as post_song and generate_song ask for it (untangle off: none)."""
-    window = untangle_window(s, wide) if grades else UNTANGLE_BEATS
+    window = untangle_window(s, wide, insane) if grades else UNTANGLE_BEATS
     if not untangle or window is None:
         return 0
     return untangle_jacks(song, n_cells, _row_times(timing_points, cell_offset, n_cells),
                           max_beats=window, move=move, release_gap=release_gap,
-                          keep=wide and grade_of(s) in UNTANGLE_KEEP)
+                          keep=(wide or insane) and grade_of(s) in UNTANGLE_KEEP)
 
 
 def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: int,
@@ -2012,7 +2021,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   untangle_move: bool = False, untangle_grades: bool = False,
                   alike: float | None = None, alike_keep: float | bool | None = None,
                   strong: float | None = None, light: float | None = None,
-                  light_alike: bool = False, untangle_wide: bool = False) -> np.ndarray:
+                  light_alike: bool = False, untangle_wide: bool = False,
+                  untangle_insane: bool = False) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2088,8 +2098,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   within 1/6 beat (at 180 BPM) of a note there goes; untangle_move: to a
                   lane where it makes no jack, if there is one; untangle_grades: within
                   the grade's window instead (untangle_window: 1/4 beat to Hard, 1/6 in
-                  Insane, none from Expert up; untangle_wide: 1/4 in Insane, 1/6 in Expert,
-                  moved only there)
+                  Insane, none from Expert up; untangle_insane: 1/4 in Insane, the taps
+                  there moved only; untangle_wide: that and 1/6 in Expert, moved only)
     chord_cap     guideline_cap last, where s is under this SR (None: none; 2: Easy, 4: Easy
                   to Hard): rows over the ranking criteria's chord cap keep the taps the
                   lane passes' model likes most
@@ -2195,7 +2205,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
         thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
                   s_audio=s_audio if light_alike else None)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
-              untangle_grades, release_gap, untangle_wide)
+              untangle_grades, release_gap, untangle_wide, untangle_insane)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)

@@ -149,12 +149,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the rests, in charts under SR 2.7 a bar the model, asked about "
                          "the whole bar, expects to hold one or two onset rows with more than "
                          "this chance keeps its likeliest one or two (sampler.thin_bars); 0 = off")
-    ap.add_argument("--light-alike", action=argparse.BooleanOptionalAction, default=False,
+    ap.add_argument("--light-alike", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="--light: the bars that had a thinned bar's rhythm and sound like it "
-                         "are thinned alike; on trial, 2026-10-12")
+                         "are thinned alike")
+    ap.add_argument("--untangle-insane", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
+                    help="--untangle-grades: 1/4 beat in Insane too, the taps there moved only")
     ap.add_argument("--untangle-wide", action=argparse.BooleanOptionalAction, default=False,
-                    help="--untangle-grades: 1/4 beat in Insane too and 1/6 in Expert, the taps "
-                         "there moved only; on trial, 2026-10-12")
+                    help="--untangle-grades: 1/4 beat in Insane and 1/6 in Expert, the taps "
+                         "there moved only (Expert's SR -0.037, 2026-10-12)")
     ap.add_argument("--chord-cap", type=float, default=2.0,   # 2026-10-12
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap (Easy and Normal 2 notes, Hard 3) keep "
@@ -299,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
                            alike_keep=a.alike_keep, strong=a.strong_chords or None,
                                hold_up=hold_up, light=a.light or None,
                                light_alike=a.light_alike, untangle_wide=a.untangle_wide,
+                               untangle_insane=a.untangle_insane,
                            onset_taper=taper, holes=a.holes or None,
                            carry=a.carry_rhythm, carry_keep=a.carry_keep, carry_holds=a.carry_holds,
                            carry_rows=a.carry_rows, ln_tidy=a.ln_tidy or None,
@@ -357,7 +362,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-li{a.light:g}" + ("a" if a.light_alike else "")
     if a.untangle:
         order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "") + (
-            "w" if a.untangle_wide else "")
+            "w" if a.untangle_wide else "") + ("i" if a.untangle_insane and a.untangle_grades
+                                                and not a.untangle_wide else "")
     if a.chord_cap:
         order += f"-cc{a.chord_cap:g}"
     if "genre" in style:

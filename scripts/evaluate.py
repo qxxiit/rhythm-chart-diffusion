@@ -404,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--untangle-wide", action="store_true",
                     help="--untangle-grades: 1/4 beat in Insane too and 1/6 in Expert, the taps "
                          "there moved only (sampler.UNTANGLE_WIDE, tag w)")
+    ap.add_argument("--untangle-insane", action="store_true",
+                    help="--untangle-grades: 1/4 beat in Insane too, the taps there moved only "
+                         "(sampler.UNTANGLE_INSANE, tag i)")
     ap.add_argument("--chord-cap", type=float, default=None,
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap keep the taps the model likes most "
@@ -552,7 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     alike_tag = "" if a.alike is None else f"_al{a.alike:g}" + (
         "" if a.alike_keep is None else "k" + (f"{a.alike_keep:g}" if a.alike_keep else ""))
     end_tag = ("_uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
-               + ("w" if a.untangle_wide else "") if a.untangle else "") + (
+               + ("w" if a.untangle_wide else "") + ("i" if a.untangle_insane else "")
+               if a.untangle else "") + (
         f"_cc{a.chord_cap:g}" if a.chord_cap is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
@@ -658,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
                                    light_alike=a.light_alike, untangle_wide=a.untangle_wide,
+                                   untangle_insane=a.untangle_insane,
                                    copy_min_lag=a.copy_min_lag,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
@@ -685,6 +690,7 @@ def main(argv: list[str] | None = None) -> int:
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    light=a.light, light_alike=a.light_alike,
                                    untangle_wide=a.untangle_wide,
+                                   untangle_insane=a.untangle_insane,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side,
                                    stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
@@ -786,7 +792,7 @@ def main(argv: list[str] | None = None) -> int:
                "untangle_move": a.untangle_move, "untangle_grades": a.untangle_grades,
                "alike": a.alike, "alike_keep": a.alike_keep, "strong_chords": a.strong_chords,
                "light": a.light, "light_alike": a.light_alike,
-               "untangle_wide": a.untangle_wide,
+               "untangle_wide": a.untangle_wide, "untangle_insane": a.untangle_insane,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

@@ -2767,6 +2767,78 @@ Predictions (paired means; `section_light.py` for the pairs with light bars):
    0.39); Expert 1-4 moved, 3.3 -> 3.0-3.3 (1.8); SR within ±0.005; F1 within ±0.001; notes and
    chords as they were.
 
+**Results (`run_wide.sh`, late morning of 10-12)** — paired means; bars, taps and the by-grade
+means are per-song means; the pairs of returning bars with a light bar from `section_light.py`;
+240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 0 | the new default: hold_share 0.21-0.22 (Easy 0.20-0.22); rows over the cap Easy 0.001-0.003, Normal 0.027-0.031 | 0.216 (0.211); 0.0016, 0.0294 | hit ×4 |
+| 0 | Easy bars with one or two onset rows 0.12-0.13; SR bias -0.033 to -0.042 (Easy +0.08 to +0.10, Hard -0.010 to -0.020, Expert -0.22 to -0.24) | 0.126; -0.040 (+0.091, -0.015, -0.228) | hit ×5 |
+| 0 | F1 0.3824-0.3832; ln_f1 0.28-0.31; 180-220 more passes | 0.3828; 0.295; +196 | hit ×3 |
+| 1 | repeats thinned alike: Easy 5-8 bars a song, Normal 2.5-5; one or two rows Easy 0.13-0.15, Normal 0.05-0.07 | 8.3, 3.1; 0.149, 0.052 | miss (just over), hit, hit, hit |
+| 1 | pairs with a light bar the same rhythm Easy 0.18-0.25, Normal 0.10-0.25; every pair with a note in Easy +0.01 to +0.03 | 0.239 (human 0.308), 0.172 (0.396); +0.009 | hit, hit, miss (just under) |
+| 1 | notes Easy -0.3% to -1.5% more; F1 0 to -0.002; SR 0 to -0.005 | -1.7%; Easy -0.0017; Easy -0.005 | miss (more), hit, hit |
+| 2 | jack windows wide: Insane 2-5 taps moved, fast jacks 0.40-0.55; Expert 1-4 moved, 3.0-3.3 | 5.1, 0.50; 14.8, 2.79 | miss (just over), hit, miss (more), miss (lower) |
+| 2 | SR within ±0.005; F1 within ±0.001; notes and chords as they were | -0.006 (Insane -0.013, Expert -0.037); +0.0001; as they were | miss, hit, hit |
+
+All runs (per song; human: hold_share 0.218, Easy / Normal bars with one or two onset rows
+0.129 / 0.038, chord_over Easy 0.005, fast_jacks Insane / Expert 0.39 / 1.82, section_copy 0.244,
+alike_rhythm 0.622):
+
+| run | hold_share | Easy / Normal 1-2-row bars | chord_over Easy / Normal | fast_jacks Insane / Expert | section_rhythm / copy | alike | SR bias (Easy / Normal / Hard / Insane / Expert) | density | F1 | passes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| run_space's default N | 0.156 | 0.073 / 0.027 | 0.001 / 0.028 | 0.73 / 3.35 | 0.396 / 0.242 | 0.493 | -0.054 (+0.079 / +0.068 / -0.026 / -0.114 / -0.252) | 1.024 | 0.3825 | 386 |
+| the new default M (hold-up with the cap rule, light 0.5) | 0.216 | 0.126 / 0.044 | 0.002 / 0.029 | 0.73 / 3.28 | 0.384 / 0.227 | 0.489 | -0.040 (+0.091 / +0.079 / -0.015 / -0.096 / -0.228) | 1.018 | 0.3828 | 583 |
+| N with light 0.5 | 0.156 | 0.125 / 0.044 | 0.001 / 0.028 | 0.73 / 3.35 | 0.391 / 0.236 | 0.493 | -0.055 (+0.074 / +0.068 / ...) | 1.018 | 0.3825 | - |
+| N with light 0.5, repeats alike | 0.155 | 0.149 / 0.052 | 0.001 / 0.028 | 0.73 / 3.35 | 0.387 / 0.234 | 0.489 | -0.056 (+0.070 / +0.068 / ...) | 1.014 | 0.3821 | - |
+| M with the jack windows wide | 0.216 | 0.126 / 0.044 | 0.002 / 0.029 | 0.50 / 2.79 | 0.384 / 0.226 | 0.489 | -0.046 (+0.091 / +0.079 / -0.015 / -0.110 / -0.265) | 1.018 | 0.3829 | - |
+
+What it says:
+
+- **The new default came out as the two passes added**, the cap rule doing its part: rows over
+  the cap in Easy 0.0016 (with the hold-up alone 0.013, human 0.005), long notes 0.216, Easy's
+  light bars 0.126. The returning sections' copies fall a little (0.242 -> 0.227: Easy 0.43 ->
+  0.38, towards the human 0.33; Expert 0.22 -> 0.20, human 0.18).
+- **Repeats thinned alike make light bars come back as the human ones do**: of the pairs of bars
+  of a returning stretch with a light bar in them, the same rhythm in Easy 0.143 -> 0.239 (human
+  0.308), Normal 0.049 -> 0.172 (0.396), every pair with a note +0.009. They thin twice as many
+  bars, so Easy's light bars pass the human a little (0.149 against 0.129) with notes -1.7% and
+  SR -0.005 more (Easy still +0.07 over the target), F1 -0.0017. Adopted.
+- **The jack windows wide**: in Insane, moving the chord taps (5 a song) brings the fast jacks
+  0.73 -> 0.50 (human 0.39) for SR -0.013; in Expert 15 taps a song move and the SR falls 0.037,
+  where it is short by 0.23 already and humans keep 1.8 per 100 notes: the jacks carry the SR
+  there. Adopted for Insane only (`--untangle-insane`, 1/4 beat, moved only).
+
+### 2026-10-12 · The default to play: a last check and the playtest of 10-12 (predictions)
+
+From run_wide: the repeats of a thinned bar thinned alike (`--light-alike`) and the jack window
+1/4 beat in Insane with the taps moved only (`--untangle-insane`, tag `i`, playtest `ujmgi`;
+`sampler.UNTANGLE_INSANE`) are the default (DECISIONS 10-12). Nothing larger is waiting, and the
+numbers have started to need the players (the section columns hid the light bars; what is left,
+the SR over the target in Easy and Normal and under it from Insane up, the flow of streams, the
+sameness of Insane and up, the long notes' releases, is a question of which of them players
+notice): the default is held here and played.
+
+`run_check.sh` (patch 0051), on `$T`, 240 val songs: the default (run_wide's M with the repeats
+thinned alike and the Insane jack window), against M. Predictions (paired, as the two passes of
+run_wide added): Easy 7-9 bars a song thinned, Normal 2.5-4; bars with one or two onset rows
+Easy 0.14-0.16, Normal 0.05-0.06 (human 0.129 / 0.038); Insane fast jacks 0.48-0.56 (human
+0.39), 4-6 taps a song moved and none taken out there, Expert as it was (3.28 ± 0.02); SR bias
+-0.042 to -0.048 (Easy +0.08 to +0.09, Insane -0.105 to -0.112); density 1.012-1.016; F1
+0.3822-0.3830; hold_share 0.214-0.218.
+
+The playtest of 10-12 (`run_playtest.sh`, after the check): a pairs pack as on 10-04 and 10-07
+(the human chart and the default's, blind, forced choice "which is human" and "which was more
+fun"), 16 val songs at SR 1.5-4.5 and at most 150 s, none from an earlier pack (82 left out),
+3 of them long-note charts (the human chart's share 0.37-0.45; `pick_playtest.py`), generated
+from the audio with the human chart's stats (`st`, the long-note share asked), tag 1012.
+Predictions (one player): the AI chart taken for human 1-4 of 16 (0 of 16 on 10-04, 0 of 10 on
+10-06); the AI chart more fun in 3-7 of 16; fewer remarks on "random" or "nothing comes back"
+than on 10-07 (no bite) and on 10-04 (no patterns), more on the low levels' density and on
+jacks from Insane up; the long-note charts not given away by their long notes (10-06: PT13's
+human chart gave itself away by its committed long-note style).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

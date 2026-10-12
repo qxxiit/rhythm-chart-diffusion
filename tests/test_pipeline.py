@@ -363,7 +363,7 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert sample.main([*common, "--key", key, "--stats", "oracle", "--carry-rhythm", "0",
                         "--ln-tidy", "1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob(
-        "*-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt1-*-ujmg-cc2-*.osu"))
+        "*-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt1-*-li0.5a-ujmgi-cc2-*.osu"))
     assert sample.main([*common, "--key", key, "--stats", "oracle", "--no-carry-keep",
                         "--carry-rows", "--no-carry-holds", "--ln-tidy", "1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob("*-rc0r-sc1-cs4kb-cp0l8-al2k4-lt1-*.osu"))
@@ -484,7 +484,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
     made = ("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1"
-            "-li0.5-ujmg-cc2_T4_*")
+            "-li0.5a-ujmgi-cc2_T4_*")
     assert list((tmp_path / "r" / "samples").glob(made + ".osu"))
     import zipfile
     osz = next((tmp_path / "r" / "samples").glob(made + ".osz"))
@@ -506,7 +506,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5-ujmg-cc2]"
+    assert all("-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5a-ujmgi-cc2]"
                in p.name for p in charts)
     # quiet bars, onset gate tapered by SR, rhythms carried over, copies from 8 back, short
     # long notes among taps made taps, stream holes, rests
@@ -527,13 +527,13 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                           "--untangle-move", "--untangle-grades",
                           "--out", str(tmp_path / "gen4")]) == 0
     made = list((tmp_path / "gen4").glob("*.osu"))
-    assert made and all("-rc0kh1-sc1-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5-ujmg]" in p.name
+    assert made and all("-rc0kh1-sc1-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5a-ujmgi]" in p.name
                         for p in made)
     assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
                           "--no-section-back", "--no-untangle", "--alike", "2", "--alike-keep",
                           "--strong-chords", "1", "--out", str(tmp_path / "gen5")]) == 0
     made = list((tmp_path / "gen5").glob("*.osu"))
-    assert made and all("-rc0kh1-sc1-cs4k-cp0l8-al2k-lt0.5-fh0.5-rb1-li0.5-cc2]" in p.name
+    assert made and all("-rc0kh1-sc1-cs4k-cp0l8-al2k-lt0.5-fh0.5-rb1-li0.5a-cc2]" in p.name
                         for p in made)
     assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
                           "--no-alike", "--strong-chords", "0", "--hold-share", "0.3",
@@ -842,6 +842,9 @@ def test_playtest_settings() -> None:
     wide = parse_setting("random:128:continue:fwd+rb1+li0.5a+ujmgw")
     assert wide["light_alike"] and wide["untangle_wide"] and wide["untangle_grades"]
     assert wide["name"].endswith("rb1 li0.5a ujmgw") and not keep4["light_alike"]
+    insane = parse_setting("random:128:continue:fwd+rb1+li0.5a+ujmgi")
+    assert insane["untangle_insane"] and not insane["untangle_wide"]
+    assert insane["name"].endswith("rb1 li0.5a ujmgi") and not wide["untangle_insane"]
     assert parse_setting("random:128:continue:al2")["alike_keep"] is None
     assert parse_setting("random:128:continue:hu0.3")["hold_share"] == 0.3
     assert parse_setting("random:128")["sections"] is None

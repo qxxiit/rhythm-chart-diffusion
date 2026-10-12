@@ -1595,3 +1595,4 @@ def test_untangle_window_by_grade() -> None:
     assert untangle_window(4.5, wide=True) == 0.25
     assert untangle_window(5.5, wide=True) == pytest.approx(1 / 6)
     assert untangle_window(7.0, wide=True) is None and untangle_window(1.5, wide=True) == 0.25
+    assert untangle_window(4.5, insane=True) == 0.25 and untangle_window(5.5, insane=True) is None

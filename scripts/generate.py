@@ -62,18 +62,18 @@ it where the model would start one with probability 0.5 or more (--holes 0.5; 0 
 off). Bars where the model expects under one note start, asked about the whole bar
 with the chart around it, are left empty (--rest 1; 0 turns it off), which brought the
 bars without a note to the human count (EXPERIMENTS 2026-10-07 night), and in Easy and
-Normal a bar the model expects to hold one or two onset rows (chance over 0.5) keeps those
-(--light 0.5; 0 turns it off), which brought Easy's light bars to the human share
-(EXPERIMENTS 2026-10-12). A chord's tap that
-comes back to its lane within the guidelines' 1/4 beat (up to Hard; 1/6 in Insane, none
-from Expert up) moves to a lane of its row where it makes no jack, or goes (--untangle
---untangle-move --untangle-grades; --no-untangle turns it off), which brought the fast
-jacks of Hard to the human level (EXPERIMENTS 2026-10-12). Last, in charts under SR 2
+Normal a bar the model expects to hold one or two onset rows (chance over 0.5) keeps those,
+its repeats (the same rhythm, the same sound) alike (--light 0.5 --light-alike; 0 turns it
+off), which brought Easy's light bars to about the human share, coming back as light as
+often as in human charts (EXPERIMENTS 2026-10-12). A chord's tap that
+comes back to its lane within the guidelines' 1/4 beat (up to Insane, none from Expert up)
+moves to a lane of its row where it makes no jack, or goes (in Insane it stays; --untangle
+--untangle-move --untangle-grades --untangle-insane; --no-untangle turns it off), which
+brought the fast jacks of Hard to the human level and Insane's from 0.73 to 0.50 per 100
+notes (human 0.39; EXPERIMENTS 2026-10-12). Last, in charts under SR 2
 (Easy) no row holds more than 2 notes, long notes held counting, as the ranking criteria
-ask (--chord-cap 2; 0 turns it off, 4 caps Normal and Hard too). On trial and off by
-default (EXPERIMENTS 2026-10-12): --light-alike, the repeats of a thinned bar (its rhythm,
-its sound) thinned alike; --untangle-wide, the jack windows 1/4 beat in Insane, 1/6 in
-Expert, the taps moved only.
+ask (--chord-cap 2; 0 turns it off, 4 caps Normal and Hard too). --untangle-wide (1/6 beat
+in Expert too) is off: it cost Expert 0.037 SR (EXPERIMENTS 2026-10-12).
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -358,12 +358,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the rests, in charts under SR 2.7 a bar the model, asked about "
                          "the whole bar, expects to hold one or two onset rows with more than "
                          "this chance keeps its likeliest one or two (sampler.thin_bars); 0 = off")
-    ap.add_argument("--light-alike", action=argparse.BooleanOptionalAction, default=False,
+    ap.add_argument("--light-alike", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
                     help="--light: the bars that had a thinned bar's rhythm and sound like it "
-                         "are thinned alike; on trial, 2026-10-12")
+                         "are thinned alike")
+    ap.add_argument("--untangle-insane", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
+                    help="--untangle-grades: 1/4 beat in Insane too, the taps there moved only")
     ap.add_argument("--untangle-wide", action=argparse.BooleanOptionalAction, default=False,
-                    help="--untangle-grades: 1/4 beat in Insane too and 1/6 in Expert, the taps "
-                         "there moved only; on trial, 2026-10-12")
+                    help="--untangle-grades: 1/4 beat in Insane and 1/6 in Expert, the taps "
+                         "there moved only (Expert's SR -0.037, 2026-10-12)")
     ap.add_argument("--chord-cap", type=float, default=2.0,   # 2026-10-12
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap (Easy and Normal 2 notes, Hard 3) keep "
@@ -559,7 +563,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-li{a.light:g}" + ("a" if a.light_alike else "")
     if a.untangle:
         order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "") + (
-            "w" if a.untangle_wide else "")
+            "w" if a.untangle_wide else "") + ("i" if a.untangle_insane and a.untangle_grades
+                                                and not a.untangle_wide else "")
     if a.chord_cap:
         order += f"-cc{a.chord_cap:g}"
     if a.genre is not None:
@@ -604,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
                                alike_keep=a.alike_keep, strong=a.strong_chords or None,
                                hold_up=hold_up and share is not None, light=a.light or None,
                                light_alike=a.light_alike, untangle_wide=a.untangle_wide,
+                               untangle_insane=a.untangle_insane,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
                                carry_holds=a.carry_holds, carry_rows=a.carry_rows,
