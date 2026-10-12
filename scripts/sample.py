@@ -139,15 +139,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strong-chords", type=float, default=1.0,   # 2026-10-12
                     help="after the carry, a chord gives a tap to a single note of its beat on "
                          "an onset this many z stronger (sampler.strong_chords); 0 = off")
-    ap.add_argument("--hold-up", action="store_true",
-                    help="the long notes as sampled stay and taps become long notes, where the "
-                         "model expects them most, up to --hold-share or the ln of --stats "
-                         "(sampler.refine_holds only_more); on trial, 2026-10-12")
-    ap.add_argument("--light", type=float, default=None,
+    ap.add_argument("--hold-up", action=argparse.BooleanOptionalAction,
+                    default=True,   # 2026-10-12
+                    help="when --stats asks for a long-note share, the long notes as sampled "
+                         "stay and taps become long notes up to it, where the model expects "
+                         "them most (sampler.refine_holds only_more); --hold-share X instead "
+                         "decides them all again, to X")
+    ap.add_argument("--light", type=float, default=0.5,   # 2026-10-12
                     help="after the rests, in charts under SR 2.7 a bar the model, asked about "
                          "the whole bar, expects to hold one or two onset rows with more than "
-                         "this chance keeps its likeliest one or two (sampler.thin_bars); on "
-                         "trial, 2026-10-12")
+                         "this chance keeps its likeliest one or two (sampler.thin_bars); 0 = off")
+    ap.add_argument("--light-alike", action=argparse.BooleanOptionalAction, default=False,
+                    help="--light: the bars that had a thinned bar's rhythm and sound like it "
+                         "are thinned alike; on trial, 2026-10-12")
+    ap.add_argument("--untangle-wide", action=argparse.BooleanOptionalAction, default=False,
+                    help="--untangle-grades: 1/4 beat in Insane too and 1/6 in Expert, the taps "
+                         "there moved only; on trial, 2026-10-12")
     ap.add_argument("--chord-cap", type=float, default=2.0,   # 2026-10-12
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap (Easy and Normal 2 notes, Hard 3) keep "
@@ -274,12 +281,9 @@ def main(argv: list[str] | None = None) -> int:
                                           for n, v in wanted.items()))
         if a.style_guidance and not style:
             style = {"style_guidance": a.style_guidance}          # guidance towards the stats
-    share = a.hold_share if a.hold_share is not None or not a.hold_up \
-        else wanted.get("hold_share")
-    if a.hold_up and share is None:
-        print("--hold-up: the share to reach, --hold-share X or --stats (oracle or ln=X)",
-              file=sys.stderr)
-        return 2
+    asked = wanted.get("hold_share")                     # a long-note share asked
+    hold_up = a.hold_up and a.hold_share is None and asked is not None and np.isfinite(asked)
+    share = a.hold_share if a.hold_share is not None else asked if hold_up else None
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
                            order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
@@ -293,7 +297,8 @@ def main(argv: list[str] | None = None) -> int:
                            untangle=a.untangle, untangle_move=a.untangle_move,
                            untangle_grades=a.untangle_grades, alike=a.alike,
                            alike_keep=a.alike_keep, strong=a.strong_chords or None,
-                               hold_up=a.hold_up, light=a.light,
+                               hold_up=hold_up, light=a.light or None,
+                               light_alike=a.light_alike, untangle_wide=a.untangle_wide,
                            onset_taper=taper, holes=a.holes or None,
                            carry=a.carry_rhythm, carry_keep=a.carry_keep, carry_holds=a.carry_holds,
                            carry_rows=a.carry_rows, ln_tidy=a.ln_tidy or None,
@@ -324,9 +329,10 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
         order += f"-og{a.onset_bias:g}" + ("-ot" if taper is not None else "")
-    if a.refine_holds or a.hold_share is not None or a.hold_up:
-        order += ("-hu" if a.hold_up else "-hr") + (
-            f"{a.hold_share:g}" if a.hold_share is not None else "")
+    if a.refine_holds or a.hold_share is not None:
+        order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
+    elif hold_up:
+        order += "-hu"
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
             "r" if a.carry_rows else "") + (
@@ -347,10 +353,11 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
-    if a.light is not None:
-        order += f"-li{a.light:g}"
+    if a.light:
+        order += f"-li{a.light:g}" + ("a" if a.light_alike else "")
     if a.untangle:
-        order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
+        order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "") + (
+            "w" if a.untangle_wide else "")
     if a.chord_cap:
         order += f"-cc{a.chord_cap:g}"
     if "genre" in style:

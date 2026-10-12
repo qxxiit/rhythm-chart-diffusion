@@ -401,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--untangle-grades", action="store_true",
                     help="--untangle: within the grade's window instead, 1/4 beat to Hard, 1/6 in "
                          "Insane, none from Expert up (sampler.untangle_window, tag g)")
+    ap.add_argument("--untangle-wide", action="store_true",
+                    help="--untangle-grades: 1/4 beat in Insane too and 1/6 in Expert, the taps "
+                         "there moved only (sampler.UNTANGLE_WIDE, tag w)")
     ap.add_argument("--chord-cap", type=float, default=None,
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap keep the taps the model likes most "
@@ -420,6 +423,9 @@ def main(argv: list[str] | None = None) -> int:
                          "masked, expects to hold one or two onset rows with more than this "
                          "chance keeps its likeliest one or two (sampler.thin_bars, tag _li); "
                          "also on --from-charts")
+    ap.add_argument("--light-alike", action="store_true",
+                    help="--light: the bars that had a thinned bar's rhythm and sound like it "
+                         "are thinned alike (tag a)")
     ap.add_argument("--sr-offset", type=float, default=0.0,
                     help="sample at the target SR + this (the onset gate leaves the charts "
                          "0.14 SR under the target, EXPERIMENTS 2026-10-07); scored against "
@@ -546,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     alike_tag = "" if a.alike is None else f"_al{a.alike:g}" + (
         "" if a.alike_keep is None else "k" + (f"{a.alike_keep:g}" if a.alike_keep else ""))
     end_tag = ("_uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
-               if a.untangle else "") + (
+               + ("w" if a.untangle_wide else "") if a.untangle else "") + (
         f"_cc{a.chord_cap:g}" if a.chord_cap is not None else "")
     if a.copy_bias is not None:
         tag += f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
@@ -557,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_fh{a.fill_holes:g}"
     if a.rest is not None:
         tag += f"_rb{a.rest:g}"
-    light_tag = "" if a.light is None else f"_li{a.light:g}"
+    light_tag = "" if a.light is None else f"_li{a.light:g}" + ("a" if a.light_alike else "")
     tag += light_tag
     tag += end_tag
     if a.sr_offset:
@@ -651,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
+                                   light_alike=a.light_alike, untangle_wide=a.untangle_wide,
                                    copy_min_lag=a.copy_min_lag,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
@@ -676,7 +683,9 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    copy_min_lag=a.copy_min_lag,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
-                                   light=a.light, loud_bias=a.loud_bias, loud_side=a.loud_side,
+                                   light=a.light, light_alike=a.light_alike,
+                                   untangle_wide=a.untangle_wide,
+                                   loud_bias=a.loud_bias, loud_side=a.loud_side,
                                    stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
@@ -776,7 +785,8 @@ def main(argv: list[str] | None = None) -> int:
                "chord_cap": a.chord_cap, "untangle": a.untangle,
                "untangle_move": a.untangle_move, "untangle_grades": a.untangle_grades,
                "alike": a.alike, "alike_keep": a.alike_keep, "strong_chords": a.strong_chords,
-               "light": a.light,
+               "light": a.light, "light_alike": a.light_alike,
+               "untangle_wide": a.untangle_wide,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

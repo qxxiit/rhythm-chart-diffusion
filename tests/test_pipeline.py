@@ -338,9 +338,10 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                           "--section-keep", "--section-back", "--untangle", "--untangle-move",
                           "--untangle-grades", "--chord-cap", "2", "--alike", "2",
                           "--alike-keep", "--strong-chords", "1", "--hold-share", "oracle",
-                          "--hold-up", "--light", "0.5"]) == 0
+                          "--hold-up", "--light", "0.5", "--light-alike",
+                          "--untangle-wide"]) == 0
     late = oracle_run.parent / (oracle_run.name
-                                + "_hu-oracle_sc1_cs4kb_al2k_li0.5_ujmg_cc2_st-oracle")
+                                + "_hu-oracle_sc1_cs4kb_al2k_li0.5a_ujmgw_cc2_st-oracle")
     with open(late / "per_song.csv", newline="") as f:
         rows = list(csv.DictReader(f))
     assert all(int(r["section_back"]) <= int(r["section_bars"]) for r in rows)
@@ -353,7 +354,8 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert late_summary["untangle_move"] and late_summary["untangle_grades"]
     assert late_summary["alike"] == 2 and late_summary["alike_keep"] == 0
     assert late_summary["strong_chords"] == 1 and late_summary["hold_up"]
-    assert late_summary["light"] == 0.5
+    assert late_summary["light"] == 0.5 and late_summary["light_alike"]
+    assert late_summary["untangle_wide"]
     assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
                           "--from-charts", str(oracle_run), "--hold-up"]) == 2   # no share
     assert summary["copy_min_lag"] == 4 and summary["carry_keep"] and summary["carry_holds"] == -1
@@ -482,7 +484,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                         "--cache", str(data / "cache"), "--steps", "4", "--order", "noisy",
                         "--temperature", "2", "--device", "cpu"]) == 0
     made = ("*_noisy2-fwd-ref2t0.5-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1"
-            "-ujmg-cc2_T4_*")
+            "-li0.5-ujmg-cc2_T4_*")
     assert list((tmp_path / "r" / "samples").glob(made + ".osu"))
     import zipfile
     osz = next((tmp_path / "r" / "samples").glob(made + ".osz"))
@@ -504,8 +506,8 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     for p in charts:
         c = parse_osu(p)
         assert c.audio_filename == "audio.mp3" and c.timing_points == [(t0, bl)]
-    assert all("-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1-ujmg-cc2]" in p.name
-               for p in charts)
+    assert all("-lbq0.1-og1-ot-rc0kh1-sc1-cs4kb-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5-ujmg-cc2]"
+               in p.name for p in charts)
     # quiet bars, onset gate tapered by SR, rhythms carried over, copies from 8 back, short
     # long notes among taps made taps, stream holes, rests
     assert generate.main([*common, "--bpm", "120", "--sr", "2", "--onset-taper", "5,2,1",
@@ -525,24 +527,25 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                           "--untangle-move", "--untangle-grades",
                           "--out", str(tmp_path / "gen4")]) == 0
     made = list((tmp_path / "gen4").glob("*.osu"))
-    assert made and all("-rc0kh1-sc1-cp0l8-al2k4-lt0.5-fh0.5-rb1-ujmg]" in p.name for p in made)
+    assert made and all("-rc0kh1-sc1-cp0l8-al2k4-lt0.5-fh0.5-rb1-li0.5-ujmg]" in p.name
+                        for p in made)
     assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
                           "--no-section-back", "--no-untangle", "--alike", "2", "--alike-keep",
                           "--strong-chords", "1", "--out", str(tmp_path / "gen5")]) == 0
     made = list((tmp_path / "gen5").glob("*.osu"))
-    assert made and all("-rc0kh1-sc1-cs4k-cp0l8-al2k-lt0.5-fh0.5-rb1-cc2]" in p.name for p in made)
-    assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
-                          "--no-alike", "--strong-chords", "0", "--hold-share", "0.3",
-                          "--hold-up", "--light", "0.5", "--out", str(tmp_path / "gen6")]) == 0
-    made = list((tmp_path / "gen6").glob("*.osu"))
-    assert made and all("-hu0.3-rc0kh1-cs4kb-cp0l8-lt0.5-fh0.5-rb1-li0.5-ujmg-cc2]" in p.name
+    assert made and all("-rc0kh1-sc1-cs4k-cp0l8-al2k-lt0.5-fh0.5-rb1-li0.5-cc2]" in p.name
                         for p in made)
     assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
-                          "--no-alike-keep", "--hold-up", "--out", str(tmp_path / "gen7")]) == 2
+                          "--no-alike", "--strong-chords", "0", "--hold-share", "0.3",
+                          "--light-alike", "--untangle-wide",
+                          "--out", str(tmp_path / "gen6")]) == 0
+    made = list((tmp_path / "gen6").glob("*.osu"))
+    assert made and all("-hr0.3-rc0kh1-cs4kb-cp0l8-lt0.5-fh0.5-rb1-li0.5a-ujmgw-cc2]" in p.name
+                        for p in made)
     assert generate.main([*common, "--bpm", str(60000 / bl), "--offset", str(t0), "--sr", "2",
-                          "--no-alike-keep", "--out", str(tmp_path / "gen7")]) == 0
+                          "--no-alike-keep", "--light", "0", "--out", str(tmp_path / "gen7")]) == 0
     made = list((tmp_path / "gen7").glob("*.osu"))
-    assert made and all("-cp0l8-al2-lt0.5-" in p.name for p in made)
+    assert made and all("-cp0l8-al2-lt0.5-" in p.name and "-li" not in p.name for p in made)
     # the model input from the audio file equals the one training read from the cache
     with open(data / "manifest.csv", newline="") as f:
         key = next(r["key"] for r in csv.DictReader(f)
@@ -836,6 +839,9 @@ def test_playtest_settings() -> None:
     assert (keep4["alike"], keep4["alike_keep"], keep4["light"]) == (2, 4, 0.5)
     assert keep4["hold_up"] and keep4["hold_share"] == "human"
     assert keep4["name"].endswith("hu rc0kh1 cs4kb cp0l8 al2k4 rb1 li0.5 ujmg")
+    wide = parse_setting("random:128:continue:fwd+rb1+li0.5a+ujmgw")
+    assert wide["light_alike"] and wide["untangle_wide"] and wide["untangle_grades"]
+    assert wide["name"].endswith("rb1 li0.5a ujmgw") and not keep4["light_alike"]
     assert parse_setting("random:128:continue:al2")["alike_keep"] is None
     assert parse_setting("random:128:continue:hu0.3")["hold_share"] == 0.3
     assert parse_setting("random:128")["sections"] is None

@@ -140,7 +140,8 @@ def parse_setting(text: str) -> dict:
     single note of its beat on an onset Z stronger (sampler.strong_chords); hu, the long notes
     as sampled kept and taps made long notes up to the human chart's share (huX: share X;
     sampler.refine_holds only_more); liP, in charts under SR 2.7 bars the model expects to
-    hold one or two onset rows with more than chance P keep those (sampler.thin_bars)."""
+    hold one or two onset rows with more than chance P keep those (sampler.thin_bars; liPa
+    their look-alikes thinned alike); ujmgw, the jack windows wide (sampler.UNTANGLE_WIDE)."""
     parts = text.split(":")
     if not 1 <= len(parts) <= 4:
         raise ValueError(f"bad setting {text!r}: order:steps[:mode[:extras]]")
@@ -163,6 +164,7 @@ def parse_setting(text: str) -> dict:
     sections, section_keep, section_back, section_lanes = None, False, False, False
     chord_cap, untangle, untangle_move, untangle_grades = None, False, False, False
     alike, alike_keep, strong, hold_up, light = None, None, None, False, None
+    light_alike, untangle_wide = False, False
     for item in parts[3].split("+") if len(parts) > 3 and parts[3] else []:
         head, _, t = item.partition("@")
         if head == "fwd":
@@ -189,7 +191,8 @@ def parse_setting(text: str) -> dict:
         elif head.startswith("hu") and not t:
             hold_share, hold_up = (float(head[2:]) if head[2:] else "human"), True
         elif head.startswith("li") and not t:
-            light = float(head[2:])
+            light_alike = head.endswith("a")
+            light = float(head[2:].removesuffix("a"))
         elif head.startswith("lbq") and not t:
             loud_bias, loud_side = float(head[3:]), "quiet"
         elif head.startswith("lb") and not t:
@@ -219,8 +222,9 @@ def parse_setting(text: str) -> dict:
             ln_tidy = float(head[2:])
         elif head.startswith("cc") and not t:
             chord_cap = float(head[2:]) if head[2:] else 4.0
-        elif head in ("uj", "ujm", "ujg", "ujmg") and not t:
+        elif head.startswith("uj") and set(head[2:]) <= set("mgw") and not t:
             untangle, untangle_move, untangle_grades = True, "m" in head[2:], "g" in head[2:]
+            untangle_wide = "w" in head[2:]
         elif head.startswith("al") and not t:
             value, k, keep = head[2:].partition("k")
             alike, alike_keep = float(value), (float(keep) if keep else 0.0) if k else None
@@ -237,8 +241,8 @@ def parse_setting(text: str) -> dict:
         else:
             raise ValueError(f"bad extra {item!r} in {text!r}: refN[@T], fwd[@T], spread, ebX, "
                              "jbX, cpX[lN], style, sgW, lgW, hr, ln[X], lbX, lbqX, ogX, ot, "
-                             "rcB[k][r][hC], csB[k][b][n], alB[k[X]], ltX, fhX, rbX, scZ, uj[m][g], "
-                             "cc[X], hu[X], liP, st, stsample")
+                             "rcB[k][r][hC], csB[k][b][n], alB[k[X]], ltX, fhX, rbX, scZ, uj[m][g][w], "
+                             "cc[X], hu[X], liP[a], st, stsample")
     if (guidance or lane_guidance) and not style and not stats:
         raise ValueError(f"sgW in {text!r} guides towards a style or chart stats: add style, "
                          "st or stsample")
@@ -272,9 +276,9 @@ def parse_setting(text: str) -> dict:
         + ([f"lg{lane_guidance:g}"] if lane_guidance is not None else []) \
         + ([f"og{onset:g}"] if onset else []) + (["ot"] if taper is not None else []) \
         + ([f"fh{holes:g}"] if holes else []) + ([f"rb{rest:g}"] if rest else []) \
-        + ([f"li{light:g}"] if light is not None else []) \
-        + (["uj" + ("m" if untangle_move else "") + ("g" if untangle_grades else "")]
-           if untangle else []) \
+        + ([f"li{light:g}" + ("a" if light_alike else "")] if light is not None else []) \
+        + (["uj" + ("m" if untangle_move else "") + ("g" if untangle_grades else "")
+            + ("w" if untangle_wide else "")] if untangle else []) \
         + ([f"cc{chord_cap:g}"] if chord_cap is not None else [])
     name_ = f"ai {name} T{steps_name(steps)} {mode}" + (" " + " ".join(extras) if extras else "")
     return {"order": order, "temperature": temperature, "steps": steps, "mode": mode,
@@ -290,7 +294,8 @@ def parse_setting(text: str) -> dict:
             "section_lanes": section_lanes, "chord_cap": chord_cap, "untangle": untangle,
             "untangle_move": untangle_move, "untangle_grades": untangle_grades,
             "alike": alike, "alike_keep": alike_keep, "strong": strong, "hold_up": hold_up,
-            "light": light, "name": name_}
+            "light": light, "light_alike": light_alike, "untangle_wide": untangle_wide,
+            "name": name_}
 
 
 def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
@@ -434,6 +439,8 @@ def build(a) -> int:
                                    untangle_grades=s["untangle_grades"], alike=s["alike"],
                                    alike_keep=s["alike_keep"], strong=s["strong"],
                                    hold_up=s["hold_up"], light=s["light"],
+                                   light_alike=s["light_alike"],
+                                   untangle_wide=s["untangle_wide"],
                                    ln_tidy=s["ln_tidy"], copy_min_lag=s["copy_min_lag"],
                                    hold_share=(human_share if s["hold_share"] == "human"
                                                else s["hold_share"]),

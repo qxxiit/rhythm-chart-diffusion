@@ -635,6 +635,22 @@ def test_thin_bars_keeps_the_rows_the_model_likes_in_a_light_bar() -> None:
     assert list(np.flatnonzero(np.isin(out[BAR:2 * BAR], (TAP, HOLD_START)).any(axis=1))) == [0]
     dist = light_rows(np.array([[0.5, 0.0], [1.0, 0.0], [0.0, 0.0]]))
     assert dist == pytest.approx([0.0, 0.5, 0.5, 0.0])
+    alike = _bars_song([four, four, [(0, 0), (6, 1), (30, 2)], four])
+    sims = np.full((4, 4), 0.1)
+    np.fill_diagonal(sims, 1.0)
+    sims[1, 3] = sims[3, 1] = 0.9                       # bar 3 sounds like bar 1
+    sims[0, 1] = sims[1, 0] = 0.9                       # bar 0 too, earlier
+    out = alike.copy()
+    assert thin_bars(Fixed(two), out, frames, 1.5, lambda row0: 400.0, 4 * BAR,
+                     threshold=0.5) == 1                # alone: bar 1 only
+    assert np.array_equal(out[3 * BAR:4 * BAR], alike[3 * BAR:4 * BAR])
+    out = alike.copy()
+    assert thin_bars(Fixed(two), out, frames, 1.5, lambda row0: 400.0, 4 * BAR,
+                     threshold=0.5, s_audio=sims) == 3  # its look-alikes, before and after
+    for b in (0, 1, 3):
+        rows = np.flatnonzero(np.isin(out[b * BAR:(b + 1) * BAR], (TAP, HOLD_START)).any(axis=1))
+        assert list(rows) == [0, 24]
+    assert np.array_equal(out[2 * BAR:3 * BAR], alike[2 * BAR:3 * BAR])   # another rhythm
 
 
 def test_taper_factor() -> None:
@@ -1037,6 +1053,30 @@ def test_refine_holds_only_more_adds_long_notes_up_to_the_share() -> None:
     assert new and all(e - st >= 10 for _, st, e in new)
     with pytest.raises(ValueError):
         refine_holds(model, out, frames, 3.0, lambda row0: 400.0, stats.n_cells, only_more=True)
+
+
+def test_only_more_holds_no_long_note_through_a_row_at_the_chord_cap() -> None:
+    """Easy (cap 2): a tap under two long notes held stays a tap; Hard (cap 3) takes it."""
+    from src.data.tokenizer import HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import refine_holds
+    song = np.full((2 * L, K), EMPTY, dtype=np.int64)
+    n_cells = L + 100
+    song[n_cells:] = PAD
+    song[10, 0] = TAP
+    for k in (1, 2):
+        song[11, k], song[12:40, k], song[40, k] = HOLD_START, HOLD_BODY, HOLD_END
+    frames = torch.zeros(len(song) * 4, 80)
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))
+    easy = song.copy()
+    assert refine_holds(uniform, easy, frames, 1.5, lambda row0: 400.0, n_cells,
+                        hold_share=1.0, only_more=True, min_hold=1, release_gap=0) == 0
+    assert np.array_equal(easy, song)
+    hard = song.copy()
+    assert refine_holds(uniform, hard, frames, 3.0, lambda row0: 400.0, n_cells,
+                        hold_share=1.0, only_more=True, min_hold=1, release_gap=0,
+                        rng=np.random.default_rng(0)) == 1
+    assert hard[10, 0] == HOLD_START
+    assert len(grammar_violations(hard[:n_cells], closed=False)) == 0
 
 
 def test_from_sr() -> None:
@@ -1467,6 +1507,9 @@ def test_untangle_jacks_takes_chord_taps_out_of_fast_jacks() -> None:
     out = boxed.copy()
     assert untangle_jacks(out, 80, times, move=True) == 1 and STATS["untangle_moved"] == before + 2
     assert list(out[60]) == [TAP, EMPTY, EMPTY, EMPTY]
+    kept = boxed.copy()                                 # keep: with no lane free it stays
+    assert untangle_jacks(kept, 80, times, move=True, keep=True) == 0
+    assert np.array_equal(kept, boxed)
     assert len(grammar_violations(moved)) == 0
 
 
@@ -1549,3 +1592,6 @@ def test_untangle_window_by_grade() -> None:
     assert untangle_window(1.5) == untangle_window(3.9) == 0.25
     assert untangle_window(4.5) == pytest.approx(1 / 6)
     assert untangle_window(5.5) is None and untangle_window(7.0) is None
+    assert untangle_window(4.5, wide=True) == 0.25
+    assert untangle_window(5.5, wide=True) == pytest.approx(1 / 6)
+    assert untangle_window(7.0, wide=True) is None and untangle_window(1.5, wide=True) == 0.25

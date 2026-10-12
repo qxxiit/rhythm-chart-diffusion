@@ -648,19 +648,30 @@ def _more_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_le
                 pick, release_temperature: float) -> int:
     """refine_holds(only_more=True): taps made long notes up to hold_share of the onsets, each
     at least the guidelines' shortest long note for the grade (playability.LN_MIN_BEATS, at
-    180 BPM: Easy 1 beat, Normal 1/2, Hard 1/4) as well as min_hold."""
+    180 BPM: Easy 1 beat, Normal 1/2, Hard 1/4) as well as min_hold, and none held through a
+    row that holds the grade's chord cap already (playability.chord_cap, note starts and long
+    notes held counting: Easy and Normal 2, Hard 3), so the long notes added put no row over
+    it; the cap pass cuts taps only (run_space, 2026-10-12: without this rule rows over the
+    cap in Easy 0.001 -> 0.013, human 0.005)."""
     fpc = model.config.frames_per_cell
     onsets = np.isin(song[:n_cells], (TAP, HOLD_START))
     want = int(np.rint(hold_share * onsets.sum())) - int((song[:n_cells] == HOLD_START).sum())
     if want <= 0:
         return 0
     floor = LN_MIN_BEATS.get(grade_of(s), 0.0) * BEAT_180        # ms
+    cap = chord_cap(s)
 
     def taps(w0: int, k: int, todo: list) -> list:
         cells = max(min_hold, int(np.ceil(floor * D / beat_len(w0) - 1e-6)))
         out = []
         for r, limit, ends in todo:
             ends = ends[ends >= r + cells]
+            if cap is not None and len(ends):
+                rows = song[r + 1:limit]                       # lane k is empty there
+                full = np.flatnonzero(np.isin(rows, (TAP, HOLD_START, HOLD_BODY)).sum(axis=1)
+                                      >= cap)
+                if len(full):                                  # held through rows before it
+                    ends = ends[ends <= r + 1 + full[0]]
             if song[r, k] == TAP and len(ends):
                 out.append((r, limit, ends))
         return out
@@ -1020,6 +1031,9 @@ def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
 # bars (AUC 0.55-0.6 for loudness and onsets); the model does, with the bar MASK and its
 # own chart around: AUC 0.77 in Easy, 0.86 in Normal (15 val songs).
 LIGHT_BELOW = 2.7               # thin_bars: only charts under this SR (Easy, Normal)
+LIGHT_SIM = 0.5                 # thin_bars: look-alikes, at this audio cosine (as the
+                                # stretches that come back, structure.SECTION_SIM; at 0.8 few
+                                # are found: 15 val songs, 10-12)
 
 
 def light_rows(p_onset: np.ndarray) -> np.ndarray:
@@ -1034,7 +1048,8 @@ def light_rows(p_onset: np.ndarray) -> np.ndarray:
 
 
 def thin_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
-               n_cells: int, *, threshold: float, below: float = LIGHT_BELOW) -> int:
+              n_cells: int, *, threshold: float, below: float = LIGHT_BELOW,
+              s_audio: np.ndarray | None = None, sim: float = LIGHT_SIM) -> int:
     """Thin the bars where the model expects one or two onset rows; returns how many.
 
     Only in charts under SR below. For every bar with 3+ onset rows, in time order,
@@ -1046,24 +1061,23 @@ def thin_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
     from before the bar stay). A bar thinned is the chart around the bars after it, so
     light bars may follow each other, as in the human charts. Taking notes out keeps the
     grammar and the release gaps.
+    s_audio (the bars' audio similarity, structure.ssm_audio): the bars that had the thinned
+    bar's onset rows and sound like it (cosine sim or more), earlier or later, are thinned
+    alike, keeping the same rows, so a bar and its repeats stay the same (thinned on its own,
+    a bar's repeats kept theirs: in Easy, of the pairs of bars of a stretch that comes back
+    with a light bar in them, 14% have the same rhythm, human 31%; run_space, 2026-10-12).
     """
     if s >= below:
         return 0
-    thinned = 0
-    for b in range(n_cells // BAR):
+    n_bars = n_cells // BAR
+    first = [frozenset(np.flatnonzero(np.isin(song[b * BAR:(b + 1) * BAR], (TAP, HOLD_START))
+                                      .any(axis=1)).tolist()) for b in range(n_bars)]
+    done = np.zeros(n_bars, dtype=bool)
+
+    def thin(b: int, keep) -> None:
         r0 = b * BAR
         starts = np.isin(song[r0:r0 + BAR], (TAP, HOLD_START))
-        on_rows = np.flatnonzero(starts.any(axis=1))
-        if len(on_rows) < 3:
-            continue
-        p = bar_probs(model, song, frames, s, beat_len, r0)
-        p_onset = p[..., TAP] + p[..., HOLD_START]
-        dist = light_rows(p_onset)
-        if float(dist[1] + dist[2]) <= threshold:
-            continue
-        q = 1.0 - np.prod(1.0 - p_onset, axis=1)
-        keep = on_rows[np.argsort(-q[on_rows], kind="stable")[:1 if dist[1] >= dist[2] else 2]]
-        for row in on_rows:
+        for row in np.flatnonzero(starts.any(axis=1)):
             if row in keep:
                 continue
             for k in np.flatnonzero(starts[row]):
@@ -1075,7 +1089,32 @@ def thin_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
                     if e < len(song) and song[e, k] == HOLD_END:
                         e += 1
                 song[r:e, k] = EMPTY
+        done[b] = True
+
+    thinned = 0
+    for b in range(n_bars):
+        r0 = b * BAR
+        on_rows = np.flatnonzero(np.isin(song[r0:r0 + BAR], (TAP, HOLD_START)).any(axis=1))
+        if done[b] or len(on_rows) < 3:
+            continue
+        p = bar_probs(model, song, frames, s, beat_len, r0)
+        p_onset = p[..., TAP] + p[..., HOLD_START]
+        dist = light_rows(p_onset)
+        if float(dist[1] + dist[2]) <= threshold:
+            continue
+        q = 1.0 - np.prod(1.0 - p_onset, axis=1)
+        keep = set(on_rows[np.argsort(-q[on_rows], kind="stable")
+                           [:1 if dist[1] >= dist[2] else 2]].tolist())
+        thin(b, keep)
         thinned += 1
+        if s_audio is None or first[b] != frozenset(on_rows.tolist()):
+            continue
+        for c in range(min(n_bars, len(s_audio))):
+            if c != b and not done[c] and first[c] == first[b] and s_audio[b, c] >= sim:
+                now = np.isin(song[c * BAR:(c + 1) * BAR], (TAP, HOLD_START)).any(axis=1)
+                if frozenset(np.flatnonzero(now).tolist()) == first[c]:
+                    thin(c, keep)
+                    thinned += 1
     STATS["thinned_bars"] += thinned
     return thinned
 
@@ -1646,9 +1685,21 @@ UNTANGLE_GRADES = {"Easy": 0.25, "Normal": 0.25, "Hard": 0.25, "Insane": 1 / 6}
                                 # (240 val songs, 2026-10-12)
 
 
-def untangle_window(s: float) -> float | None:
-    """untangle_jacks' max_beats for the target SR s by UNTANGLE_GRADES (None: none)."""
-    return UNTANGLE_GRADES.get(grade_of(s))
+UNTANGLE_WIDE = {"Easy": 0.25, "Normal": 0.25, "Hard": 0.25, "Insane": 0.25, "Expert": 1 / 6}
+                                # untangle_window(wide=True): 1/4 beat in Insane too, 1/6 in
+                                # Expert. The default's fast jacks were 0.73 per 100 notes in
+                                # Insane against the human 0.39, two thirds with a chord; in
+                                # Expert 18% of them 1/6 beat apart (0.5 per 100 notes against
+                                # the human 0.02; 240 val songs, 2026-10-12)
+UNTANGLE_KEEP = ("Insane", "Expert")    # ... where, wide, a tap with no free lane stays: taking
+                                # them out cost Insane 0.022 SR on 9 smoke songs (10-12), where
+                                # the SR is under the target already
+
+
+def untangle_window(s: float, wide: bool = False) -> float | None:
+    """untangle_jacks' max_beats for the target SR s by UNTANGLE_GRADES, or UNTANGLE_WIDE
+    (None: none)."""
+    return (UNTANGLE_WIDE if wide else UNTANGLE_GRADES).get(grade_of(s))
 
 
 def _jack_free_lane(song: np.ndarray, onset: np.ndarray, times: np.ndarray, row: int,
@@ -1671,12 +1722,13 @@ def _jack_free_lane(song: np.ndarray, onset: np.ndarray, times: np.ndarray, row:
 
 def untangle_jacks(song: np.ndarray, n_cells: int, times: np.ndarray, *,
                    max_beats: float = UNTANGLE_BEATS, move: bool = False,
-                   release_gap: int = 0) -> int:
+                   release_gap: int = 0, keep: bool = False) -> int:
     """A note that takes its lane again within max_beats (at 180 BPM: BEAT_180) of the note
     before in that lane, where one of the two rows starts 2+ notes: the tap of the chord goes
     (of the later row if both are chords; a long note start stays); returns how many went.
     move: it goes to another lane of its row where it makes no such jack (_jack_free_lane)
-    if there is one, so the chord and the notes stay, and only otherwise out.
+    if there is one, so the chord and the notes stay, and only otherwise out; keep (with
+    move): otherwise it stays.
     times [n_cells] ms of each row. Taking taps out or into an EMPTY cell that fits keeps
     the grammar."""
     limit = max_beats * BEAT_180 + 1e-6
@@ -1700,6 +1752,9 @@ def untangle_jacks(song: np.ndarray, n_cells: int, times: np.ndarray, *,
                 prev = cur
                 continue
             to = _jack_free_lane(song, onset, times, row, k, limit, release_gap) if move else None
+            if to is None and move and keep:
+                prev = cur
+                continue
             song[row, k], onset[row, k] = EMPTY, False
             if to is None:
                 size[row] -= 1
@@ -1829,7 +1884,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               chord_cap: float | None = None, untangle: bool = False,
               untangle_move: bool = False, untangle_grades: bool = False,
               alike: float | None = None, alike_keep: float | bool | None = None,
-              strong: float | None = None, light: float | None = None) -> np.ndarray:
+              strong: float | None = None, light: float | None = None,
+              light_alike: bool = False, untangle_wide: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more), carry_rhythm
@@ -1841,9 +1897,10 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     align_alike (alike: the bias; alike_keep: its keep_notes in charts at that SR or more,
     True in all; its lanes as the carry's), tidy_holds (ln_tidy: the longest long note in
     beats it turns into a tap), fill_holes (holes: the threshold), rest_bars (rest: the
-    threshold), thin_bars (light: the threshold), untangle_jacks (untangle;
-    untangle_move: its move; untangle_grades: the window by the SR s, untangle_window),
-    guideline_cap (chord_cap: below that SR; with lane_guidance); a new array."""
+    threshold), thin_bars (light: the threshold; light_alike: its look-alikes thinned
+    alike), untangle_jacks (untangle; untangle_move: its move; untangle_grades: the window
+    by the SR s, untangle_window; untangle_wide: its wide table), guideline_cap (chord_cap:
+    below that SR; with lane_guidance); a new array."""
     base = model
     if genre is not None or mapper is not None or stats is not None:
         model = Styled(base, genre, mapper, stats=stats)
@@ -1853,7 +1910,7 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                            np.full((L, K), PAD, dtype=np.int64)])
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None
                                    or carry is not None or sections is not None
-                                   or alike is not None else 0)
+                                   or alike is not None or light_alike else 0)
     beat_len = _beat_len_fn(timing_points, cell_offset)
     auto_hold, auto_gap = hold_rules(s)
     min_hold = auto_hold if min_hold is None else min_hold
@@ -1891,9 +1948,10 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     if light is not None:
-        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light)
+        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
+                  s_audio=s_audio if light_alike else None)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
-              untangle_grades, release_gap)
+              untangle_grades, release_gap, untangle_wide)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
@@ -1918,13 +1976,15 @@ def _strong(song: np.ndarray, n_cells: int, mel: np.ndarray, timing_points, cell
 
 
 def _untangle(song: np.ndarray, n_cells: int, s: float, timing_points, cell_offset: int,
-              untangle: bool, move: bool, grades: bool, release_gap: int) -> int:
+              untangle: bool, move: bool, grades: bool, release_gap: int,
+              wide: bool = False) -> int:
     """untangle_jacks as post_song and generate_song ask for it (untangle off: none)."""
-    window = untangle_window(s) if grades else UNTANGLE_BEATS
+    window = untangle_window(s, wide) if grades else UNTANGLE_BEATS
     if not untangle or window is None:
         return 0
     return untangle_jacks(song, n_cells, _row_times(timing_points, cell_offset, n_cells),
-                          max_beats=window, move=move, release_gap=release_gap)
+                          max_beats=window, move=move, release_gap=release_gap,
+                          keep=wide and grade_of(s) in UNTANGLE_KEEP)
 
 
 def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: int,
@@ -1951,7 +2011,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   chord_cap: float | None = None, untangle: bool = False,
                   untangle_move: bool = False, untangle_grades: bool = False,
                   alike: float | None = None, alike_keep: float | bool | None = None,
-                  strong: float | None = None, light: float | None = None) -> np.ndarray:
+                  strong: float | None = None, light: float | None = None,
+                  light_alike: bool = False, untangle_wide: bool = False) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2018,7 +2079,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   one with fewer notes, in charts at that SR or more (True: in all)
     light         thin_bars with this threshold after rest_bars (None: none): in charts
                   under SR 2.7 a bar the model, asked about the whole bar, expects to hold one
-                  or two onset rows with more than this chance keeps its likeliest one or two
+                  or two onset rows with more than this chance keeps its likeliest one or two;
+                  light_alike: the bars that had its rhythm and sound like it go alike
     strong        strong_chords with this z difference after the carry (None: none): a
                   chord gives a tap to a single note of its beat on a stronger onset, so
                   the copies after it take chords on the strong sounds
@@ -2026,7 +2088,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   within 1/6 beat (at 180 BPM) of a note there goes; untangle_move: to a
                   lane where it makes no jack, if there is one; untangle_grades: within
                   the grade's window instead (untangle_window: 1/4 beat to Hard, 1/6 in
-                  Insane, none from Expert up)
+                  Insane, none from Expert up; untangle_wide: 1/4 in Insane, 1/6 in Expert,
+                  moved only there)
     chord_cap     guideline_cap last, where s is under this SR (None: none; 2: Easy, 4: Easy
                   to Hard): rows over the ranking criteria's chord cap keep the taps the
                   lane passes' model likes most
@@ -2055,7 +2118,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     song[:n_cells] = MASK
     frames, s_audio = _song_frames(model, mel, len(song), n_cells if copy_bias is not None
                                    or carry is not None or sections is not None
-                                   or alike is not None else 0)
+                                   or alike is not None or light_alike else 0)
     beat_len = _beat_len_fn(timing_points, cell_offset)
     rng = np.random.default_rng(seed)
     row_bias = loudness_bias(mel, n_cells, len(song), loud_bias, loud_side) if loud_bias else None
@@ -2129,9 +2192,10 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
     if light is not None:
-        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light)
+        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
+                  s_audio=s_audio if light_alike else None)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
-              untangle_grades, release_gap)
+              untangle_grades, release_gap, untangle_wide)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:n_chunks * L].reshape(n_chunks, L, K).astype(np.int8)

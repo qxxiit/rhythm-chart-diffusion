@@ -2638,6 +2638,135 @@ Predictions (paired means):
    one or two rows 0.14-0.25 (past the human), SR -0.02 to -0.05, F1 -0.004 to -0.012,
    run_over -2 to -4.
 
+**Results (`run_space.sh`, morning of 10-12)** — paired means; bars, taps and the by-grade means
+are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 0 | the new default: alike_rhythm 0.48-0.50, alike_counts_off 0.13-0.15, section_rhythm 0.385-0.400, chord_strength 0.815-0.825 | 0.493, 0.139, 0.396, 0.821 | hit ×4 |
+| 0 | SR bias -0.050 to -0.058 (Hard -0.020 to -0.028, Insane -0.110 to -0.120), density 1.022-1.026, F1 0.3820-0.3828, 25-35 more passes | -0.054 (-0.026, -0.114), 1.024, 0.3825, +29 | hit ×7 |
+| 1 | `--hold-up`: hold_share 0.19-0.22; by the human chart's share 0.35-0.5 -> 0.37-0.45, 0.5+ -> 0.50-0.65, under 0.1 within ±0.01 | 0.220; 0.417 (human 0.431), 0.693 (0.710), +0.010 | hit (at the edge), hit, miss (more: to the human), hit (at the edge) |
+| 1 | more_holds 100-220 a song; SR +0.01 to +0.04 (share 0.35+: +0.05 to +0.15); F1 within ±0.003 | 107; +0.018 (+0.061); +0.0003 | hit ×3 |
+| 1 | ln_f1 +0.02 to +0.06; hold_beats -0.05 to +0.05; ln_short -0.01 to -0.05; release_close +0.01 to +0.04 | +0.064; -0.014; -0.053; +0.019 | miss (just over), hit, miss (just over), hit |
+| 1 | chord_over in Normal and Hard 0 to +0.005; 150-350 more passes | +0.006, +0.001 (Easy +0.012); +177 | miss (Normal), hit; hit |
+| 2 | `--light 0.5`: thinned Easy 2-8, Normal 1-6 bars a song; notes Easy -1% to -4%, Normal -0.5% to -2% | 4.4, 1.6; -2.2%, -0.5% | hit ×4 (Normal at the edge) |
+| 2 | bars with one or two onset rows Easy 0.09-0.13 (human 0.129), Normal 0.035-0.05 (0.038); light_bars Easy +0.005 to +0.02, Normal +0.01 to +0.03 | 0.125, 0.044; +0.014, +0.011 | hit ×4 |
+| 2 | SR Easy 0 to -0.015, Normal 0 to -0.01; F1 Easy -0.001 to -0.005, Normal ±0.002; section_copy (Easy, Normal) -0.005 to -0.02 | -0.005, 0.000; -0.0005, +0.0004; -0.012, +0.001 | hit, hit, miss (less), hit, hit, miss (none) |
+| 2 | at 0.3: Easy 6-15 bars, notes -4% to -10%, one or two rows 0.14-0.25, SR -0.02 to -0.05, F1 -0.004 to -0.012, run_over -2 to -4 | 16.4, -7.9%, 0.246, -0.021, -0.003, -1.1 | miss (more), hit, hit, hit, miss (less), miss (less) |
+
+All runs (per song; human: hold_share 0.218, long notes in long-note bars / among taps 0.483 /
+0.191, ln_short 0.146, alike_rhythm 0.622, section_rhythm 0.547, section_copy 0.244,
+chord_strength 0.829; Easy / Normal bars with one or two onset rows 0.129 / 0.038):
+
+| run | taps made long / bars thinned a song | hold_share | hold_beats | ln_sections / scattered | ln_short | ln_f1 | Easy / Normal 1-2-row bars | alike / section_rhythm / copy | chord_strength | SR bias (Easy / Normal / Hard / Insane / Expert) | density | F1 | passes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| run_alike's default | - | 0.157 | 0.776 | 0.345 / 0.262 | 0.177 | 0.233 | 0.073 / 0.027 | 0.322 / 0.346 / 0.244 | 0.747 | -0.048 (+0.086 / +0.075 / -0.009 / -0.121 / -0.253) | 1.025 | 0.3821 | 357 |
+| the new default (strong chords 1, alike 2 keep from 4) | - | 0.156 | 0.776 | 0.346 / 0.262 | 0.176 | 0.233 | 0.073 / 0.027 | 0.493 / 0.396 / 0.242 | 0.821 | -0.054 (+0.079 / +0.068 / -0.026 / -0.114 / -0.252) | 1.024 | 0.3825 | 386 |
+| + hold-up | 107 | 0.220 | 0.765 | 0.458 / 0.192 | 0.122 | 0.295 | 0.073 / 0.027 | 0.495 / 0.390 / 0.232 | 0.818 | -0.036 (+0.100 / +0.094 / -0.014 / -0.096 / -0.228) | 1.022 | 0.3828 | 563 |
+| + light 0.5 | 1.1 (Easy 4.4, Normal 1.6) | 0.156 | 0.774 | 0.343 / 0.265 | 0.177 | 0.233 | 0.125 / 0.044 | 0.493 / 0.391 / 0.236 | 0.818 | -0.055 (+0.074 / +0.068 / -0.026 / -0.114 / -0.252) | 1.018 | 0.3825 | - |
+| + light 0.3 | 3.7 (16.4, 4.0) | 0.155 | 0.780 | 0.346 / 0.263 | 0.173 | 0.233 | 0.246 / 0.070 | 0.491 / 0.389 / 0.235 | 0.816 | -0.058 (+0.058 / +0.068 / -0.026 / -0.114 / -0.252) | 1.005 | 0.3820 | - |
+
+By the human chart's long-note share, hold-up (the new default -> with it; human): 0.35-0.5 (37
+songs) hold_share 0.298 -> 0.417 (0.431), long notes in long-note bars 0.49 -> 0.67 (0.68),
+among taps 0.124 -> 0.046 (0.049), 0.58 -> 0.56 beats (0.63), SR bias -0.248 -> -0.221; 0.5 and
+more (13) 0.325 -> 0.693 (0.710), 0.49 -> 0.91 (0.91), 0.086 -> 0.010 (0.011), 0.57 -> 0.61 beats
+(0.61), ln_f1 0.47 -> 0.72, SR bias -0.262 -> -0.105; under 0.1 (80) +0.010. By grade, SR +0.021
+Easy, +0.026 Normal, +0.012 Hard, +0.017 Insane, +0.024 Expert; rows over the chord cap Easy
+0.001 -> 0.013 (human 0.005), Normal 0.028 -> 0.034 (0.028); section_copy Easy -0.034, Normal
+-0.022, Expert -0.029; Expert alike_rhythm -0.033, section_rhythm -0.037.
+
+What it says:
+
+- **The new default came out as assembled** from run_alike: every number in its range.
+- **Long notes as asked.** The long-note share now follows the one asked for at every level:
+  long-note charts asked for 0.71 get 0.69 instead of 0.33, and their long notes sit as the
+  human ones do (in long-note bars 0.91 against 0.91, among taps 0.010 against 0.011, 0.61 beats
+  long against 0.61); over all songs long notes in long-note bars 0.346 -> 0.458 (0.483), among
+  taps 0.262 -> 0.192 (0.191), ln_f1 +0.064, long notes under the grade's shortest 0.176 -> 0.122
+  (0.146), F1 as it was, and the SR nearer the target from Hard up. Costs: Easy and Normal SR
+  +0.02 (over the target already), rows over the chord cap in Easy 0.001 -> 0.013 (the cap pass
+  cuts taps, not the long notes held through a row), section copies -0.01 (Expert -0.03, and
+  alike_rhythm -0.03 there: the taps made long notes differ between repeats), motion_pred
+  -0.0025, 177 more passes a song. Adopted where a share is asked (generate.py `--stats ln=X`),
+  with a rule against the cap (DECISIONS 10-12).
+- **Light bars at 0.5 bring Easy to the human level**: bars with one or two onset rows 0.073 ->
+  0.125 (0.129), light bars 0.037 -> 0.051 (0.056), notes -2.2%, SR -0.005, F1 -0.0005; in Normal
+  0.027 -> 0.044 (0.038) and light bars a little over the human (0.057 against 0.045), F1 +0.0004.
+  The SR hardly moves: the densest stretches set it. Cost in Easy: section_rhythm -0.017 and
+  section_copy -0.012 (still over the human, 0.41 against 0.33), chord_strength -0.012: a bar is
+  thinned and its repeats not. At 0.3 past the human (0.246, notes -7.9%). Adopted at 0.5; the
+  repeats thinned alike on trial.
+
+### 2026-10-12 · Repeats thinned alike; jack windows in Insane and Expert (predictions)
+
+From run_space: long notes up to the share asked (`--hold-up`) and light bars at 0.5 (`--light
+0.5`) are the default (DECISIONS 10-12). The long notes added are now not held through a row at
+the grade's chord cap (refine_holds' only_more; the cap pass cuts taps only, and with the
+hold-up rows over the cap in Easy went 0.001 -> 0.013, human 0.005).
+
+Measured since (240 val songs):
+
+- The section columns count only pairs of bars with 4+ onset rows, so a bar thinned leaves
+  them, and with it most of what light bars seemed to cost (`section_light.py`): counting every
+  pair of bars of a stretch that comes back with a note in it, the same rhythm in Easy 0.540
+  (the default of run_space), 0.541 with light bars at 0.5 (human 0.580). But of the pairs with
+  a light bar in them, 14% have the same rhythm (human 31%; Normal 5% against 40%): a bar is
+  thinned and the bar it comes back as is not.
+- Jacks: in Insane the default's fast jacks are 0.73 per 100 notes against the human 0.39, and
+  a chord is on one side of 66% of them (human 51%; single then chord 26% against 9%); in
+  Expert 2.7 against 2.3 (with Expert+), 18% of them 1/6 beat apart against 1% (`jack_kinds2.py`).
+
+Two passes on trial:
+
+1. `thin_bars(s_audio=)` (`--light-alike`, tag `_li<P>a`, playtest `liPa`): the bars that had
+   a thinned bar's onset rows and sound like it (cosine 0.5 or more, as the stretches that come
+   back), earlier or later, are thinned alike, keeping the same rows.
+2. `untangle_window(wide=True)` (`--untangle-wide`, tag `w` after `g`, playtest `ujmgw`): the jack
+   pass within 1/4 beat in Insane too and 1/6 in Expert, where a tap with no lane free of a jack
+   stays (`untangle_jacks(keep=True)`) instead of going: there the SR is short of the target.
+
+Smoke checks (full-v4 on CPU, the 40 val songs of 10-12; the default's saved charts of
+run_back; human level of these songs in brackets):
+
+- The hold-up with the cap rule: rows over the cap as they were (0.0129; without the rule
+  +0.0058), hold_share 0.146 -> 0.218 (0.207; without 0.219), Easy 0.132 -> 0.204 (0.191), SR
+  +0.034 (Easy +0.015; without +0.035).
+- Light bars at 0.5 alone / their look-alikes at 0.8 / at 0.5, Easy and Normal (15 songs): bars
+  thinned 5.3 / 6.0 / 8.5 a song; of the pairs of bars that come back with a light bar in them
+  the same rhythm Easy 0.088 / 0.088 / 0.143 (human 0.375), Normal 0.010 / 0.059 / 0.098 (0.793);
+  every pair with a note, Easy 0.287 / 0.287 / 0.320 (0.518); notes -2.4% / -2.5% / -3.4%; F1
+  -0.0016 / -0.0017 / -0.0026. At 0.8 few look-alikes are found: 0.5 it is.
+- The jack windows wide, moving only (Insane and Expert, 15 songs): Insane 2.7 taps a song
+  moved, fast jacks 0.345 -> 0.192 (0.063), SR +0.000, F1 -0.0004; Expert 1.3 moved, 1.29 ->
+  1.24 (1.91), SR +0.005. Taking out the taps with no free lane too (5.7 a song in Insane): 0.047,
+  but SR -0.022 there.
+- No grammar violations.
+
+`run_wide.sh` (patch 0050), on `$T`, 240 val songs:
+
+0. The new default: run_space's default with long notes up to the human chart's share (and the
+   cap rule) and light bars at 0.5, against run_space's default.
+1. `--light 0.5 --light-alike` on run_space's default charts, against `--light 0.5` there
+   (run_space).
+2. The jack pass again on the new default's charts with `--untangle-wide`, against them.
+
+Predictions (paired means; `section_light.py` for the pairs with light bars):
+
+0. The new default against run_space's default, as the hold-up and light bars of run_space
+   added (each ± a third of its change) but the cap: hold_share 0.21-0.22 (Easy 0.20-0.22),
+   rows over the cap Easy 0.001-0.003 (human 0.005), Normal 0.027-0.031 (0.028); Easy bars with
+   one or two onset rows 0.12-0.13; SR bias -0.033 to -0.042 (Easy +0.08 to +0.10, Hard -0.010
+   to -0.020, Expert -0.22 to -0.24); F1 0.3824-0.3832; ln_f1 0.28-0.31; 180-220 more passes a
+   song.
+1. Look-alikes thinned: Easy 5-8 bars a song thinned (alone 4.4), Normal 2.5-5 (1.6); bars with
+   one or two onset rows Easy 0.13-0.15, Normal 0.05-0.07 (human 0.129 / 0.038); of the pairs
+   with a light bar the same rhythm Easy 0.18-0.25 (alone 0.143), Normal 0.10-0.25 (0.049); every
+   pair with a note in Easy +0.01 to +0.03; notes Easy -0.3% to -1.5% more; F1 0 to -0.002; SR 0
+   to -0.005.
+2. The jack windows wide: Insane 2-5 taps a song moved, fast jacks 0.73 -> 0.40-0.55 (human
+   0.39); Expert 1-4 moved, 3.3 -> 3.0-3.3 (1.8); SR within ±0.005; F1 within ±0.001; notes and
+   chords as they were.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
