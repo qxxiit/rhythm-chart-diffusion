@@ -2880,6 +2880,64 @@ What it says:
   Easy 4 (SR 1.52-1.94), Normal 4 (2.14-2.68), Hard 6 (2.90-3.73), Insane 2 (4.24, 4.50); the
   long-note charts at SR 1.52 (0.37), 3.23 (0.45) and 3.33 (0.39); 45-146 s.
 
+**Results (the playtest of 10-12, evening)** — one player, 7 of the 16 songs (exams; the other 9
+after them): Normal 2, Hard 4, Insane 1 (PT08-PT13, PT16); left Easy 4, Normal 2, Hard 2, Insane 1.
+`outputs/full-v4/playtest_1012/playtest/ratings.csv`, scored by `outputs/feel/playtest_1012_results.py`
+(it prints which chart was the AI's: not before the other 9 are played)
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | the AI chart taken for human 1-4 of 16 | 0 of 7 (95% CI 0-35%) | miss |
+| 2 | the AI chart more fun in 3-7 of 16 | 0 of 7 | miss |
+| 3 | fewer remarks on "random" or "nothing comes back" than on 10-07 and 10-04 | none; one the other way ("the same things over and over", PT13) | hit |
+| 4 | more on the low levels' density and on jacks from Insane up | no Easy song played; Normal's remarks on patterns, the Insane song's on 2-note chords and pacing | miss |
+| 5 | the long-note charts not given away by their long notes | the one played (PT11, share 0.39) given away by its chords | hit |
+
+What the remarks blamed, counted in the two charts of that song (AI / human):
+
+| song | remark | AI / human |
+|---|---|---|
+| PT08 Hard | varied, clear patterns are good; more tap patterns like dfjkjfd, kjfdfjk, djfkdjfk, dkdkdkdfjfjfjf | stairs 108 / 183, jumptrills 90 / 25 |
+| PT09 Hard | "too many lasers" (one lane hit over and over) | longest run on one lane 19 / 3, stairs 0 / 40 |
+| PT13 Normal | the AI chart repeats the same things and drags; the human's short fast stairs before the downbeat keep it moving; clear patterns in pairs, varied | jumptrills 105 / 12, 3+ note chords 0 / 50 |
+| PT16 Insane | the pace (NPS) needs to rise and fall; too fond of "pills" (2-note chords on adjacent lanes), plain repeats of them dull; locks in less | adjacent 2-note chords 219 / 139, jumptrills 177 / 91 |
+| PT11 Hard (long notes) | both so-so, the AI's patterns more chaotic | 3+ note chords 74 / 1, jacks 25 / 89 |
+| PT10 Hard, PT12 Normal | good charts move their long notes with one instrument; the human chart locks in | no metric yet |
+
+On the 240 val songs (`outputs/feel/playtest_patterns.py`), per 100 onset rows, human / the model
+with holes and rests (run_carry's T_ref) / the default F. Rows within half a beat of each other:
+a jumptrill is a 2-note chord then another on the other two lanes; stairs (and rolls) three
+single notes moving one way; trills three single notes a-b-a; a laser 4+ single notes on one lane.
+
+| | all | Easy | Normal | Hard | Insane | Expert |
+|---|---|---|---|---|---|---|
+| jumptrills | 4.54 / 6.28 / 6.68 | 0.89 / 1.12 / 1.16 | 3.46 / 5.65 / 5.84 | 5.63 / 8.39 / 8.99 | 6.04 / 7.69 / 8.15 | 6.60 / 7.18 / 7.74 |
+| stairs | 6.05 / 5.73 / 5.18 | 5.71 / 6.59 / 6.41 | 6.16 / 6.00 / 5.23 | 5.50 / 4.95 / 4.30 | 6.12 / 5.44 / 4.92 | 7.09 / 6.59 / 5.86 |
+| trills | 2.88 / 2.51 / 2.42 | 2.40 / 1.73 / 1.92 | 3.15 / 2.18 / 2.28 | 2.67 / 2.33 / 2.12 | 3.16 / 3.15 / 3.02 | 3.49 / 3.39 / 3.01 |
+| 3+ note chords | 6.57 / 6.92 / 7.60 | 0.02 / 0.42 / 0.05 | 1.36 / 2.06 / 2.31 | 8.72 / 9.08 / 9.86 | 10.12 / 10.24 / 11.62 | 9.42 / 10.66 / 11.66 |
+| 2-note chords | 30.66 / 29.68 / 31.45 | 19.16 / 17.48 / 19.71 | 34.46 / 33.46 / 35.08 | 35.70 / 34.85 / 36.70 | 31.87 / 31.22 / 32.60 | 31.84 / 28.87 / 30.84 |
+| of them adjacent | 17.65 / 17.11 / 17.70 | 10.72 / 10.49 / 11.62 | 19.75 / 19.66 / 20.50 | 20.15 / 20.18 / 20.76 | 18.96 / 17.40 / 17.58 | 18.97 / 16.59 / 16.86 |
+| lasers | 0.03 / 0.06 / 0.05 | 0.00 / 0.10 / 0.10 | 0.03 / 0.07 / 0.05 | 0.03 / 0.01 / 0.01 | 0.04 / 0.08 / 0.05 | 0.02 / 0.13 / 0.14 |
+
+What it says:
+
+- **The remarks point one way: the flow among the chords.** The AI charts hold as many 2-note
+  chords as the human ones (31.5 against 30.7 per 100 rows; adjacent 17.7 against 17.7), but
+  alternate them as jumptrills 1.5 times as often (Normal and Hard 1.6-1.7 times) and run single
+  notes as stairs and trills 0.85 times as often. Neither the chord share nor the pattern shares
+  nor motion_pred showed it. It is there before the passes of 10-10 on (6.28, the model with its
+  lane passes); those, which copy rhythms with the chords on them, add a little (6.68; stairs
+  5.73 -> 5.18).
+- **Lasers are rare on average (0.05 per 100 rows) but one song's 19 gave it away:** a measure
+  to take per song, by its worst, not by the mean.
+- **Not yet measured:** long notes moving with one instrument, the "locked-in" accents, the
+  pace rising and falling within a section. No remark on "nothing comes back" (10-07's); one the
+  other way.
+- Next: the flow patterns (fewer jumptrills, more single-note stairs, rolls and trills; the
+  longest run on one lane per song), then the long notes against the instruments (held over a
+  sustained sound, released where it ends; on 10-07 0.67-0.70 of the releases fell on an onset
+  row, human 0.76). The other 9 songs after the exams.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
