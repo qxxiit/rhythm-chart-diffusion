@@ -2479,6 +2479,165 @@ chords 0.388, SR bias -0.048, density 1.025, F1 0.3821; paired means):
 3. Both: each column as with its pass alone (alike_rhythm and chord_strength each within
    0.02 of it), SR the sum ±0.005.
 
+**Results (`run_alike.sh`, morning of 10-12)** — paired means against the new default (run_back's
+both, rescored for the alike columns); bars and taps a song are per-song means; 240 songs
+
+| # | prediction | result | |
+|---|---|---|---|
+| 1 | `--alike 2`: 4-8 bars a song; alike_rhythm +0.12 to +0.22, alike_counts_off -0.03 to -0.06 | 7.6; +0.217 (0.322 -> 0.539, human 0.622); -0.061 (0.183 -> 0.122, human 0.086) | hit, hit (at the edge), miss (just over) |
+| 1 | section_rhythm +0.04 to +0.09, section_copy within ±0.01 | +0.063, -0.003 | hit, hit |
+| 1 | notes -0.3% to -0.8%, SR -0.004 to -0.014, F1 within ±0.001 | -0.42%; -0.019 (Easy -0.009, Normal -0.009, Hard -0.016, Insane -0.027, Expert -0.056); +0.0002 | hit, miss (more), hit |
+| 1 | chord_strength 0 to -0.008; 30-50 more passes a song | -0.002; +42 | hit, hit |
+| 1 | with keep: 2-4 bars; alike_rhythm +0.05 to +0.10, alike_counts_off -0.01 to -0.03, section_rhythm +0.01 to +0.04 | 3.8; +0.093, -0.018, +0.021 | hit ×4 |
+| 1 | with keep: notes +0.1% to +0.5%, SR 0 to +0.006, fast_jacks 0 to +0.015 | +0.37%, +0.003, +0.007 | hit ×3 |
+| 2 | `--strong-chords 1`: 8-14 taps a song; chord_strength +0.05 to +0.08 (to 0.80-0.83) | 10.3; +0.076 (0.747 -> 0.822, human 0.829) | hit, hit |
+| 2 | chords within ±0.002, notes within ±0.05%, section_copy within ±0.01, alike_rhythm 0 to +0.03 | +0.0003, -0.00%, +0.0002, +0.0005 | hit ×4 |
+| 2 | F1 within ±0.001, SR within ±0.005, fast_jacks 0 to +0.015 | +0.0000, +0.001, -0.010 | hit, hit, miss (down) |
+| 3 | both: alike_rhythm and chord_strength within 0.02 of each alone; SR the sum ±0.005 | 0.543 (alone 0.539), 0.819 (0.822); -0.020 (sum -0.018) | hit ×3 |
+
+All runs (per song; human: alike_rhythm 0.622, alike_counts_off 0.086, section_rhythm 0.547,
+section_copy 0.244, bar_lane_repeat 0.334, chord_strength 0.829, chords 0.372):
+
+| run | aligned bars / strong taps a song | alike_rhythm / counts_off | section_rhythm / copy | bar_lane_repeat | chord_strength | chords | SR bias (Easy / Normal / Hard / Insane / Expert) | density | F1 | passes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| the default (run_back's both) | - | 0.322 / 0.183 | 0.346 / 0.244 | 0.383 | 0.747 | 0.388 | -0.048 (+0.086 / +0.075 / -0.009 / -0.121 / -0.253) | 1.025 | 0.3821 | 357 |
+| alike 2 | 7.6 | 0.539 / 0.122 | 0.409 / 0.241 | 0.354 | 0.745 | 0.391 | -0.067 (+0.078 / +0.066 / -0.024 / -0.148 / -0.309) | 1.021 | 0.3822 | 399 |
+| alike 2, keep | 3.8 | 0.415 / 0.165 | 0.367 / 0.241 | 0.366 | 0.747 | 0.390 | -0.045 (+0.086 / +0.076 / -0.005 / -0.115 / -0.249) | 1.029 | 0.3827 | 382 |
+| strong chords 1 | 10.3 | 0.323 / 0.183 | 0.346 / 0.244 | 0.395 | 0.822 | 0.389 | -0.047 (+0.086 / +0.081 / -0.007 / -0.119 / -0.255) | 1.025 | 0.3821 | 357 |
+| both (alike 2, strong chords 1) | 7.7 / 10.3 | 0.543 / 0.121 | 0.409 / 0.241 | 0.359 | 0.819 | 0.391 | -0.068 (+0.079 / +0.068 / -0.026 / -0.148 / -0.311) | 1.020 | 0.3822 | 400 |
+
+alike_rhythm by grade (Easy / Normal / Hard / Insane / Expert; human 0.71 / 0.66 / 0.67 / 0.59 /
+0.45): the default 0.42 / 0.42 / 0.33 / 0.27 / 0.24, alike 2 0.61 / 0.66 / 0.56 / 0.48 / 0.44,
+with keep 0.50 / 0.48 / 0.44 / 0.37 / 0.33. chord_strength with strong chords: Easy 0.51 (human
+0.56), Normal 0.77 (0.74), Hard 0.94 (0.91), Insane 0.93 (0.95), Expert 0.82 (0.83).
+
+What it says:
+
+- **Bars that sound alike now mostly share a rhythm.** At bias 2, 7.6 bars a song take the
+  rhythm of a bar that sounds like them: alike_rhythm 0.32 -> 0.54 (human 0.62; Normal and
+  Expert at the human level), counts a quarter apart 0.18 -> 0.12 (0.086), section_rhythm
+  +0.06, bar_lane_repeat back towards the human (0.383 -> 0.354; 0.334), F1 and chords as they
+  were. The cost is notes (-0.4%) and SR (-0.019), most in the hard grades (Insane -0.027,
+  Expert -0.056), which are under the target already; in Easy and Normal, over it, the SR
+  moves towards it. With keep (no source with fewer notes) half the bars and 43% of the gain,
+  SR +0.003. So keep where the chart is already easier than asked, from SR 4 (Insane up).
+  Assembled per song from the two runs (alike 2 under SR 4, with keep from 4): alike_rhythm
+  0.489, counts_off 0.139, section_rhythm 0.394, SR bias -0.054 (Hard -0.024, Insane -0.115,
+  Expert -0.249), density 1.024, F1 0.3824; keep from 2.7 instead gives 0.451 / 0.152 (Hard 0.44
+  against 0.56) for Hard's SR at -0.005 instead of -0.024. Adopted at 2 with keep from SR 4
+  (DECISIONS 10-12).
+- **Chords on the strong sounds at the human level.** At 1, 10 taps a song move (Easy 1.9,
+  Hard 10.8, Expert 22): chord_strength 0.747 -> 0.822 (human 0.829), and nothing else moves:
+  notes, chords, F1, SR, the copies' and the alike columns as they were; fast jacks -0.010 (the
+  tap goes to a lane with no note within 1/4 beat), bar_lane_repeat +0.012, motion_pred
+  -0.0025. Adopted.
+- **The two add up**, each column as with its pass alone and the SR the sum.
+
+### 2026-10-12 · Long notes up to the share asked; light bars in Easy and Normal (predictions)
+
+From run_alike: chords on the strong sounds (`--strong-chords 1`) and bars that sound alike at
+bias 2 with keep from SR 4 (`--alike 2 --alike-keep 4`) are the default (DECISIONS 10-12). Of
+the rating of 10-12, two gaps are left that a pass can reach:
+
+- **Long notes.** With the chart stats the model follows the long-note share asked for up to
+  about 0.2 and falls short above it (10-05); in the default's charts, by the human chart's
+  share (240 val songs): 0.2-0.35 asked 0.261, got 0.196; 0.35-0.5: 0.431, 0.299; 0.5 and
+  more: 0.710, 0.326 (13 songs). Over all 0.156 against 0.218, and 0.78 beats long against
+  1.00. For a new song the share is asked for (DECISIONS 10-11): a long-note chart asked at 0.4
+  comes out near 0.3.
+- **Easy is busier than the human charts** (notes +11%, SR +0.08 after the cap), not in fewer
+  rests (half-bars without a note 5.3% against 4.3%: the sampled ones fall in the quiet parts,
+  loudness z under -1: 25% against 14%) but in fewer light bars: humans leave 13% of the bars
+  inside an Easy chart with one or two onset rows (per song; pooled, one row 9.4% of the bars
+  against 3.0%), the single rows on the downbeat (84%) and in runs (the bars around them hold
+  1.2 rows), at any loudness; gaps of 2+ beats between onset rows 24 a song against 16, ending
+  on a downbeat 48% against 35%. Normal: light bars 3.8% against 2.7%. The audio hardly tells
+  those bars (AUC 0.55-0.60 for loudness and onsets); the model, with the bar masked and its
+  own chart around, at 0.77 in Easy and 0.86 in Normal (0.96 / 0.97 with the human chart
+  around; 15 val songs).
+- The guideline on runs ("avoid using more than 5 consecutive 1/2 notes" in Easy, 1/4 in
+  Normal), new column `run_over` (notes past the 5th per 100 onset rows, in the song's beats
+  with the ranking criteria's Scaling BPM): human Easy 11.7, the default 15.0 (raw samples
+  14.8); Normal 0.73 against 1.34.
+
+New column `run_over` (playability.guideline_checks; evaluate.py, rescore.py, compare_runs.py);
+compare_runs' by-grade table adds run_over, light_bars and hold_share.
+
+Two passes, off by default, on trial:
+
+1. `refine_holds(only_more=True)` (`--hold-share X --hold-up`; evaluate.py `--hold-share oracle
+   --hold-up`, tag `_hu-<share>` in place of `_hr`; generate.py and sample.py `--hold-up` with
+   `--hold-share` or the ln of `--stats`; playtest `hu`, `huX`), first of the passes after the
+   lane passes: the long notes as sampled stay, and taps become long notes, those where the
+   model, asked as refine_holds asks (every other onset of a lane masked from it to the next
+   one, the rest of the chart in view), puts the most of p(START) against p(TAP), as many as
+   the share asks beyond those already there, none shorter than the guidelines' shortest for
+   the grade (Easy 1 beat, Normal 1/2, Hard 1/4, at 180 BPM) or the hold rules; released where
+   the model puts the end (temperature 0.5). STATS / column `more_holds`.
+2. `thin_bars` (`--light P`, tag `_li<P>` after the rests', playtest `liP`), after rest_bars,
+   in charts under SR 2.7 only (Easy, Normal): a bar with 3+ onset rows that the model, with
+   the bar masked and the chart around it, gives a chance over P of holding one or two onset
+   rows keeps the one or two (the likelier count) it likes most, and the notes starting on its
+   other rows go (long notes with them). A thinned bar is the chart around the bars after it,
+   so light bars can follow each other. STATS / column `thinned_bars`.
+
+Smoke checks (full-v4 on CPU, the 40 val songs of 10-12; the human level of these songs in
+brackets):
+
+- `--hold-up` alone on the default's saved charts (run_back's both), the share asked the human
+  chart's: 165 taps a song made long notes (Easy 39, Expert 579), hold_share 0.146 -> 0.219
+  (0.207); by the human chart's share, 0.35 and more 0.291 -> 0.497 (asked 0.496), 0.2-0.35
+  0.206 -> 0.265 (0.260), under 0.2 near as it was (charts over the share keep theirs); SR
+  +0.039 (0.35 and more +0.127; Expert +0.15, Easy +0.035), F1 as it was (the onsets stay),
+  hold_beats -0.02 (1.26), long notes under the grade's shortest 0.166 -> 0.117 (0.115;
+  without the guidelines' minimum for the new ones +0.017 instead), releases within the
+  grade's spacing (Easy, Normal) +0.022 (0.121), rows over the Easy cap +0.006 (before the
+  cap pass).
+- `--light` alone on the same charts: at 0.5 Easy 6.0 bars a song thinned, notes -3.2%, bars
+  with one or two onset rows 0.097 -> 0.172 (0.103 on these 8 songs: no gap here), F1 -0.0034,
+  SR -0.003; Normal 4.4 bars, notes -1.3%, 0.045 -> 0.078 (0.108), F1 +0.0005, SR 0;
+  section_copy -0.010, section_rhythm -0.015, chord_strength -0.005 over all (copies thinned
+  apart). At 0.3: Easy 13.1 bars, notes -9.1%, 0.097 -> 0.286, F1 -0.010, SR -0.038, run_over
+  25.8 -> 18.4 (20.0); Normal 10.9 bars, notes -2.5%, 0.045 -> 0.118, F1 +0.0003, SR 0. The
+  thinned bars hardly move the SR, which the densest stretches set.
+- The whole new default from the raw samples with and without `--hold-up`, 5 long-note songs
+  (asked 0.46-0.61; Normal to Expert run before the new long notes got the guidelines'
+  minimum, which changes little from Normal up): Easy 0.17 -> 0.38 and 0.39 -> 0.44, Normal
+  0.39 -> 0.53, Hard 0.40 -> 0.55, Expert 0.29 -> 0.59; SR +0.04 to +0.15 where the chart was under the target (Normal +0.10,
+  Expert +0.15), Easy 0 and -0.06; F1 -0.010 to +0.016; Easy releases within a beat of the
+  last 0.09 -> 0.26 and 0.16 -> 0.19; 230-740 more passes a song.
+- No grammar violations.
+
+`run_space.sh` (patch 0049), on `$T`, 240 val songs:
+
+0. The new default: run_alike's default passes with strong chords 1 and alike 2 with keep
+   from SR 4; against run_alike's default.
+1. The new default with `--hold-share oracle --hold-up` (the share asked: the human chart's,
+   as the stats).
+2. `--light 0.5` and `--light 0.3` on the new default's charts (thin_bars comes after the
+   rests; the passes after it, the jacks and the chord cap, only take notes out, so on the
+   finished charts it is the same but for those).
+
+Predictions (paired means):
+
+0. The new default against run_alike's default (assembled from run_alike, 10-12 above):
+   alike_rhythm 0.48-0.50, alike_counts_off 0.13-0.15, section_rhythm 0.385-0.400,
+   chord_strength 0.815-0.825, SR bias -0.050 to -0.058 (Hard -0.020 to -0.028, Insane -0.110
+   to -0.120), density 1.022-1.026, F1 0.3820-0.3828, 25-35 more passes a song.
+1. `--hold-up`: hold_share 0.156 -> 0.19-0.22 (human 0.218); by the human chart's share,
+   0.35-0.5 -> 0.37-0.45, 0.5 and more -> 0.50-0.65, under 0.1 within ±0.01; more_holds
+   100-220 a song; SR +0.01 to +0.04 (where the share is 0.35 or more +0.05 to +0.15); F1
+   within ±0.003; ln_f1 +0.02 to +0.06; hold_beats -0.05 to +0.05; ln_short -0.01 to -0.05;
+   release_close +0.01 to +0.04; chord_over in Normal and Hard 0 to +0.005; 150-350 more
+   passes a song.
+2. `--light 0.5`: Easy 2-8 bars a song thinned, Normal 1-6; notes Easy -1% to -4%, Normal
+   -0.5% to -2%; bars with one or two onset rows Easy 0.073 -> 0.09-0.13 (human 0.129),
+   Normal 0.027 -> 0.035-0.05 (0.038); light_bars Easy +0.005 to +0.02, Normal +0.01 to +0.03;
+   SR Easy 0 to -0.015, Normal 0 to -0.01; F1 Easy -0.001 to -0.005, Normal ±0.002;
+   section_copy (Easy, Normal) -0.005 to -0.02. At 0.3: Easy 6-15 bars, notes -4% to -10%,
+   one or two rows 0.14-0.25 (past the human), SR -0.02 to -0.05, F1 -0.004 to -0.012,
+   run_over -2 to -4.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

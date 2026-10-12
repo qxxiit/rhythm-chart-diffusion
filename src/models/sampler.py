@@ -73,7 +73,7 @@ from src.data.tokenizer import (
     K,
     L,
 )
-from src.evaluation.playability import BEAT_180, chord_cap, grade_of, over_cap
+from src.evaluation.playability import BEAT_180, LN_MIN_BEATS, chord_cap, grade_of, over_cap
 from src.evaluation.structure import (
     SECTION_BARS,
     SECTION_LAG,
@@ -104,7 +104,8 @@ def _neighbour(v: int) -> int | None:
 STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "filled_holes": 0, "carried_bars": 0, "carried_ln_bars": 0,
          "tidied_holds": 0, "section_bars": 0, "section_back": 0, "capped_rows": 0,
-         "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0}
+         "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0,
+         "more_holds": 0, "thinned_bars": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -112,7 +113,9 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
                                          # backwards), rows whose chords were capped, chord
                                          # taps out of jacks (of them, moved to a free lane),
                                          # bars aligned with the bars that sound like them,
-                                         # chord taps moved to a stronger onset
+                                         # chord taps moved to a stronger onset, taps
+                                         # made long notes up to the share asked,
+                                         # bars thinned to one or two onset rows
                                          # (evaluate.py reports them per song)
 
 
@@ -538,7 +541,7 @@ def _hold_groups(song: np.ndarray, n_cells: int, min_hold: int, release_gap: int
 def refine_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
                  n_cells: int, *, temperature: float = 1.0, release_temperature: float = 0.5,
                  min_hold: int = 3, release_gap: int = 2, hold_bias: float = 0.0,
-                 hold_share: float | None = None,
+                 hold_share: float | None = None, only_more: bool = False,
                  rng: np.random.Generator | None = None) -> int:
     """Decide again, for every onset, tap or long note and where it is released, with the
     rest of the chart in view; onsets never move. Returns how many onsets changed.
@@ -559,6 +562,14 @@ def refine_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
     long notes as asked, where the model expects them most (human charts pick a long-note
     style per chart: 7% have none and 10% have more than 47%; the sampler gives every
     song about 15%, 2026-10-04).
+    only_more (with a hold_share): the long notes there stay as they are and only taps
+    become long notes, the taps with the highest p(START) / (p(START) + p(TAP)) (asked as
+    above, the long notes visible), as many as the share asks beyond those already there,
+    none if there are as many, none shorter than the guidelines ask of the grade: a chart
+    with too few long notes gets more, where the model expects them most, and the rest
+    stays as sampled. With the chart stats the model follows the long-note share asked for
+    up to about 0.2 and falls short above it (0.43 asked, 0.30 in the default's charts; 0.71
+    asked, 0.33: 240 val songs, 2026-10-12).
     A long note has one release, so p(END at e) is the model's distribution of where it
     ends. Scoring whole paths instead (sum log p(BODY) ... log p(END) against sum log
     p(EMPTY)) charged every body cell for the model's doubt whether there is a long note
@@ -580,6 +591,12 @@ def refine_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
             x[r - w0:limit - w0, k] = MASK
         return x
 
+    if only_more:
+        if hold_share is None:
+            raise ValueError("only_more needs a hold_share")
+        return _more_holds(model, song, frames, s, beat_len, n_cells, hold_share=hold_share,
+                           min_hold=min_hold, release_gap=release_gap, masked=masked, pick=pick,
+                           release_temperature=release_temperature)
     chosen = None
     if hold_share is not None:
         p_hold = {}
@@ -623,6 +640,59 @@ def refine_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
                 song[r:limit, k] = new
                 changed += 1
     STATS["changed_holds"] += changed
+    return changed
+
+
+def _more_holds(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                n_cells: int, *, hold_share: float, min_hold: int, release_gap: int, masked,
+                pick, release_temperature: float) -> int:
+    """refine_holds(only_more=True): taps made long notes up to hold_share of the onsets, each
+    at least the guidelines' shortest long note for the grade (playability.LN_MIN_BEATS, at
+    180 BPM: Easy 1 beat, Normal 1/2, Hard 1/4) as well as min_hold."""
+    fpc = model.config.frames_per_cell
+    onsets = np.isin(song[:n_cells], (TAP, HOLD_START))
+    want = int(np.rint(hold_share * onsets.sum())) - int((song[:n_cells] == HOLD_START).sum())
+    if want <= 0:
+        return 0
+    floor = LN_MIN_BEATS.get(grade_of(s), 0.0) * BEAT_180        # ms
+
+    def taps(w0: int, k: int, todo: list) -> list:
+        cells = max(min_hold, int(np.ceil(floor * D / beat_len(w0) - 1e-6)))
+        out = []
+        for r, limit, ends in todo:
+            ends = ends[ends >= r + cells]
+            if song[r, k] == TAP and len(ends):
+                out.append((r, limit, ends))
+        return out
+
+    p_hold = {}
+    for w0, k, todo in _hold_groups(song, n_cells, min_hold, release_gap):
+        mine = taps(w0, k, todo)
+        if not mine:
+            continue
+        probs = denoiser_probs(model, masked(w0, k, mine), frames[w0 * fpc:(w0 + L) * fpc], s,
+                               beat_len(w0))
+        for r, _, _ in mine:
+            p = probs[r - w0, k]
+            p_hold[(r, k)] = p[HOLD_START] / (p[HOLD_START] + p[TAP] + 1e-12)
+    chosen = set(sorted(p_hold, key=p_hold.get, reverse=True)[:want])
+    changed = 0
+    for w0, k, todo in _hold_groups(song, n_cells, min_hold, release_gap):
+        mine = [t for t in taps(w0, k, todo) if (t[0], k) in chosen]
+        if not mine:
+            continue
+        x = masked(w0, k, mine)
+        for r, _, _ in mine:
+            x[r - w0, k] = HOLD_START
+        probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+        for r, limit, ends in mine:
+            e = int(ends[pick(np.log(probs[ends - w0, k, HOLD_END] + 1e-12), release_temperature)])
+            new = np.full(limit - r, EMPTY, dtype=np.int64)
+            new[0], new[1:e - r], new[e - r] = HOLD_START, HOLD_BODY, HOLD_END
+            song[r:limit, k] = new
+            changed += 1
+    STATS["changed_holds"] += changed
+    STATS["more_holds"] += changed
     return changed
 
 
@@ -941,6 +1011,73 @@ def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
         cleared += 1
     STATS["rest_bars"] += cleared
     return cleared
+
+
+# Bars with one or two notes. Human charts in Easy leave 13% of the bars inside a song with one
+# or two onset rows (per song; of the single rows 84% on the downbeat, and in runs: the bars
+# around them hold 1.2 rows), the default's 7%; Normal 3.8% against 2.7% (240 val songs,
+# 2026-10-12): the "space" low levels need, at any loudness. The audio hardly tells those
+# bars (AUC 0.55-0.6 for loudness and onsets); the model does, with the bar MASK and its
+# own chart around: AUC 0.77 in Easy, 0.86 in Normal (15 val songs).
+LIGHT_BELOW = 2.7               # thin_bars: only charts under this SR (Easy, Normal)
+
+
+def light_rows(p_onset: np.ndarray) -> np.ndarray:
+    """[rows, K] onset probability per cell -> [rows + 1] P(the bar has n onset rows), the
+    cells taken as independent (as onset_count_logp)."""
+    q = 1.0 - np.prod(1.0 - p_onset, axis=1)            # P(the row has a note start)
+    dist = np.zeros(len(q) + 1)
+    dist[0] = 1.0
+    for v in q:
+        dist = dist * (1 - v) + np.concatenate([[0.0], dist[:-1]]) * v
+    return dist
+
+
+def thin_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+               n_cells: int, *, threshold: float, below: float = LIGHT_BELOW) -> int:
+    """Thin the bars where the model expects one or two onset rows; returns how many.
+
+    Only in charts under SR below. For every bar with 3+ onset rows, in time order,
+    bar_probs with the bar MASK and the chart around it gives each row's chance of a note
+    start (1 - the product over the lanes of 1 - p(TAP) - p(HOLD_START)) and from those the
+    chance that the bar has one or two onset rows (light_rows); above threshold the bar
+    keeps as many of its onset rows as is likelier, one or two, those the model likes most,
+    and the notes that start on its other rows go (long notes to their ends; long notes
+    from before the bar stay). A bar thinned is the chart around the bars after it, so
+    light bars may follow each other, as in the human charts. Taking notes out keeps the
+    grammar and the release gaps.
+    """
+    if s >= below:
+        return 0
+    thinned = 0
+    for b in range(n_cells // BAR):
+        r0 = b * BAR
+        starts = np.isin(song[r0:r0 + BAR], (TAP, HOLD_START))
+        on_rows = np.flatnonzero(starts.any(axis=1))
+        if len(on_rows) < 3:
+            continue
+        p = bar_probs(model, song, frames, s, beat_len, r0)
+        p_onset = p[..., TAP] + p[..., HOLD_START]
+        dist = light_rows(p_onset)
+        if float(dist[1] + dist[2]) <= threshold:
+            continue
+        q = 1.0 - np.prod(1.0 - p_onset, axis=1)
+        keep = on_rows[np.argsort(-q[on_rows], kind="stable")[:1 if dist[1] >= dist[2] else 2]]
+        for row in on_rows:
+            if row in keep:
+                continue
+            for k in np.flatnonzero(starts[row]):
+                r = r0 + int(row)
+                e = r + 1
+                if song[r, k] == HOLD_START:
+                    while e < len(song) and song[e, k] == HOLD_BODY:
+                        e += 1
+                    if e < len(song) and song[e, k] == HOLD_END:
+                        e += 1
+                song[r:e, k] = EMPTY
+        thinned += 1
+    STATS["thinned_bars"] += thinned
+    return thinned
 
 
 # Rhythm carried over. Human charts give a bar the rhythm (onset rows) of the bar before 27%
@@ -1679,7 +1816,7 @@ def _beat_len_fn(timing_points, cell_offset: int):
 
 def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_points,
               cell_offset: int, n_cells: int, *, holds: bool = False,
-              hold_share: float | None = None,
+              hold_share: float | None = None, hold_up: bool = False,
               copy_bias: float | None = None, min_hold: int | None = None,
               release_gap: int | None = None, seed: int = 0, genre: int | None = None,
               mapper: int | None = None, stats=None, rest: float | None = None,
@@ -1691,22 +1828,22 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               section_back: bool = False, section_lanes: bool = False,
               chord_cap: float | None = None, untangle: bool = False,
               untangle_move: bool = False, untangle_grades: bool = False,
-              alike: float | None = None, alike_keep: bool = False,
-              strong: float | None = None) -> np.ndarray:
+              alike: float | None = None, alike_keep: float | bool | None = None,
+              strong: float | None = None, light: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
-    order: refine_holds (holds=True or a hold_share), carry_rhythm (carry: the bias; its
-    lanes with lane_guidance at lane_temperature; carry_keep, carry_rows, carry_holds: its
-    keep_notes, keep_rows and bias for bars with long notes), strong_chords (strong: the z
-    difference), copy_sections (sections: the
-    bias; section_keep, section_back, section_lanes: its keep_notes, back and new_lanes),
+    order: refine_holds (holds=True or a hold_share; hold_up: its only_more), carry_rhythm
+    (carry: the bias; its lanes with lane_guidance at lane_temperature; carry_keep,
+    carry_rows, carry_holds: its keep_notes, keep_rows and bias for bars with long notes),
+    strong_chords (strong: the z difference), copy_sections (sections: the bias;
+    section_keep, section_back, section_lanes: its keep_notes, back and new_lanes),
     copy_bars (copy_bias, sources at least copy_min_lag bars back), clean_holds,
-    align_alike (alike: the bias; alike_keep: its keep_notes; its lanes as the carry's),
-    tidy_holds (ln_tidy: the
-    longest long note in beats it turns into a tap), fill_holes (holes: the threshold),
-    rest_bars (rest: the threshold), untangle_jacks (untangle; untangle_move: its move;
-    untangle_grades: the window by the SR s, untangle_window), guideline_cap (chord_cap:
-    below that SR; with lane_guidance); a new array."""
+    align_alike (alike: the bias; alike_keep: its keep_notes in charts at that SR or more,
+    True in all; its lanes as the carry's), tidy_holds (ln_tidy: the longest long note in
+    beats it turns into a tap), fill_holes (holes: the threshold), rest_bars (rest: the
+    threshold), thin_bars (light: the threshold), untangle_jacks (untangle;
+    untangle_move: its move; untangle_grades: the window by the SR s, untangle_window),
+    guideline_cap (chord_cap: below that SR; with lane_guidance); a new array."""
     base = model
     if genre is not None or mapper is not None or stats is not None:
         model = Styled(base, genre, mapper, stats=stats)
@@ -1724,7 +1861,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     rng = np.random.default_rng(seed)
     if holds or hold_share is not None:
         refine_holds(model, song, frames, s, beat_len, n_cells, min_hold=min_hold,
-                     release_gap=release_gap, hold_share=hold_share, rng=rng)
+                     release_gap=release_gap, hold_share=hold_share, only_more=hold_up,
+                     rng=rng)
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
@@ -1744,7 +1882,7 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if alike is not None:
         align_alike(model, song, frames, s, beat_len, n_cells, s_audio, bias=alike,
                     lane_model=lane_model, temperature=lane_temperature, rng=rng,
-                    release_gap=release_gap, keep_notes=alike_keep)
+                    release_gap=release_gap, keep_notes=_from_sr(alike_keep, s))
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if holes is not None:
@@ -1752,11 +1890,21 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                    release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
+    if light is not None:
+        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
               untangle_grades, release_gap)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
+
+
+def _from_sr(value: float | bool | None, s: float) -> bool:
+    """A setting on from an SR up: True everywhere, False or None nowhere, a number in the
+    charts at that SR or more."""
+    if value is None or isinstance(value, bool):
+        return bool(value)
+    return s >= float(value)
 
 
 def _strong(song: np.ndarray, n_cells: int, mel: np.ndarray, timing_points, cell_offset: int,
@@ -1790,7 +1938,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   jack_bias: float = 0.0, copy_bias: float | None = None,
                   genre: int | None = None, mapper: int | None = None,
                   style_guidance: float = 0.0, holds: bool = False,
-                  hold_share: float | None = None, loud_bias: float = 0.0,
+                  hold_share: float | None = None, hold_up: bool = False,
+                  loud_bias: float = 0.0,
                   loud_side: str = "quiet", stats=None,
                   lane_guidance: float | None = None, onset_bias: float = 0.0,
                   onset_taper=None, rest: float | None = None,
@@ -1801,8 +1950,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   section_back: bool = False, section_lanes: bool = False,
                   chord_cap: float | None = None, untangle: bool = False,
                   untangle_move: bool = False, untangle_grades: bool = False,
-                  alike: float | None = None, alike_keep: bool = False,
-                  strong: float | None = None) -> np.ndarray:
+                  alike: float | None = None, alike_keep: float | bool | None = None,
+                  strong: float | None = None, light: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -1822,7 +1971,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   the human rate (EXPERIMENTS 2026-10-03)
     holds         refine_holds after the lane passes: tap or long note, and the release,
                   decided again with the whole chart in view; hold_share (implies holds):
-                  that share of the onsets become long notes, where the model expects them
+                  that share of the onsets become long notes, where the model expects them;
+                  hold_up: only taps become long notes, up to that share (only_more)
     copy_bias     copy_bars after that with this bias in nats per bar (None: no copies);
                   the audio similarity of bars comes from mel; sources at least
                   copy_min_lag bars back
@@ -1865,7 +2015,10 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     alike         align_alike with this bias after the copies (None: none): a bar that sounds
                   like others but shares the rhythm of none takes the rhythm of one of them
                   near their median note count, its lanes chosen again; alike_keep: not from
-                  one with fewer notes
+                  one with fewer notes, in charts at that SR or more (True: in all)
+    light         thin_bars with this threshold after rest_bars (None: none): in charts
+                  under SR 2.7 a bar the model, asked about the whole bar, expects to hold one
+                  or two onset rows with more than this chance keeps its likeliest one or two
     strong        strong_chords with this z difference after the carry (None: none): a
                   chord gives a tap to a single note of its beat on a stronger onset, so
                   the copies after it take chords on the strong sounds
@@ -1882,7 +2035,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   0, 0 = keep the holds as sampled
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
     carry_rhythm, strong_chords, copy_sections, copy_bars, clean_holds again if a bar was
-    copied, align_alike, tidy_holds, fill_holes, rest_bars, untangle_jacks, guideline_cap.
+    copied, align_alike, tidy_holds, fill_holes, rest_bars, thin_bars, untangle_jacks,
+    guideline_cap.
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
@@ -1945,7 +2099,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                      jack_bias=jack_bias)
     if holds or hold_share is not None:
         refine_holds(model, song, frames, s, beat_len, n_cells, min_hold=min_hold,
-                     release_gap=release_gap, hold_share=hold_share, rng=rng)
+                     release_gap=release_gap, hold_share=hold_share, only_more=hold_up,
+                     rng=rng)
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
@@ -1965,7 +2120,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if alike is not None:
         align_alike(model, song, frames, s, beat_len, n_cells, s_audio, bias=alike,
                     lane_model=lane_model, temperature=lane_temperature, rng=rng,
-                    release_gap=release_gap, keep_notes=alike_keep)
+                    release_gap=release_gap, keep_notes=_from_sr(alike_keep, s))
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if holes is not None:
@@ -1973,6 +2128,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                    release_gap=release_gap)
     if rest is not None:
         rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
+    if light is not None:
+        thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
               untangle_grades, release_gap)
     if chord_cap is not None:

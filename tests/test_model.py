@@ -597,6 +597,46 @@ def test_rest_bars_leaves_empty_the_bars_the_model_expects_empty() -> None:
     assert np.array_equal(out[BAR - 2:BAR + 7, 2], held[BAR - 2:BAR + 7, 2])   # ... not bar 0's hold
 
 
+def test_thin_bars_keeps_the_rows_the_model_likes_in_a_light_bar() -> None:
+    """A bar the model, with the bar masked, expects to hold one or two onset rows keeps that
+    many of its rows, the likeliest; the notes starting on the others go (long notes to
+    their ends); not from SR 2.7 up, and not where the model expects a busy bar."""
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, light_rows, thin_bars
+    four = [(0, 0), (12, 1), (24, 2), (36, 3)]
+    song = _bars_song([four, four, four])
+    song[BAR + 12, 1], song[BAR + 13:BAR + 20, 1], song[BAR + 20, 1] = \
+        HOLD_START, HOLD_BODY, HOLD_END                 # bar 1's second row: a long note
+    frames = torch.zeros(len(song) * 4, 80)
+    two = torch.zeros(1, L, K, N_CLASSES)               # windows start at row 0 here:
+    two[..., EMPTY] = 12.0                              # nothing expected anywhere ...
+    for row in (0, 24):                                 # ... but bar 1's rows 0 and 24
+        two[0, BAR + row, 0, EMPTY], two[0, BAR + row, 0, TAP] = 0.0, 12.0
+    uniform = Fixed(torch.zeros(1, L, K, N_CLASSES))    # 0.4 starts per cell: a busy bar
+    kept = song.copy()
+    assert thin_bars(uniform, kept, frames, 1.5, lambda row0: 400.0, 3 * BAR,
+                     threshold=0.5) == 0 and np.array_equal(kept, song)
+    kept = song.copy()
+    assert thin_bars(Fixed(two), kept, frames, 2.7, lambda row0: 400.0, 3 * BAR,
+                     threshold=0.5) == 0 and np.array_equal(kept, song)       # Hard: none
+    before = STATS["thinned_bars"]
+    out = song.copy()
+    assert thin_bars(Fixed(two), out, frames, 1.5, lambda row0: 400.0, 3 * BAR,
+                     threshold=0.5) == 1 and STATS["thinned_bars"] == before + 1
+    assert np.array_equal(out[:BAR], song[:BAR]) and np.array_equal(out[2 * BAR:], song[2 * BAR:])
+    rows = np.flatnonzero(np.isin(out[BAR:2 * BAR], (TAP, HOLD_START)).any(axis=1))
+    assert list(rows) == [0, 24]                        # the long note went to its end
+    assert (out[BAR + 12:BAR + 21, 1] == EMPTY).all()
+    one = two.clone()
+    one[0, BAR + 24, 0, EMPTY], one[0, BAR + 24, 0, TAP] = 12.0, 0.0
+    out = song.copy()
+    assert thin_bars(Fixed(one), out, frames, 1.5, lambda row0: 400.0, 3 * BAR,
+                     threshold=0.5) == 1
+    assert list(np.flatnonzero(np.isin(out[BAR:2 * BAR], (TAP, HOLD_START)).any(axis=1))) == [0]
+    dist = light_rows(np.array([[0.5, 0.0], [1.0, 0.0], [0.0, 0.0]]))
+    assert dist == pytest.approx([0.0, 0.5, 0.5, 0.0])
+
+
 def test_taper_factor() -> None:
     from src.models.sampler import GATE_TAPER, taper_factor
     assert taper_factor(6.0, None) == 1.0
@@ -959,6 +999,50 @@ def test_refine_holds_to_a_long_note_share() -> None:
         got = hold_stats(out[:stats.n_cells])["hold_share"]
         assert abs(got - share) < 0.02, (share, got)
         assert np.array_equal(np.isin(out, (TAP, 2)), np.isin(song, (TAP, 2)))
+
+
+def test_refine_holds_only_more_adds_long_notes_up_to_the_share() -> None:
+    """only_more: the long notes there stay, taps become long notes until the share is
+    reached, onsets never move; a share at or under the chart's own changes nothing."""
+    from src.evaluation.holds import hold_spans, hold_stats
+    from src.models.sampler import STATS, refine_holds
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    song = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    frames = torch.as_tensor(mel[:len(song) * 4], dtype=torch.float32)
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    own = hold_stats(song[:stats.n_cells])["hold_share"]
+    kept = song.copy()
+    assert refine_holds(model, kept, frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                        hold_share=own - 0.05, only_more=True, min_hold=1,
+                        release_gap=0) == 0
+    assert np.array_equal(kept, song)
+    before = STATS["more_holds"]
+    out = song.copy()
+    changed = refine_holds(model, out, frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                           hold_share=own + 0.15, only_more=True, min_hold=1, release_gap=0,
+                           rng=np.random.default_rng(0))
+    got = hold_stats(out[:stats.n_cells])["hold_share"]
+    assert abs(got - (own + 0.15)) < 0.02 and changed > 0
+    assert STATS["more_holds"] == before + changed
+    assert np.array_equal(np.isin(out, (TAP, 2)), np.isin(song, (TAP, 2)))   # onsets stay
+    old = set(hold_spans(song[:stats.n_cells]))
+    assert old <= set(hold_spans(out[:stats.n_cells]))
+    assert len(grammar_violations(out[:stats.n_cells], closed=False)) == 0
+    easy = song.copy()                                  # Easy: none under 1 beat at 180 BPM,
+    refine_holds(model, easy, frames, 1.5, lambda row0: 400.0, stats.n_cells,   # 10 cells
+                 hold_share=own + 0.1, only_more=True, min_hold=1, release_gap=0)
+    new = set(hold_spans(easy[:stats.n_cells])) - old
+    assert new and all(e - st >= 10 for _, st, e in new)
+    with pytest.raises(ValueError):
+        refine_holds(model, out, frames, 3.0, lambda row0: 400.0, stats.n_cells, only_more=True)
+
+
+def test_from_sr() -> None:
+    from src.models.sampler import _from_sr
+    assert _from_sr(True, 1.0) and not _from_sr(False, 9.0) and not _from_sr(None, 9.0)
+    assert _from_sr(4.0, 4.0) and not _from_sr(4.0, 3.99) and _from_sr(0.0, 1.0)
 
 
 def test_ln_agreement() -> None:

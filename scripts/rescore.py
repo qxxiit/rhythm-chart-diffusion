@@ -8,7 +8,7 @@ with patterns.summarize, holds.hold_stats, structure.phrase_repeats and
 structure.ln_placement, so pattern, long-note and phrase columns added after the run
 (e.g. lone_chord, bar_rhythm_repeat, rhythm_rep4, ln_scattered) appear, and
 playability.guideline_checks for the chart's grade (chord_over, fast_jacks, anchor_over,
-ln_short, release_close); with the log-Mel in the cache also structure.section_repeats
+ln_short, release_close, run_over); with the log-Mel in the cache also structure.section_repeats
 (section_rhythm, section_copy: the bars' audio similarity tells where the music comes
 back), structure.alike_repeats (alike_rhythm, alike_counts_off: bars that sound the same)
 and playability.chord_strength (--no-mel leaves those out). per_song.csv is updated

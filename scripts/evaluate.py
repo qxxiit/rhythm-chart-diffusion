@@ -75,11 +75,12 @@ human chart's SR with the song's real timing, then score:
                           of the pairs of bars that sound nearly the same, those with the same
                           rhythm / with note counts a quarter apart (structure.alike_repeats),
                           human_* likewise
-    chord_over, fast_jacks, anchor_over, ln_short, release_close
+    chord_over, fast_jacks, anchor_over, ln_short, release_close, run_over
                           the ranking criteria's 4K guidelines for the chart's grade (chords
                           over the cap, jacks within 1/4 beat, anchors too long, long notes
-                          too short, releases too close; playability.guideline_checks, at the
-                          guidelines' 180 BPM), human_* likewise
+                          too short, releases too close, at the guidelines' 180 BPM; runs of
+                          1/2 notes in Easy, 1/4 in Normal past 5, in the song's beats;
+                          playability.guideline_checks), human_* likewise
     chord_strength        how much stronger the audio onsets under chords are than under
                           single notes (playability.chord_strength), human_* likewise
     ln_sections, ln_scattered
@@ -98,6 +99,10 @@ human chart's SR with the song's real timing, then score:
     untangle_moved        with --untangle-move: of those, taps moved to a lane with no jack
     aligned_bars          with --alike: bars that took the rhythm of a bar that sounds like
                           them (sampler.align_alike)
+    more_holds            with --hold-up: taps made long notes, up to the share asked
+                          (sampler.refine_holds only_more)
+    thinned_bars          with --light: bars thinned to one or two onset rows
+                          (sampler.thin_bars)
     strong_moved          with --strong-chords: chord taps moved to a single note of the beat
                           on a stronger onset (sampler.strong_chords)
     tidied_holds          with --ln-tidy: long notes among taps made taps (sampler.tidy_holds)
@@ -332,6 +337,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hold-share", default=None,
                     help="with --refine-holds: this share of the onsets become long notes, or "
                          "'oracle' for the human chart's share")
+    ap.add_argument("--hold-up", action="store_true",
+                    help="--hold-share: the long notes there stay and only taps become long "
+                         "notes, up to the share (sampler.refine_holds only_more; tag _hu "
+                         "instead of _hr)")
     ap.add_argument("--min-hold", type=int, default=None,
                     help="long notes shorter than this many cells (1/12 beat) become taps; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
@@ -379,8 +388,9 @@ def main(argv: list[str] | None = None) -> int:
                          "shares the rhythm of none takes the rhythm of one of them near their "
                          "median note count when the model scores it within this many nats "
                          "(sampler.align_alike, tag _al); also on --from-charts")
-    ap.add_argument("--alike-keep", action="store_true",
-                    help="--alike: not from a bar with fewer notes (tag k)")
+    ap.add_argument("--alike-keep", type=float, nargs="?", const=0.0, default=None,
+                    help="--alike: not from a bar with fewer notes, in the charts at this SR "
+                         "or more (alone: in all; tag k, k<SR>)")
     ap.add_argument("--strong-chords", type=float, default=None,
                     help="after the carry, a chord gives a tap to a single note of its beat on "
                          "an onset this many z stronger (sampler.strong_chords, tag _sc); also "
@@ -405,6 +415,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="rest_bars last: leave empty the bars where the model, with the bar "
                          "masked, expects fewer note starts than this (EXPERIMENTS 2026-10-07 "
                          "night); also on --from-charts")
+    ap.add_argument("--light", type=float, default=None,
+                    help="after rest_bars, in charts under SR 2.7 a bar the model, with the bar "
+                         "masked, expects to hold one or two onset rows with more than this "
+                         "chance keeps its likeliest one or two (sampler.thin_bars, tag _li); "
+                         "also on --from-charts")
     ap.add_argument("--sr-offset", type=float, default=0.0,
                     help="sample at the target SR + this (the onset gate leaves the charts "
                          "0.14 SR under the target, EXPERIMENTS 2026-10-07); scored against "
@@ -512,8 +527,12 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_og{a.onset_bias:g}"           # 10-06 night's _ob runs: the EMPTY-bias form
         if taper is not None:
             tag += "_ot" + "-".join(f"{v:g}" for v in taper)
-    if a.refine_holds or a.hold_share is not None:
-        tag += "_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
+    if a.hold_up and a.hold_share is None:
+        print("--hold-up needs --hold-share", file=sys.stderr)
+        return 2
+    hold_tag = "" if not (a.refine_holds or a.hold_share is not None) else (
+        "_hu" if a.hold_up else "_hr") + (f"-{a.hold_share}" if a.hold_share is not None else "")
+    tag += hold_tag
     carry_tag = "" if a.carry_rhythm is None else f"_rc{a.carry_rhythm:g}" + (
         "k" if a.carry_keep else "") + ("r" if a.carry_rows else "") + (
         f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
@@ -524,7 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         "k" if a.section_keep else "") + ("b" if a.section_back else "") + (
         "n" if a.section_lanes else "")
     tag += section_tag
-    alike_tag = "" if a.alike is None else f"_al{a.alike:g}" + ("k" if a.alike_keep else "")
+    alike_tag = "" if a.alike is None else f"_al{a.alike:g}" + (
+        "" if a.alike_keep is None else "k" + (f"{a.alike_keep:g}" if a.alike_keep else ""))
     end_tag = ("_uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
                if a.untangle else "") + (
         f"_cc{a.chord_cap:g}" if a.chord_cap is not None else "")
@@ -537,6 +557,8 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_fh{a.fill_holes:g}"
     if a.rest is not None:
         tag += f"_rb{a.rest:g}"
+    light_tag = "" if a.light is None else f"_li{a.light:g}"
+    tag += light_tag
     tag += end_tag
     if a.sr_offset:
         tag += f"_so{a.sr_offset:g}"
@@ -568,14 +590,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{a.from_charts}: no saved chart for {len(missing)} of the {len(rows)} charts "
                   "(use that run's --per-song / --n / --seed)", file=sys.stderr)
             return 2
-        suffix = ("_hr" + (f"-{a.hold_share}" if a.hold_share is not None else "")
-                  if a.refine_holds or a.hold_share is not None else "") + (
-            carry_tag) + strong_tag + section_tag + (
+        suffix = hold_tag + carry_tag + strong_tag + section_tag + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
             if a.copy_bias is not None else "") + alike_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
-            f"_rb{a.rest:g}" if a.rest is not None else "") + (
+            f"_rb{a.rest:g}" if a.rest is not None else "") + light_tag + (
             end_tag) + stats_tag + (
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
@@ -605,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
         capped0, untangled0 = STATS["capped_rows"], STATS["untangled"]
         back0, moved0 = STATS["section_back"], STATS["untangle_moved"]
         aligned0, strong0 = STATS["aligned_bars"], STATS["strong_moved"]
+        more0, thinned0 = STATS["more_holds"], STATS["thinned_bars"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -625,9 +646,11 @@ def main(argv: list[str] | None = None) -> int:
                     or a.rest is not None or a.fill_holes is not None \
                     or a.carry_rhythm is not None or a.ln_tidy is not None \
                     or a.copy_sections is not None or a.chord_cap is not None \
-                    or a.untangle or a.alike is not None or a.strong_chords is not None:
+                    or a.untangle or a.alike is not None or a.strong_chords is not None \
+                    or a.light is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
-                                   holds=a.refine_holds, hold_share=share, copy_bias=a.copy_bias,
+                                   holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
+                                   copy_bias=a.copy_bias, light=a.light,
                                    copy_min_lag=a.copy_min_lag,
                                    min_hold=a.min_hold, release_gap=a.release_gap,
                                    seed=sample_seed + i, stats=buckets, rest=a.rest,
@@ -652,8 +675,9 @@ def main(argv: list[str] | None = None) -> int:
                                    empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    copy_min_lag=a.copy_min_lag,
-                                   holds=a.refine_holds, hold_share=share,
-                                   loud_bias=a.loud_bias, loud_side=a.loud_side, stats=buckets,
+                                   holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
+                                   light=a.light, loud_bias=a.loud_bias, loud_side=a.loud_side,
+                                   stats=buckets,
                                    onset_bias=a.onset_bias, onset_taper=taper, rest=a.rest,
                                    holes=a.fill_holes, carry=a.carry_rhythm, ln_tidy=a.ln_tidy,
                                    carry_keep=a.carry_keep, carry_holds=a.carry_holds,
@@ -692,6 +716,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["aligned_bars"] = STATS["aligned_bars"] - aligned0
         if a.strong_chords is not None:
             cost["strong_moved"] = STATS["strong_moved"] - strong0
+        if a.hold_up:
+            cost["more_holds"] = STATS["more_holds"] - more0
+        if a.light is not None:
+            cost["thinned_bars"] = STATS["thinned_bars"] - thinned0
         if a.ln_tidy is not None:
             cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
         charts[r["key"]] = tokens
@@ -737,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "copy_min_lag": a.copy_min_lag,
                "style": a.style, "style_guidance": a.style_guidance,
-               "refine_holds": a.refine_holds, "hold_share": a.hold_share,
+               "refine_holds": a.refine_holds, "hold_share": a.hold_share, "hold_up": a.hold_up,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
@@ -748,6 +776,7 @@ def main(argv: list[str] | None = None) -> int:
                "chord_cap": a.chord_cap, "untangle": a.untangle,
                "untangle_move": a.untangle_move, "untangle_grades": a.untangle_grades,
                "alike": a.alike, "alike_keep": a.alike_keep, "strong_chords": a.strong_chords,
+               "light": a.light,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,
                "min_hold": a.min_hold, "release_gap": a.release_gap,

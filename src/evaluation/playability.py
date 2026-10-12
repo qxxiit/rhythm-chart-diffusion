@@ -23,6 +23,11 @@ those beats at 180 BPM (BEAT_180), so a chart of another tempo is held to the sa
         release_close  of the releases, the share within the grade's spacing of the release
                        before (Easy 1 beat, Normal 1/2), releases at the same time apart; nan
                        for the other grades
+        run_over       notes past the 5th of a run of notes each within the grade's snap of
+                       the one before (Easy 1/2 beat, Normal 1/4: "avoid using more than 5
+                       consecutive 1/2 [1/4] notes") per 100 onset rows; snaps in the song's
+                       beats, halved under 120 BPM and doubled over 240 (Scaling BPM: a
+                       1/4 at 100 BPM is as fast as a 1/2 at 200); nan for the other grades
     chord_strength(tokens, strength)
                    chords on the strong sounds: the mean onset strength (z within the song,
                    sampler.onset_strength) of the rows that start 2+ notes, less that of the
@@ -30,7 +35,7 @@ those beats at 180 BPM (BEAT_180), so a chart of another tempo is held to the sa
 
 All are guidelines, not rules: humans break them too (240 val songs, 2026-10-11, per song:
 chord_over Easy 0.005, Normal 0.028, Hard 0.010; fast_jacks Hard 0.04, Expert 1.8; ln_short
-Easy 0.29). The numbers worth watching are the ones far from the human charts' (the default
+Easy 0.29; run_over Easy 1.4, Normal 0.12, 2026-10-12). The numbers worth watching are the ones far from the human charts' (the default
 of 10-11: fast_jacks Hard 0.14, Expert 3.3; chord_over Easy 0.009; chord_strength 0.76
 against 0.83; EXPERIMENTS 2026-10-12).
 """
@@ -41,7 +46,7 @@ import math
 
 import numpy as np
 
-from src.data.tokenizer import HOLD_BODY, HOLD_START, TAP
+from src.data.tokenizer import HOLD_BODY, HOLD_START, TAP, D
 
 BEAT_180 = 60000.0 / 180          # ms: the guidelines' beat
 GRADES = (("Easy", 2.0), ("Normal", 2.7), ("Hard", 4.0), ("Insane", 5.3), ("Expert", 6.5),
@@ -52,7 +57,9 @@ LN_MIN_BEATS = {"Easy": 1.0, "Normal": 0.5, "Hard": 0.25}
 RELEASE_GAP_BEATS = {"Easy": 1.0, "Normal": 0.5}
 JACK_BEATS = 0.25
 ANCHOR_GAP_BEATS = 0.5
-CHECKS = ("chord_over", "fast_jacks", "anchor_over", "ln_short", "release_close")
+RUN_BEATS = {"Easy": 0.5, "Normal": 0.25}       # a run: notes within this snap of the last ...
+RUN_MAX = 5                                     # ... at most this many of them in a row
+CHECKS = ("chord_over", "fast_jacks", "anchor_over", "ln_short", "release_close", "run_over")
 
 
 def grade_of(sr: float) -> str:
@@ -99,6 +106,24 @@ def _anchors(present: np.ndarray, t: np.ndarray, longer_than: int) -> int:
     return int(count)
 
 
+def run_over(t_rows: np.ndarray, beat_ms: np.ndarray, snap: float, longest: int = RUN_MAX) -> int:
+    """Notes past the longest-th of runs of notes each within snap beats of the one before.
+
+    t_rows   [n] ms of the onset rows; beat_ms [n] the beat's length there (ms)
+    The snap is in the song's beats, halved under 120 BPM and doubled over 240 (the ranking
+    criteria's Scaling BPM)."""
+    if len(t_rows) < 2:
+        return 0
+    bpm = 60000.0 / beat_ms[:-1]
+    scale = np.where(bpm < 120, 0.5, np.where(bpm > 240, 2.0, 1.0))
+    close = np.diff(t_rows) <= snap * scale * beat_ms[:-1] + 1e-6
+    over, n = 0, 0
+    for c in close:
+        n = n + 1 if c else 0
+        over += n + 1 > longest
+    return over
+
+
 def guideline_checks(tokens: np.ndarray, times: np.ndarray, grade: str) -> dict:
     """The module docstring's guideline_checks for one chart.
 
@@ -123,6 +148,9 @@ def guideline_checks(tokens: np.ndarray, times: np.ndarray, grade: str) -> dict:
     out["fast_jacks"] = 100.0 * jacks / int(onset.sum())
     if grade in ANCHOR_MAX:
         out["anchor_over"] = 100.0 * _anchors(onset[rows], t[rows], ANCHOR_MAX[grade]) / len(rows)
+    if grade in RUN_BEATS and len(t) >= 2:
+        cell = np.diff(t, append=2 * t[-1] - t[-2])          # ms of each row's cell
+        out["run_over"] = 100.0 * run_over(t[rows], D * cell[rows], RUN_BEATS[grade]) / len(rows)
     starts = np.argwhere(x == HOLD_START)
     if len(starts) and grade in LN_MIN_BEATS:
         lengths, releases = [], []

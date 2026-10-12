@@ -40,8 +40,10 @@ about the whole bar, likes it as well as its own; its lanes are chosen again
 takes the earlier bar's long notes along, their lanes moved as a whole, where the model
 likes that bar within a nat of its own (--carry-holds 1; --no-carry-holds leaves those
 bars as they are). Bars then repeat a rhythm nearer the human rate, as often as humans
-where two bars sound unalike, with the SR as it was (EXPERIMENTS 2026-10-10 to 10-12). A
-stretch of 4 or more bars whose music comes back from 8 or more bars before then takes
+where two bars sound unalike, with the SR as it was (EXPERIMENTS 2026-10-10 to 10-12). In
+each beat a chord on an onset weaker than a single note's by 1 z gives that note one of its
+taps (--strong-chords 1; 0 turns it off), which put the chords on the strong sounds as
+humans do (EXPERIMENTS 2026-10-12). A stretch of 4 or more bars whose music comes back from 8 or more bars before then takes
 the notes it had there, as a whole, if that stretch has no fewer notes and the model
 likes its rhythm within 4 nats a bar; where the returning stretch has more notes, the
 earlier one takes its notes instead (--copy-sections 4 --section-keep --section-back;
@@ -50,8 +52,12 @@ of its bars instead of 19% (human 55%), its very notes as often as humans (24%),
 SR and F1 as they were (EXPERIMENTS 2026-10-12).
 Whole bars are copied only from 8 or more bars back
 where the audio repeats (--copy-bias 0 --copy-min-lag 8; --no-copy turns it off), as
-humans copy a section that comes back, and long notes under half a beat among taps
-become taps (--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one note gets
+humans copy a section that comes back; a bar that sounds like others but shares the
+rhythm of none takes the rhythm of one of them near their median note count, if the model
+likes it within 2 nats, from SR 4 not from one with fewer notes (--alike 2 --alike-keep 4;
+--no-alike turns it off, --no-alike-keep keeps no counts): bars that sound nearly the same
+then share a rhythm 49% of the time instead of 32% (human 62%; EXPERIMENTS 2026-10-12); and
+long notes under half a beat among taps become taps (--ln-tidy 0.5; 0 turns it off). A stream that misses exactly one note gets
 it where the model would start one with probability 0.5 or more (--holes 0.5; 0 turns it
 off). Bars where the model expects under one note start, asked about the whole bar
 with the chart around it, are left empty (--rest 1; 0 turns it off), which brought the
@@ -62,9 +68,10 @@ from Expert up) moves to a lane of its row where it makes no jack, or goes (--un
 jacks of Hard to the human level (EXPERIMENTS 2026-10-12). Last, in charts under SR 2
 (Easy) no row holds more than 2 notes, long notes held counting, as the ranking criteria
 ask (--chord-cap 2; 0 turns it off, 4 caps Normal and Hard too). On trial and off by
-default (EXPERIMENTS 2026-10-12): --alike B, a bar that sounds like others but shares the
-rhythm of none takes the rhythm of one of them (--alike-keep: not from fewer notes);
---strong-chords Z, a chord gives a tap to a single note of its beat on a stronger onset.
+default (EXPERIMENTS 2026-10-12): --hold-up, the long notes as sampled stay and taps become
+long notes up to the share asked (--hold-share X, or the ln of --stats), since the model
+falls short of shares over about 0.2; --light P, in Easy and Normal a bar the model expects
+to hold one or two onset rows with more than chance P keeps those.
 
 Long notes: the model cannot tell from the audio whether a song should be a tap
 chart or a long-note chart (it is the mapper's choice: EXPERIMENTS 2026-10-05). With
@@ -321,17 +328,29 @@ def main(argv: list[str] | None = None) -> int:
                     default=True,   # 2026-10-12
                     help="--untangle: within the grade's window, 1/4 beat to Hard, 1/6 in "
                          "Insane, none from Expert up")
-    ap.add_argument("--alike", type=float, default=None,
+    ap.add_argument("--alike", type=float, default=2.0,   # 2026-10-12
                     help="after the copies, a bar that sounds like others but shares the rhythm "
                          "of none takes the rhythm of one of them near their median note count "
-                         "when the model scores it within this many nats (sampler.align_alike); "
-                         "on trial, 2026-10-12")
-    ap.add_argument("--alike-keep", action=argparse.BooleanOptionalAction, default=False,
-                    help="--alike: not from a bar with fewer notes")
-    ap.add_argument("--strong-chords", type=float, default=None,
+                         "when the model scores it within this many nats (sampler.align_alike)")
+    ap.add_argument("--no-alike", action="store_true", help="bars that sound alike as sampled")
+    ap.add_argument("--alike-keep", type=float, nargs="?", const=0.0,
+                    default=4.0,   # 2026-10-12
+                    help="--alike: not from a bar with fewer notes, in charts at this SR or more "
+                         "(alone: in all)")
+    ap.add_argument("--no-alike-keep", action="store_true",
+                    help="--alike: from bars with fewer notes too, at every SR")
+    ap.add_argument("--strong-chords", type=float, default=1.0,   # 2026-10-12
                     help="after the carry, a chord gives a tap to a single note of its beat on "
-                         "an onset this many z stronger (sampler.strong_chords); on trial, "
-                         "2026-10-12")
+                         "an onset this many z stronger (sampler.strong_chords); 0 = off")
+    ap.add_argument("--hold-up", action="store_true",
+                    help="the long notes as sampled stay and taps become long notes, where the "
+                         "model expects them most, up to --hold-share or the ln of --stats "
+                         "(sampler.refine_holds only_more); on trial, 2026-10-12")
+    ap.add_argument("--light", type=float, default=None,
+                    help="after the rests, in charts under SR 2.7 a bar the model, asked about "
+                         "the whole bar, expects to hold one or two onset rows with more than "
+                         "this chance keeps its likeliest one or two (sampler.thin_bars); on "
+                         "trial, 2026-10-12")
     ap.add_argument("--chord-cap", type=float, default=2.0,   # 2026-10-12
                     help="last, in charts under this SR (2: Easy; 4: Easy to Hard) rows over the "
                          "ranking criteria's chord cap (Easy and Normal 2 notes, Hard 3) keep "
@@ -410,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
         a.carry_holds = None
     if a.no_sections:
         a.copy_sections = None
+    if a.no_alike:
+        a.alike = None
+    if a.no_alike_keep:
+        a.alike_keep = None
     if a.list_styles:
         return list_styles(load_denoiser(a.ckpt, "cpu"))
     if a.audio is None:
@@ -493,13 +516,14 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-lb{'q' if a.loud_side == 'quiet' else ''}{a.loud_bias:g}"
     if a.onset_bias:
         order += f"-og{a.onset_bias:g}" + ("-ot" if taper is not None else "")
-    if a.refine_holds or a.hold_share is not None:
-        order += "-hr" + (f"{a.hold_share:g}" if a.hold_share is not None else "")
+    if a.refine_holds or a.hold_share is not None or a.hold_up:
+        order += ("-hu" if a.hold_up else "-hr") + (
+            f"{a.hold_share:g}" if a.hold_share is not None else "")
     if a.carry_rhythm is not None:
         order += f"-rc{a.carry_rhythm:g}" + ("k" if a.carry_keep else "") + (
             "r" if a.carry_rows else "") + (
             f"h{a.carry_holds:g}" if a.carry_holds is not None else "")
-    if a.strong_chords is not None:
+    if a.strong_chords:
         order += f"-sc{a.strong_chords:g}"
     if a.copy_sections is not None:
         order += f"-cs{a.copy_sections:g}" + ("k" if a.section_keep else "") + (
@@ -507,13 +531,16 @@ def main(argv: list[str] | None = None) -> int:
     if a.copy_bias is not None:
         order += f"-cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
     if a.alike is not None:
-        order += f"-al{a.alike:g}" + ("k" if a.alike_keep else "")
+        order += f"-al{a.alike:g}" + ("" if a.alike_keep is None else "k" + (
+            f"{a.alike_keep:g}" if a.alike_keep else ""))
     if a.ln_tidy:
         order += f"-lt{a.ln_tidy:g}"
     if a.holes:
         order += f"-fh{a.holes:g}"
     if a.rest:
         order += f"-rb{a.rest:g}"
+    if a.light is not None:
+        order += f"-li{a.light:g}"
     if a.untangle:
         order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "")
     if a.chord_cap:
@@ -530,9 +557,13 @@ def main(argv: list[str] | None = None) -> int:
         order += "-" + "".join(f"{chartstats.SHORT[n]}{v:g}" for n, v in fixed.items())
     elif a.stats == "sample":
         order += "-stsample"
+    if a.hold_up and a.hold_share is None and a.stats != "sample" \
+            and "hold_share" not in (fixed or {}):
+        print("--hold-up: the share to reach, --hold-share X or --stats ln=X", file=sys.stderr)
+        return 2
     written = []
     for i, sr in enumerate(a.sr):
-        buckets = None
+        buckets, wanted = None, {}
         if a.stats is not None:
             wanted = fixed
             if table is not None:
@@ -548,12 +579,15 @@ def main(argv: list[str] | None = None) -> int:
                                release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,
                                empty_bias=a.empty_bias, forward_temperature=a.forward_temp,
                                jack_bias=a.jack_bias, copy_bias=a.copy_bias,
-                               holds=a.refine_holds, hold_share=a.hold_share, loud_bias=a.loud_bias,
+                               holds=a.refine_holds,
+                               hold_share=a.hold_share if a.hold_share is not None or not a.hold_up
+                               else wanted.get("hold_share"), loud_bias=a.loud_bias,
                                loud_side=a.loud_side, stats=buckets, onset_bias=a.onset_bias,
                                rest=a.rest or None, chord_cap=a.chord_cap or None,
                                untangle=a.untangle, untangle_move=a.untangle_move,
                                untangle_grades=a.untangle_grades, alike=a.alike,
-                               alike_keep=a.alike_keep, strong=a.strong_chords,
+                               alike_keep=a.alike_keep, strong=a.strong_chords or None,
+                               hold_up=a.hold_up, light=a.light,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
                                carry_holds=a.carry_holds, carry_rows=a.carry_rows,

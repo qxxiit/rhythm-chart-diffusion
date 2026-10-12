@@ -83,6 +83,21 @@ def test_long_notes_too_short_and_releases_too_close() -> None:
     assert math.isnan(guideline_checks(x, _times(80), "Insane")["ln_short"])
 
 
+def test_runs_past_five_notes_in_the_songs_beats() -> None:
+    x = np.full((200, 4), EMPTY)
+    for i in range(8):
+        x[6 * i, i % 4] = TAP                               # 8 notes 1/2 beat apart
+    for i in range(4):
+        x[100 + 12 * i, i % 4] = TAP                        # 4 notes a beat apart
+    r = guideline_checks(x, _times(200), "Easy")
+    assert r["run_over"] == pytest.approx(100 * 3 / 12)     # notes 6, 7, 8 of the run
+    assert guideline_checks(x, _times(200, bpm=100), "Easy")["run_over"] == 0.0   # 1/2 at 100
+    assert guideline_checks(x, _times(200, bpm=250), "Normal")["run_over"] == \
+        pytest.approx(100 * 3 / 12)                         # 1/2 at 250 BPM is a 1/4
+    assert guideline_checks(x, _times(200), "Normal")["run_over"] == 0.0
+    assert math.isnan(guideline_checks(x, _times(200), "Hard")["run_over"])
+
+
 def test_chord_strength() -> None:
     x = np.full((40, 4), EMPTY)
     for r in (0, 8, 16):
