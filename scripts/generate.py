@@ -362,6 +362,13 @@ def main(argv: list[str] | None = None) -> int:
                     default=True,   # 2026-10-12
                     help="--light: the bars that had a thinned bar's rhythm and sound like it "
                          "are thinned alike")
+    ap.add_argument("--recheck", type=float, default=0.0,
+                    help="after the light bars, every row without a long-note start is asked "
+                         "again with its free cells MASK and the chart around it; a row with "
+                         "taps below this chance of starting a note loses them "
+                         "(sampler.recheck_notes); 0 = off")
+    ap.add_argument("--recheck-add", type=float, default=0.0,
+                    help="--recheck: an empty row above this chance gets a tap; 0 = off")
     ap.add_argument("--untangle-insane", action=argparse.BooleanOptionalAction,
                     default=True,   # 2026-10-12
                     help="--untangle-grades: 1/4 beat in Insane too, the taps there moved only")
@@ -561,6 +568,8 @@ def main(argv: list[str] | None = None) -> int:
         order += f"-rb{a.rest:g}"
     if a.light:
         order += f"-li{a.light:g}" + ("a" if a.light_alike else "")
+    if a.recheck:
+        order += f"-rk{a.recheck:g}" + (f"a{a.recheck_add:g}" if a.recheck_add else "")
     if a.untangle:
         order += "-uj" + ("m" if a.untangle_move else "") + ("g" if a.untangle_grades else "") + (
             "w" if a.untangle_wide else "") + ("i" if a.untangle_insane and a.untangle_grades
@@ -609,7 +618,8 @@ def main(argv: list[str] | None = None) -> int:
                                alike_keep=a.alike_keep, strong=a.strong_chords or None,
                                hold_up=hold_up and share is not None, light=a.light or None,
                                light_alike=a.light_alike, untangle_wide=a.untangle_wide,
-                               untangle_insane=a.untangle_insane,
+                               untangle_insane=a.untangle_insane, recheck=a.recheck or None,
+                               recheck_add=(a.recheck_add or None) if a.recheck else None,
                                onset_taper=taper, holes=a.holes or None,
                                carry=a.carry_rhythm, carry_keep=a.carry_keep,
                                carry_holds=a.carry_holds, carry_rows=a.carry_rows,

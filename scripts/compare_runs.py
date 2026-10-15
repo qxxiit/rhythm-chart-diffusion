@@ -33,7 +33,8 @@ import numpy as np
 
 # (column, human level: a column of the same file, a constant, or None)
 METRICS = [
-    ("f1@50", None), ("f1@50_any_lane", None), ("density_ratio", 1.0), ("sr_error", None),
+    ("f1@50", None), ("f1@50_any_lane", None), ("precision@50", None),
+    ("new_onsets", "human_new_onsets"), ("density_ratio", 1.0), ("sr_error", None),
     ("sr_bias", None), ("rho_in", "human_rho_in"), ("coverage", "human_coverage"),
     ("coverage_chance", "human_coverage_chance"), ("coverage_p1", "human_coverage_p1"),
     ("coverage_p2", "human_coverage_p2"), ("coverage_p3plus", "human_coverage_p3plus"),
@@ -65,7 +66,7 @@ METRICS = [
     ("ln_sections", "human_ln_sections"), ("ln_scattered", "human_ln_scattered"),
     ("passes", None), ("seconds", None),
 ]
-GRADE_METRICS = ("f1@50", "sr_bias", "density_ratio", "weak_onsets", "steady_bars",
+GRADE_METRICS = ("f1@50", "new_onsets", "sr_bias", "density_ratio", "weak_onsets", "steady_bars",
                  "motion_pred", "tap_rep1", "ln_rep1", "copy_far", "section_rhythm",
                  "alike_rhythm", "alike_counts_off", "chord_strength", "chord_over",
                  "fast_jacks", "run_over", "light_bars", "hold_share")

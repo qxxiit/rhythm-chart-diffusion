@@ -157,7 +157,7 @@ from src.data.mel import open_mel
 from src.data.style import GENRES, encode, read_style
 from src.data.tokenizer import HOLD_START, TAP, D, K, L, decode, make_metas
 from src.evaluation.holds import hold_stats, ln_agreement
-from src.evaluation.metrics import onset_f1, violation_rate
+from src.evaluation.metrics import new_positions, onset_f1, violation_rate
 from src.evaluation.patterns import summarize
 from src.evaluation.playability import chord_strength, guideline_checks
 from src.evaluation.sr import ROSU_VERSION, star_rating, star_rating_file
@@ -205,6 +205,24 @@ def weak_onsets(tokens: np.ndarray, strength: np.ndarray, n_cells: int) -> float
 def row_times(timing_points, cell_offset: int, n_cells: int) -> np.ndarray:
     """[n_cells] ms of each token row (row r is BeatGrid cell r - cell_offset)."""
     return from_timing_points(timing_points).time_from_cell(np.arange(n_cells) - cell_offset, D)
+
+
+def onset_times(tokens: np.ndarray, times: np.ndarray) -> np.ndarray:
+    """ms of the chart's onset rows (tap or long-note start), times being [n_cells] row times."""
+    rows = np.isin(np.asarray(tokens).reshape(-1, K)[:len(times)], (TAP, HOLD_START)).any(axis=1)
+    return times[rows]
+
+
+def set_onset_times(keys, cache: Path) -> np.ndarray:
+    """Onset times (ms) of the given charts, each on its own grid (a mapset's other charts:
+    same audio, the times comparable even where their timing points differ)."""
+    out = []
+    for k in keys:
+        zo = np.load(cache / "tokens" / f"{k}.npz")
+        tps = [(float(t), float(bl)) for t, bl in zo["timing_points"]]
+        out.append(onset_times(zo["tokens"], row_times(tps, int(zo["cell_offset"]),
+                                                       int(zo["n_cells"]))))
+    return np.concatenate(out) if out else np.zeros(0)
 
 
 def structure_and_patterns(gen_tokens, human_tokens, mel, n_cells: int, far_k: int,
@@ -256,7 +274,7 @@ def score(gen, ref, back, tokens, sr: float, sr_gen: float, sr_human: float) -> 
 
 CI_KEYS = ("f1@20", "f1@50", "f1@50_any_lane", "precision@50", "recall@50", "density_ratio",
            "motion_pred", "hold_share",
-           "sr_error", "rho_all", "rho_in", "coverage")
+           "sr_error", "rho_all", "rho_in", "coverage", "new_onsets")
 
 
 def pick_per_song(rows: list[dict], seed: int) -> list[dict]:
@@ -426,6 +444,13 @@ def main(argv: list[str] | None = None) -> int:
                          "masked, expects to hold one or two onset rows with more than this "
                          "chance keeps its likeliest one or two (sampler.thin_bars, tag _li); "
                          "also on --from-charts")
+    ap.add_argument("--recheck", type=float, default=None,
+                    help="after the light bars, every row without a long-note start is asked "
+                         "again with its free cells MASK and the chart around it; a row with "
+                         "taps below this chance of starting a note loses them "
+                         "(sampler.recheck_notes)")
+    ap.add_argument("--recheck-add", type=float, default=None,
+                    help="--recheck: an empty row above this chance gets a tap")
     ap.add_argument("--light-alike", action="store_true",
                     help="--light: the bars that had a thinned bar's rhythm and sound like it "
                          "are thinned alike (tag a)")
@@ -469,6 +494,10 @@ def main(argv: list[str] | None = None) -> int:
             and r.get("drop", "") == ""
             and (a.cache / "tokens" / f"{r['key']}.npz").exists()
             and store.has(r["key"])]
+    by_set: dict[str, list[str]] = {}                    # the other charts of each mapset
+    for m in read_manifest(a.manifest):
+        if (a.cache / "tokens" / f"{m['key']}.npz").exists():
+            by_set.setdefault(m["set_id"], []).append(m["key"])
     if a.per_song:
         rows = pick_per_song(rows, a.seed)
     if a.n:
@@ -569,6 +598,12 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_rb{a.rest:g}"
     light_tag = "" if a.light is None else f"_li{a.light:g}" + ("a" if a.light_alike else "")
     tag += light_tag
+    if a.recheck_add is not None and a.recheck is None:
+        print("--recheck-add needs --recheck", file=sys.stderr)
+        return 2
+    recheck_tag = "" if a.recheck is None else f"_rk{a.recheck:g}" + (
+        f"a{a.recheck_add:g}" if a.recheck_add is not None else "")
+    tag += recheck_tag
     tag += end_tag
     if a.sr_offset:
         tag += f"_so{a.sr_offset:g}"
@@ -605,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.copy_bias is not None else "") + alike_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
-            f"_rb{a.rest:g}" if a.rest is not None else "") + light_tag + (
+            f"_rb{a.rest:g}" if a.rest is not None else "") + light_tag + recheck_tag + (
             end_tag) + stats_tag + (
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
@@ -636,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
         back0, moved0 = STATS["section_back"], STATS["untangle_moved"]
         aligned0, strong0 = STATS["aligned_bars"], STATS["strong_moved"]
         more0, thinned0 = STATS["more_holds"], STATS["thinned_bars"]
+        out0, in0 = STATS["recheck_out"], STATS["recheck_in"]
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -657,10 +693,11 @@ def main(argv: list[str] | None = None) -> int:
                     or a.carry_rhythm is not None or a.ln_tidy is not None \
                     or a.copy_sections is not None or a.chord_cap is not None \
                     or a.untangle or a.alike is not None or a.strong_chords is not None \
-                    or a.light is not None:
+                    or a.light is not None or a.recheck is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
+                                   recheck=a.recheck, recheck_add=a.recheck_add,
                                    light_alike=a.light_alike, untangle_wide=a.untangle_wide,
                                    untangle_insane=a.untangle_insane,
                                    copy_min_lag=a.copy_min_lag,
@@ -689,6 +726,7 @@ def main(argv: list[str] | None = None) -> int:
                                    copy_min_lag=a.copy_min_lag,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    light=a.light, light_alike=a.light_alike,
+                                   recheck=a.recheck, recheck_add=a.recheck_add,
                                    untangle_wide=a.untangle_wide,
                                    untangle_insane=a.untangle_insane,
                                    loud_bias=a.loud_bias, loud_side=a.loud_side,
@@ -735,6 +773,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["more_holds"] = STATS["more_holds"] - more0
         if a.light is not None:
             cost["thinned_bars"] = STATS["thinned_bars"] - thinned0
+        if a.recheck is not None:
+            cost["recheck_out"] = STATS["recheck_out"] - out0
+        if a.recheck_add is not None:
+            cost["recheck_in"] = STATS["recheck_in"] - in0
         if a.ln_tidy is not None:
             cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
         charts[r["key"]] = tokens
@@ -759,6 +801,11 @@ def main(argv: list[str] | None = None) -> int:
                **score(gen, ref, back, tokens, sr, star_rating(gen), star_rating_file(ref_path)),
                **structure_and_patterns(tokens, z["tokens"], mel, n_cells, a.far_k,
                                         row_times(tps, offset, n_cells), grade), **cost}
+        mates = [k for k in by_set.get(r["set_id"], []) if k != r["key"]]
+        ref_t, t_rows = set_onset_times(mates, a.cache), row_times(tps, offset, n_cells)
+        row["set_charts"] = len(mates)
+        row["new_onsets"] = new_positions(onset_times(tokens, t_rows), ref_t)
+        row["human_new_onsets"] = new_positions(onset_times(z["tokens"], t_rows), ref_t)
         if a.stats != "none":
             row.update({f"stat_{n}": wanted.get(n, float("nan")) for n in chartstats.NAMES})
             row["stat_key"] = stat_key
@@ -792,6 +839,7 @@ def main(argv: list[str] | None = None) -> int:
                "untangle_move": a.untangle_move, "untangle_grades": a.untangle_grades,
                "alike": a.alike, "alike_keep": a.alike_keep, "strong_chords": a.strong_chords,
                "light": a.light, "light_alike": a.light_alike,
+               "recheck": a.recheck, "recheck_add": a.recheck_add,
                "untangle_wide": a.untangle_wide, "untangle_insane": a.untangle_insane,
                "stats": a.stats, "lane_guidance": a.lane_guidance,
                "from_charts": str(a.from_charts) if a.from_charts else None,

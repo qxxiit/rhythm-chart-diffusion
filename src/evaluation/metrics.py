@@ -1,6 +1,8 @@
 """Note-level metrics shared by every model (design doc §4.11 / §7).
 
     onset_f1(pred, ref, tol_ms, lanes=True)   precision / recall / F1 of onsets
+    new_positions(times, ref_times, tol_ms)   onset rows where no other chart of the set
+                                              has an onset (a multi-reference rhythm check)
     violation_rate(tokens)                    grammar violations per scored position
 
 Onsets are tap times and hold starts; releases are not scored (tokenizer
@@ -58,6 +60,25 @@ def onset_f1(pred: Chart, ref: Chart, tol_ms: float = 50.0, lanes: bool = True) 
     recall = tp / len(rt) if len(rt) else 0.0
     f1 = 2 * precision * recall / (precision + recall) if tp else 0.0
     return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def new_positions(times_ms: np.ndarray, ref_times_ms: np.ndarray, tol_ms: float = 5.0) -> float:
+    """Share of the onset rows (times_ms) with no reference onset within tol_ms.
+
+    The reference is every other chart of the mapset (same audio, same timing): a row
+    none of them uses is a position no mapper of that song picked. On the 240 val songs
+    (173 with other charts in the set, 2026-10-15) the human chart has 5.1% such rows,
+    the default to play 13.8%; F1 against the one human chart could not tell how much
+    of its misses another mapper would share. nan without onsets or references."""
+    t = np.asarray(times_ms, dtype=np.float64)
+    ref = np.unique(np.asarray(ref_times_ms, dtype=np.float64))
+    if len(t) == 0 or len(ref) == 0:
+        return float("nan")
+    j = np.clip(np.searchsorted(ref, t), 1, max(len(ref) - 1, 1))
+    lo = ref[np.clip(j - 1, 0, len(ref) - 1)]
+    hi = ref[np.clip(j, 0, len(ref) - 1)]
+    near = np.minimum(np.abs(lo - t), np.abs(hi - t))
+    return float(np.mean(near > tol_ms))
 
 
 def violation_rate(tokens: np.ndarray) -> float:

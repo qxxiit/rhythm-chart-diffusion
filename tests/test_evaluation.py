@@ -6,7 +6,7 @@ import pytest
 from src.data.chart_parser import Chart, Note
 from src.data.chart_writer import write_osu
 from src.data.tokenizer import EMPTY, HOLD_BODY, PAD, TAP
-from src.evaluation.metrics import onset_f1, violation_rate
+from src.evaluation.metrics import new_positions, onset_f1, violation_rate
 
 
 def chart(notes) -> Chart:
@@ -104,3 +104,12 @@ def test_compare_runs_pairs_songs_by_key(tmp_path, capsys) -> None:
     assert "x1.20" in lines["coverage/chance"]              # (0.012 / 0.005) / (0.010 / 0.005)
     assert "Easy" in lines and "Hard" in lines
     assert compare_runs.main([str(ref)]) == 2
+
+
+def test_new_positions_against_the_other_charts_of_the_set() -> None:
+    ref = np.array([0.0, 250.0, 500.0, 750.0])
+    assert new_positions(np.array([0.0, 252.0, 600.0, 750.0]), ref) == 0.25   # 600 is new
+    assert new_positions(np.array([0.0, 256.0]), ref, tol_ms=5.0) == 0.5
+    assert new_positions(np.array([-10.0, 1000.0]), ref) == 1.0              # past both ends
+    assert new_positions(np.array([100.0]), np.array([100.0])) == 0.0        # one reference
+    assert np.isnan(new_positions(np.zeros(0), ref)) and np.isnan(new_positions(ref, []))

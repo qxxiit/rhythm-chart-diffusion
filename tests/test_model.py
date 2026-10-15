@@ -688,6 +688,71 @@ def test_stream_holes_and_fill_holes() -> None:
     assert stream_holes(out, 3 * BAR) == []
 
 
+def test_row_onset_probs_asks_every_free_row_once_from_its_own_window() -> None:
+    from src.data.tokenizer import HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import RECHECK_GROUP, row_onset_probs
+    n_cells = 3 * L + 50
+    song = np.full((n_cells + 2 * L, K), PAD, dtype=np.int64)
+    song[:n_cells] = EMPTY
+    song[:n_cells][np.random.default_rng(0).random((n_cells, K)) < 0.2] = TAP
+    song[100, 0], song[101:105, 0], song[105, 0] = HOLD_START, HOLD_BODY, HOLD_END
+    frames = torch.zeros(len(song) * 4, 80)
+    frames[:, 0] = torch.arange(len(song) * 4) // 4             # frame 4r carries row r
+
+    class ByRow(nn.Module):
+        """Sure of a note start on the rows divisible by 3, of none elsewhere."""
+
+        def __init__(self):
+            super().__init__()
+            self.config, self.seen = DenoiserConfig(), []
+
+        def forward(self, x, mel, s, b):
+            rows = mel[:, ::4, 0].long()                         # [B, L] absolute rows
+            self.seen += [(int(r[0]), xi.numpy().copy()) for r, xi in zip(rows, x, strict=True)]
+            on = (rows % 3 == 0)[:, :, None].expand(-1, -1, K)
+            logits = torch.zeros(*x.shape, N_CLASSES)
+            logits[..., TAP] = torch.where(on, 6.0, -6.0)
+            logits[..., EMPTY] = torch.where(on, -6.0, 6.0)
+            return logits
+
+    model = ByRow()
+    out = row_onset_probs(model, song, frames, 3.0, lambda row0: 400.0, n_cells)
+    assert set(out) == {r for r in range(n_cells) if not (song[r] == HOLD_START).any()}
+    assert all((p > 0.9) == (r % 3 == 0) for r, (p, _) in out.items())
+    for w0, x in model.seen:                    # only free cells MASK, rows a group apart
+        masked = x == MASK
+        assert np.isin(song[w0:w0 + L][masked], (EMPTY, TAP)).all()
+        rows = np.flatnonzero(masked.any(axis=1))
+        assert len(rows) and (np.diff(rows) >= RECHECK_GROUP).all()
+
+
+def test_recheck_notes_takes_out_doubted_taps_and_adds_wanted_ones() -> None:
+    from src.data.tokenizer import BAR, HOLD_BODY, HOLD_END, HOLD_START
+    from src.models.sampler import STATS, recheck_notes
+    song = _bars_song([[(0, 0), (12, 1), (24, 2), (36, 3)], [(0, 1), (24, 2)]])
+    song[3, 3], song[4:8, 3], song[8, 3] = HOLD_START, HOLD_BODY, HOLD_END
+    frames = torch.zeros(len(song) * 4, 80)
+    doubt = torch.zeros(1, L, K, N_CLASSES)
+    doubt[..., EMPTY] = 8.0
+    out = song.copy()
+    before = STATS["recheck_out"]
+    assert recheck_notes(Fixed(doubt), out, frames, 3.0, lambda row0: 400.0, 2 * BAR,
+                         threshold=0.5) == (6, 0)
+    assert STATS["recheck_out"] == before + 6
+    assert not (out == TAP).any() and np.array_equal(out[3:9], song[3:9])   # the long note
+    sure = torch.zeros(1, L, K, N_CLASSES)
+    sure[..., TAP] = 4.0
+    sure[0, :, 1, TAP] = 6.0                            # lane 1 the likeliest
+    out = song.copy()
+    assert recheck_notes(Fixed(sure), out, frames, 3.0, lambda row0: 400.0, 2 * BAR,
+                         threshold=0.5) == (0, 0) and np.array_equal(out, song)
+    assert recheck_notes(Fixed(sure), out, frames, 3.0, lambda row0: 400.0, 2 * BAR,
+                         threshold=0.5, add=0.5) == (0, 2 * BAR - 7)
+    added = (out != song) & (out == TAP)
+    assert (added.sum(axis=1) <= 1).all() and added[:, 1].sum() == 2 * BAR - 7
+    assert len(grammar_violations(out[:2 * BAR][None])) == 0
+
+
 def test_copy_bars_leaves_a_song_the_model_knows() -> None:
     from src.data.tokenizer import BAR
     from src.models.sampler import copy_bars

@@ -105,7 +105,7 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "filled_holes": 0, "carried_bars": 0, "carried_ln_bars": 0,
          "tidied_holds": 0, "section_bars": 0, "section_back": 0, "capped_rows": 0,
          "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0,
-         "more_holds": 0, "thinned_bars": 0}
+         "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -115,8 +115,10 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
                                          # bars aligned with the bars that sound like them,
                                          # chord taps moved to a stronger onset, taps
                                          # made long notes up to the share asked,
-                                         # bars thinned to one or two onset rows
-                                         # (evaluate.py reports them per song)
+                                         # bars thinned to one or two onset rows,
+                                         # rows the model doubted emptied, rows it
+                                         # wanted filled (evaluate.py reports them per
+                                         # song)
 
 
 @torch.no_grad()
@@ -1119,6 +1121,116 @@ def thin_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
     return thinned
 
 
+# Notes where no mapper puts one. Of the default's onset rows 13.8% are on positions none of
+# the set's other charts (same audio and timing) uses, the human charts' 5.1% (173 val songs,
+# evaluation.metrics.new_positions, 2026-10-15): half where another difficulty holds a long
+# note, half on sounds or beats no mapper picked; "it locks in less" in the playtest of 10-12.
+# Asked again with the row MASK and the chart around it, the model doubts them: p(the row
+# starts a note) 0.59 on average against 0.91 for the rows others use (AUC 0.83, 28 songs);
+# below 0.3 it would take out 6.2 rows per 100 onset rows, three quarters of them on such
+# positions (of the human charts' own rows 2.6, 43%). Random-order sampling decides many
+# rows with little of the chart in view; this asks again with all of it.
+RECHECK_GROUP = 8               # recheck_notes: rows this many apart are asked together (as
+                                # refine_lanes); each window centred on the rows it answers
+RECHECK_STRIDE = 4 * BAR        # recheck_notes: windows every 4 bars, each answering its middle
+
+
+@torch.no_grad()
+def _probs_batch(model, xs: list[np.ndarray], frames: torch.Tensor, s: float,
+                 b: float) -> np.ndarray:
+    """denoiser_probs for several windows on the same frames: [len(xs), L, K, 5]."""
+    STATS["passes"] += len(xs) * (2 if getattr(model, "guidance", 0) else 1)
+    device = frames.device
+    was_training = model.training
+    model.eval()
+    n = len(xs)
+    logits = model(torch.as_tensor(np.stack(xs), dtype=torch.long, device=device),
+                   frames[None].expand(n, -1, -1),
+                   torch.full((n,), float(s), dtype=torch.float32, device=device),
+                   torch.full((n,), float(b), dtype=torch.float32, device=device))
+    model.train(was_training)
+    if logits.shape[0] != n:                            # a model that ignores the batch
+        logits = logits.expand(n, *logits.shape[1:])
+    return torch.softmax(logits.float(), dim=-1).cpu().numpy().astype(np.float64)
+
+
+def row_onset_probs(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                    n_cells: int) -> dict[int, tuple[float, np.ndarray]]:
+    """{row: (p, p(TAP) of its free lanes)} for every row before n_cells without a long-note
+    start and with a free cell (EMPTY or TAP): the row's free cells MASK and the chart around
+    it in view, p = 1 - the product over them of 1 - p(TAP) - p(HOLD_START), the chance the
+    row starts a note. Rows RECHECK_GROUP apart are masked together; windows of L rows every
+    RECHECK_STRIDE answer the rows in their middle (the first and last also their edges)."""
+    fpc = model.config.frames_per_cell
+    free = {}
+    for r in range(n_cells):
+        if (song[r] == HOLD_START).any():
+            continue
+        lanes = np.flatnonzero((song[r] == EMPTY) | (song[r] == TAP))
+        if len(lanes):
+            free[r] = lanes
+    out: dict[int, tuple[float, np.ndarray]] = {}
+    w0 = 0
+    while w0 < n_cells:
+        lo = 0 if w0 == 0 else w0 + (L - RECHECK_STRIDE) // 2
+        hi = w0 + (L + RECHECK_STRIDE) // 2
+        if hi >= n_cells:
+            hi = n_cells
+        xs, groups = [], []
+        for j in range(RECHECK_GROUP):
+            rows = [r for r in range(lo + (j - lo) % RECHECK_GROUP, hi, RECHECK_GROUP)
+                    if r in free]
+            if not rows:
+                continue
+            x = song[w0:w0 + L].astype(np.int64).copy()
+            for r in rows:
+                x[r - w0, free[r]] = MASK
+            xs.append(x)
+            groups.append(rows)
+        if xs:
+            probs = _probs_batch(model, xs, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+            for g, rows in enumerate(groups):
+                for r in rows:
+                    p = probs[g, r - w0, free[r]]
+                    on = 1.0 - float(np.prod(1.0 - p[:, TAP] - p[:, HOLD_START]))
+                    tap = np.zeros(K)
+                    tap[free[r]] = p[:, TAP]
+                    out[r] = (on, tap)
+        if hi >= n_cells:
+            break
+        w0 += RECHECK_STRIDE
+    return out
+
+
+def recheck_notes(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                n_cells: int, *, threshold: float, add: float | None = None,
+                release_gap: int = 0) -> tuple[int, int]:
+    """Take the taps off the rows the model doubts; with add, put a tap on the empty rows it
+    wants. Returns (rows emptied, rows filled).
+
+    row_onset_probs asks every row without a long-note start once, the chart as it is: a row
+    with taps whose p is below threshold loses them; with add, an empty row (no note start)
+    above add gets one tap in the free lane (EMPTY, not too soon after a release) with the
+    highest p(TAP), as fill_holes does. Long notes stay. Taking taps out or putting one in
+    an EMPTY cell keeps the grammar."""
+    asked = row_onset_probs(model, song, frames, s, beat_len, n_cells)
+    out = filled = 0
+    for r, (p, tap) in asked.items():
+        taps = song[r] == TAP
+        if taps.any():
+            if p < threshold:
+                song[r, taps] = EMPTY
+                out += 1
+        elif add is not None and p > add:
+            lanes = [k for k in _free_lanes(song, r, release_gap)[0] if song[r, k] == EMPTY]
+            if lanes:
+                song[r, lanes[int(np.argmax(tap[lanes]))]] = TAP
+                filled += 1
+    STATS["recheck_out"] += out
+    STATS["recheck_in"] += filled
+    return out, filled
+
+
 # Rhythm carried over. Human charts give a bar the rhythm (onset rows) of the bar before 27%
 # of the time, of the bar 2 earlier 31%, 4 earlier 29%, 8 earlier 23%; the sampled charts
 # about half as often (14 / 15 / 12 / 9%; structure.phrase_repeats, 240 val songs,
@@ -1893,7 +2005,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               alike: float | None = None, alike_keep: float | bool | None = None,
               strong: float | None = None, light: float | None = None,
               light_alike: bool = False, untangle_wide: bool = False,
-              untangle_insane: bool = False) -> np.ndarray:
+              untangle_insane: bool = False, recheck: float | None = None,
+              recheck_add: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more), carry_rhythm
@@ -1906,7 +2019,9 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     True in all; its lanes as the carry's), tidy_holds (ln_tidy: the longest long note in
     beats it turns into a tap), fill_holes (holes: the threshold), rest_bars (rest: the
     threshold), thin_bars (light: the threshold; light_alike: its look-alikes thinned
-    alike), untangle_jacks (untangle; untangle_move: its move; untangle_grades: the window
+    alike), recheck_notes (recheck: the threshold below which a row's taps go;
+    recheck_add: the one above which an empty row gets a tap), untangle_jacks (untangle;
+    untangle_move: its move; untangle_grades: the window
     by the SR s, untangle_window; untangle_wide, untangle_insane: its wide and Insane
     tables), guideline_cap (chord_cap:
     below that SR; with lane_guidance); a new array."""
@@ -1959,6 +2074,9 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if light is not None:
         thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
                   s_audio=s_audio if light_alike else None)
+    if recheck is not None:
+        recheck_notes(model, song, frames, s, beat_len, n_cells, threshold=recheck,
+                      add=recheck_add, release_gap=release_gap)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
               untangle_grades, release_gap, untangle_wide, untangle_insane)
     if chord_cap is not None:
@@ -2022,7 +2140,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   alike: float | None = None, alike_keep: float | bool | None = None,
                   strong: float | None = None, light: float | None = None,
                   light_alike: bool = False, untangle_wide: bool = False,
-                  untangle_insane: bool = False) -> np.ndarray:
+                  untangle_insane: bool = False, recheck: float | None = None,
+                  recheck_add: float | None = None) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2091,6 +2210,10 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   under SR 2.7 a bar the model, asked about the whole bar, expects to hold one
                   or two onset rows with more than this chance keeps its likeliest one or two;
                   light_alike: the bars that had its rhythm and sound like it go alike
+    recheck       recheck_notes with this threshold after thin_bars (None: none): every row
+                  without a long-note start is asked again with its free cells MASK and the
+                  chart around it in view; a row with taps whose chance of starting a note is
+                  below recheck loses them; recheck_add: an empty row above it gets a tap
     strong        strong_chords with this z difference after the carry (None: none): a
                   chord gives a tap to a single note of its beat on a stronger onset, so
                   the copies after it take chords on the strong sounds
@@ -2108,8 +2231,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   0, 0 = keep the holds as sampled
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
     carry_rhythm, strong_chords, copy_sections, copy_bars, clean_holds again if a bar was
-    copied, align_alike, tidy_holds, fill_holes, rest_bars, thin_bars, untangle_jacks,
-    guideline_cap.
+    copied, align_alike, tidy_holds, fill_holes, rest_bars, thin_bars, recheck_notes,
+    untangle_jacks, guideline_cap.
     Decode the result with tokenizer.make_metas(timing_points, cell_offset, n_chunks, s).
     """
     if mode not in ("continue", "independent"):
@@ -2204,6 +2327,9 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if light is not None:
         thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
                   s_audio=s_audio if light_alike else None)
+    if recheck is not None:
+        recheck_notes(model, song, frames, s, beat_len, n_cells, threshold=recheck,
+                      add=recheck_add, release_gap=release_gap)
     _untangle(song, n_cells, s, timing_points, cell_offset, untangle, untangle_move,
               untangle_grades, release_gap, untangle_wide, untangle_insane)
     if chord_cap is not None:

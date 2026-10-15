@@ -296,6 +296,16 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
         before = {r["key"]: float(r["density_ratio"]) for r in csv.DictReader(f)}
     assert all(float(r["density_ratio"]) < before[r["key"]] for r in rows)
     assert all(int(r["rest_bars_cleared"]) > 0 for r in rows)
+    assert all(k in rows[0] for k in ("new_onsets", "human_new_onsets", "set_charts"))
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--recheck", "1.01"]) == 0
+    with open(oracle_run.parent / (oracle_run.name + "_rk1.01_st-oracle") / "per_song.csv",
+              newline="") as f:                           # every row with taps asked and emptied
+        rows = list(csv.DictReader(f))
+    assert all(int(r["recheck_out"]) > 0 and float(r["density_ratio"]) < before[r["key"]]
+               for r in rows)
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--recheck-add", "0.5"]) == 2
     assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
                           "--from-charts", str(oracle_run), "--sr-offset", "0.2"]) == 2
     assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",

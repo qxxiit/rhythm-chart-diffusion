@@ -2938,6 +2938,79 @@ What it says:
   sustained sound, released where it ends; on 10-07 0.67-0.70 of the releases fell on an onset
   row, human 0.76). The other 9 songs after the exams.
 
+### 2026-10-15 · Where the notes are; rows asked again (predictions)
+
+Asked what it would take to make charts players cannot tell from human ones, three measures on
+the stored charts of the 240 val songs (no model; `outputs/feel/phrase_commit.py`,
+`rhythm_faith.py`, `rhythm_faith_where.py`), then a probe with the model:
+
+- **Phrase-level commitment is near the human (a guess that failed).** "The model mixes every
+  pattern type everywhere instead of picking one per phrase": the mutual information between a
+  4-bar phrase and the type of its flow events (two onset rows within half a beat: jack, trill,
+  stair, zigzag, jumptrill, chordjack, mixed), above the same with the types shuffled within the
+  song, is human 0.274 bits [0.249, 0.298], the default F 0.253 [0.235, 0.273], T_ref 0.248,
+  full-v1 with no lane pass 0.247 (210 songs).
+- **The lane passes shift the vocabulary.** Shares of the flow events, human / F: jack 1.5 / 0.9%,
+  trill 4.3 / 3.4, stair 8.5 / 6.9, zigzag 15.3 / 15.3, jumptrill 6.4 / 9.4, chordjack 10.0 / 9.9,
+  mixed 54.0 / 54.2. full-v1 with no lane pass, lane passes at 1, at 0.5: jumptrill 5.0 / 6.1 /
+  7.8%, jack 2.1 / 0.8 / 0.3, trill 6.3 / 3.9 / 2.7, stair 8.8 / 10.2 / 10.4.
+- **The largest gap is where the notes are.** Of a chart's onset rows, the share with no onset of
+  the set's other charts (same audio, same timing, each on its own grid) within 5 ms, per song,
+  173 songs with other charts in the set: human 0.051 [0.039, 0.064], F 0.138 [0.117, 0.160],
+  T_ref 0.149, full-v1 raw 0.178. By grade, human / F: Normal 0.047 / 0.102, Hard 0.057 / 0.152,
+  Insane 0.097 / 0.214, Expert 0.090 / 0.215. The comparison favours the human chart (a set's
+  difficulties are made to agree), but not by 2.7 times. Where (per 100 onset rows, pooled),
+  human / F: while another chart holds a long note 2.7 / 8.0, in a bar no other chart plays 0.07 /
+  0.49, elsewhere (sounds or beats no mapper took) 3.7 / 9.1; of F's such rows 34% on whole or
+  half beats (human 22%). F1 against the one human chart could not show this: it has no
+  reference for what another mapper would share. It fits "it locks in less" (10-12) and the
+  beats off in quiet parts (10-06).
+- **The model doubts those notes.** 28 of the songs (Easy 3, Normal 5, Hard 9, Insane 8, Expert 3),
+  every row without a long-note start asked with its free cells MASK and the chart around it
+  (rows 8 apart together, windows every 4 bars, each answering its middle): p = 1 - prod(1 -
+  p(TAP) - p(HOLD_START)) over the masked cells. Of F's 21,152 tap rows 17.9% are on new
+  positions:
+
+| F's tap rows, own context | new positions | the rest |
+|---|---|---|
+| p, mean (median) | 0.593 (0.690) | 0.908 (0.980) |
+| below 0.2 / 0.3 / 0.5 | 20.7 / 26.1 / 36.0% | 1.3 / 1.8 / 3.6% |
+
+  AUC 0.833. Below 0.3: 6.2 rows per 100 tap rows, 75% of them new; per song, new positions among
+  the tap rows 16.4% -> 12.8%, 93.4% of the tap rows kept (0.5: 9.4 rows, 69% new; 11.3%, 89.8%
+  kept). The human charts in their own context: 8.3% new, AUC 0.722, below 0.3 2.6 rows per 100
+  (43% new). The empty rows the set's other charts play: p 0.119 on average against 0.012 for
+  the other empty rows (AUC 0.823); above 0.7 3.0 rows per 100 tap rows, 59% of them on the
+  others' positions (above 0.5: 6.2, 53%).
+
+New: `evaluation.metrics.new_positions` and evaluate.py's columns `new_onsets`,
+`human_new_onsets` (NaN without other charts in the set), `set_charts`; the pass
+`sampler.recheck_notes` (`--recheck X`: rows with taps below X lose them; `--recheck-add Y`: empty
+rows above Y get the tap the model likes most; tags `_rk0.3`, `_rk0.3a0.7`; off by default in
+generate.py), after thin_bars, before untangle_jacks. Random-order sampling decides many rows
+with little of the chart in view, and later passes copy rhythms around; this asks every row
+again with all of it.
+
+`run_recheck.sh` (patch 0054), on F's stored charts, 240 val songs: F rescored (the new columns
+for F), F + `--recheck 0.3`, + `--recheck 0.3 --recheck-add 0.7`, + `--recheck 0.5`. Predictions
+(new_onsets over the 174 songs whose set has other charts, one more than the measure above
+used; the rest per song, all 240):
+
+1. F rescored: new_onsets 0.136-0.140, human 0.049-0.053 (the stored-chart measure, through
+   evaluate.py).
+2. `--recheck 0.3`: 3.5-6 rows emptied per 100 onset rows; new_onsets 0.105-0.120; notes -3 to
+   -6% (density 0.955-0.985); SR bias from -0.043 to -0.09 to -0.20, Easy from +0.086 to
+   +0.02-+0.07; F1@50 -0.002 to +0.004, precision@50 +0.005 to +0.015; human_new_onsets as it was.
+   Costs: breaks_per_100 from 0.102 to 0.105-0.14, section_rhythm and alike_rhythm 0 to -0.02.
+3. `--recheck 0.3 --recheck-add 0.7`: 1.5-4 rows filled per 100 onset rows; new_onsets
+   0.110-0.125; density 0.975-1.00; SR bias -0.06 to -0.15.
+4. `--recheck 0.5`: 6-10 rows emptied; new_onsets 0.095-0.110; density 0.925-0.96; SR bias
+   -0.15 to -0.35.
+
+What would make it the default to play: new_onsets 0.02 or more lower with F1@50 within -0.003
+and no new gap measured from the 10-12 playtest's remarks (flow types, lasers); the SR cost from
+Insane up (already short of the target) is the open question, and the playtest the judge.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
