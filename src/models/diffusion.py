@@ -138,6 +138,15 @@ class Denoiser(nn.Module):
                 b: torch.Tensor, genre: torch.Tensor | None = None,
                 mapper: torch.Tensor | None = None,
                 stats: torch.Tensor | None = None) -> torch.Tensor:
+        h = self.hidden(x_t, mel, s, b, genre=genre, mapper=mapper, stats=stats)
+        return self.head(h).reshape(x_t.shape[0], L, K, N_CLASSES)
+
+    def hidden(self, x_t: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
+               b: torch.Tensor, genre: torch.Tensor | None = None,
+               mapper: torch.Tensor | None = None,
+               stats: torch.Tensor | None = None) -> torch.Tensor:
+        """The last hidden states [B, L, d_model] (after the final LayerNorm): what the head
+        reads, one vector per row. The judge (src/models/judge.py) reads them too."""
         batch = x_t.shape[0]
         pad = (x_t == PAD).all(dim=-1)                           # [B, L] whole PAD rows
         pad[:, 0] &= ~pad.all(dim=1)                             # never mask every key
@@ -171,7 +180,7 @@ class Denoiser(nn.Module):
 
         for block in self.blocks:
             h = block(h, mem, pad)
-        return self.head(self.out_norm(h)).reshape(batch, L, K, N_CLASSES)
+        return self.out_norm(h)
 
 
 class Styled(nn.Module):

@@ -3011,6 +3011,45 @@ What would make it the default to play: new_onsets 0.02 or more lower with F1@50
 and no new gap measured from the 10-12 playtest's remarks (flow types, lasers); the SR cost from
 Insane up (already short of the target) is the open question, and the playtest the judge.
 
+### 2026-10-15 · A judge: telling the charts from the human ones, 8 bars at a time (predictions)
+
+The playtests ask a player which chart of a pair is human; a player has 16 songs in an evening.
+New (patch 0055): `scripts/judge.py` trains a judge (`src/models/judge.py`: the full-v4
+denoiser on the clean window, a linear score per row averaged over the rows) to tell a run's
+charts from the human charts of the same songs, on pairs of 8-bar windows at the same rows
+(windows every 4 bars, lanes mirrored at random, 3 epochs), the 240 val songs in 5 folds by
+audio, so every song is judged by a judge that never saw it. It then scores the held-out
+windows every 8 bars of the human chart, the run's and other runs' (`--score`). The judge
+hears the audio (or silence, `--no-audio`) and is given each chart's own SR (rosu), not the
+SR asked for. Numbers: auc (a run window above a human window), paired (the run's window above
+the human chart's at the same rows: the playtest's question, asked of 8 bars), songs (the same
+with the windows of a song averaged), by grade; for a scored run, its mean logit minus F's per
+song. `Denoiser.hidden` gives the trunk's last hidden states (forward = head(hidden)).
+
+`run_judge.sh` (after run_recheck): the judge of F with the audio and without, each scoring the
+recheck runs, T_ref (10-10) and full-v1 with no pass. ~40 min each on the MacBook. Then
+`outputs/feel/judge_results.py`: the rows of F's held-out windows on new positions against
+the rest of its onset rows.
+
+Predictions (F against the human charts):
+
+1. With the audio: auc 0.88-0.97, paired 0.85-0.95; songs paired 0.97 or more (the playtest
+   of 10-12 found the AI in 7 of 7).
+2. By grade, auc rises with the notes in a window: Easy lowest (0.75-0.90), Insane and above
+   highest (0.92-0.99).
+3. Without the audio: auc 0.02-0.08 lower than with it (what the audio adds: where the notes
+   are against the sound, the largest gap measured on 10-15).
+4. Scored by the same judges: full-v1 with no pass more AI than F (+0.3 or more per song,
+   paired 0.90 or more); T_ref within ±0.3 of F; `--recheck 0.3` below F by 0.02-0.15 per
+   song (interval below 0), paired 0.005-0.03 lower; `--recheck 0.5` below F by more than
+   0.3 does; 0.3 with taps added in between.
+5. Per row (with the audio): F's onset rows on new positions score above its other onset rows,
+   auc 0.60-0.75.
+
+How it could fail: the judge finds a tell no player sees (e.g. the exact SR, or the grid's
+fine positions of long-note ends) and wins on that alone; then auc is high everywhere and the
+scored runs do not move. The rows (5) and the grades say where it looks.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

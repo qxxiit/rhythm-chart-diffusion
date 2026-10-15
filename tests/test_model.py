@@ -1661,3 +1661,33 @@ def test_untangle_window_by_grade() -> None:
     assert untangle_window(5.5, wide=True) == pytest.approx(1 / 6)
     assert untangle_window(7.0, wide=True) is None and untangle_window(1.5, wide=True) == 0.25
     assert untangle_window(4.5, insane=True) == 0.25 and untangle_window(5.5, insane=True) is None
+
+
+def test_hidden_states_feed_the_head() -> None:
+    torch.manual_seed(0)
+    model = Denoiser(TINY).eval()
+    x0, mel, s, b = batch()
+    h = model.hidden(x0, mel, s, b)
+    assert h.shape == (len(x0), L, TINY.d_model)
+    assert torch.allclose(model.head(h).reshape(len(x0), L, K, N_CLASSES), model(x0, mel, s, b))
+
+
+def test_judge_averages_its_rows_over_the_chart() -> None:
+    from src.models.judge import Judge
+    torch.manual_seed(0)
+    x0, mel, s, b = batch()                           # the last window is PAD from row 300
+    judge = Judge(Denoiser(TINY)).eval()
+    assert torch.equal(judge(x0, mel, s, b), torch.zeros(len(x0)))   # no opinion at the start
+    nn.init.normal_(judge.score.weight)
+    rows = judge.rows(x0, mel, s, b)
+    assert rows.shape == (len(x0), L)
+    logit = judge(x0, mel, s, b)
+    assert torch.allclose(logit[0], rows[0].mean(), atol=1e-5)
+    assert torch.allclose(logit[-1], rows[-1, :300].mean(), atol=1e-5)  # PAD rows left out
+    deaf = Judge(judge.trunk, audio=False).eval()
+    deaf.score.load_state_dict(judge.score.state_dict())
+    assert torch.allclose(deaf(x0, mel, s, b), deaf(x0, torch.randn_like(mel), s, b))
+    assert not torch.allclose(judge(x0, mel, s, b), judge(x0, torch.randn_like(mel), s, b))
+    logit.sum().backward()                            # trains end to end
+    assert judge.score.weight.grad is not None
+    assert judge.trunk.blocks[0].ff[0].weight.grad.abs().sum() > 0

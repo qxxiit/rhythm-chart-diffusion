@@ -987,3 +987,47 @@ def test_snapshots_and_fit_viz(data: Path, tmp_path: Path) -> None:
     assert fit_viz.main([str(tmp_path / "a"), "--out", str(cmp_out), "--replot"]) == 0
     assert (cmp_out / "fit_path.png").stat().st_mtime_ns >= before
     assert fit_viz.main([str(tmp_path / "b"), *viz]) == 2          # no snapshots
+
+
+def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
+    pytest.importorskip("rosu_pp_py")
+    from scripts import evaluate, judge
+    assert train.main(["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+                       "--out", str(tmp_path), "--run", "j", "--overfit", "4", "--steps", "20",
+                       "--batch-size", "4", "--warmup", "5", "--d-model", "64", "--layers", "2",
+                       "--heads", "2", "--d-ff", "128", "--log-every", "10", "--val-every", "20",
+                       "--sample-steps", "4", "--fake-mel", "--device", "cpu"]) == 0
+    ckpt = tmp_path / "j" / "best.pt"
+    common = ["--ckpt", str(ckpt), "--manifest", str(data / "manifest.csv"),
+              "--root", str(data / "raw"), "--cache", str(data / "cache"), "--fake-mel",
+              "--device", "cpu", "--steps", "4", "--split", "train", "--per-song", "--n", "3"]
+    assert evaluate.main(common) == 0
+    run = next((tmp_path / "j").glob("eval_*"))
+    assert evaluate.main([*common, "--from-charts", str(run), "--rest", "1000"]) == 0
+    rested = run.parent / (run.name + "_rb1000")
+    args = ["--ckpt", str(ckpt), "--ai", str(run), "--score", str(rested),
+            "--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--fake-mel", "--device", "cpu", "--out", str(tmp_path / "judge"), "--folds", "2",
+            "--epochs", "1", "--batch-pairs", "2", "--log-every", "1"]
+    assert judge.main([*args, "--name", "a"]) == 0
+    out = tmp_path / "judge" / "a"
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["ai"]["songs"] == 3 and 0 <= summary["ai"]["auc"] <= 1
+    assert "minus_ai" in summary["+rb1000"] and summary["labels"]["+rb1000"] == str(rested)
+    with open(out / "windows.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert {r["chart"] for r in rows} == {"human", "ai", "+rb1000"}
+    assert {r["fold"] for r in rows} == {"0", "1"}                  # every song held out once
+    def onsets(chart: str) -> int:
+        return sum(int(r["onset_rows"]) for r in rows if r["chart"] == chart)
+    assert onsets("+rb1000") < onsets("ai")                         # the whole bars emptied
+    scores = np.load(out / "rows.npz")
+    for key in {r["key"] for r in rows}:
+        n = len(scores[f"{key}|starts"])
+        assert scores[f"{key}|ai"].shape == (n, L) and scores[f"{key}|human"].shape == (n, L)
+    with open(out / "log.csv", newline="") as f:
+        assert {r["fold"] for r in csv.DictReader(f)} == {"0", "1"}
+    assert judge.main([*args, "--name", "b", "--no-audio", "--folds", "5",       # as many as songs
+                       "--score", str(rested), str(tmp_path / "none")]) == 0    # one left out
+    assert json.loads((tmp_path / "judge" / "b" / "summary.json").read_text())["args"]["no_audio"]
+    assert judge.main([*args, "--name", "c", "--limit", "1"]) == 2   # one song: none to hold out
