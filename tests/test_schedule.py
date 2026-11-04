@@ -1,5 +1,7 @@
 """How many cells the sampler opens at each step (sampler.open_share, DECISIONS 2026-11-05)."""
 
+from itertools import pairwise
+
 import numpy as np
 import pytest
 
@@ -33,7 +35,7 @@ def test_both_schedules_open_every_cell_and_linear_is_one_over_t() -> None:
 def test_cosine_opens_few_cells_first_and_more_at_the_end() -> None:
     share = opened(128, "cosine")
     assert sum(share[:16]) < 0.02 and sum(share[-16:]) > 0.18
-    assert all(a <= b + 1e-12 for a, b in zip(share, share[1:], strict=False))
+    assert all(a <= b + 1e-12 for a, b in pairwise(share))
 
 
 @pytest.mark.parametrize("order", ["random", "confidence", "noisy"])
@@ -67,7 +69,7 @@ def test_cosine_spends_every_pass_and_opens_slowly_at_first() -> None:
         out = sample_window(model, x, mel, 3.0, 400.0, steps=32, schedule=schedule,
                             rng=np.random.default_rng(0))
         assert not (out == MASK).any() and len(model.masked) == 32
-        assert all(a > b for a, b in zip(model.masked, model.masked[1:], strict=False))
+        assert all(a > b for a, b in pairwise(model.masked))
         first = model.masked[0] - model.masked[4]           # cells opened in the first 4 passes
         assert first < 60 if schedule == "cosine" else first > 100
     with pytest.raises(ValueError):

@@ -26,8 +26,12 @@ how many are below (recall), and the human note starts in them (what a rest pass
 human chart would remove). The *_within AUCs pair bars of the same song only (the
 chart-level share is no help there): can the model place them inside a song? --context
 none masks the whole chart: what the audio, the SR and the stats alone tell (could rests
-and long-note bars be decided before sampling?). Writes <out>.csv, one row per bar, and
-<out>.json.
+and long-note bars be decided before sampling?). calibration: the expected starts over the
+human ones, and by bins of the expected starts the bars' mean expected and human starts
+and how many humans leave empty: whether an absolute threshold (the rest pass's
+expected < 1) means what it says, which the AUCs (ranks only) cannot tell; compare
+--context none, where nothing but the audio is in view. Writes <out>.csv, one row per
+bar, and <out>.json.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import argparse
 import csv
 import json
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -209,6 +214,18 @@ def main(argv: list[str] | None = None) -> int:
             "human_starts_in_them": float(col["human_starts"][below].sum() / max(total, 1)),
             "bars_below_with_context_notes": float((below & (col["context_starts"] > 0)).mean()),
         }
+    edges = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, float("inf"))
+    bins = []
+    for lo, hi in pairwise(edges):
+        inside = (col["expected_starts"] >= lo) & (col["expected_starts"] < hi)
+        if inside.any():
+            bins.append({"expected": f"{lo:g}-{hi:g}", "bars": float(inside.mean()),
+                         "mean_expected": float(col["expected_starts"][inside].mean()),
+                         "mean_human": float(col["human_starts"][inside].mean()),
+                         "human_rest": float(rest[inside].mean())})
+    summary["calibration"] = {
+        "expected_over_human": float(col["expected_starts"].sum() / max(total, 1)),
+        "bins": bins}
     (out.parent / (out.name + ".json")).write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     return 0

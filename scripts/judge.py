@@ -6,7 +6,8 @@ the charts still are from the human ones that does not need a player.
     python scripts/judge.py --ckpt outputs/full-v4/best.pt --ai <eval dir> \
         [--score <eval dir> ...] [--no-audio] [--folds 5] [--epochs 3] [--name F]
 
---ai and --score are evaluate.py runs (charts.npz and per_song.csv) over the same songs. Each
+--ai and --score are evaluate.py runs (charts.npz and per_song.csv); the judge trains on
+every song of --ai, and a --score run over fewer of them is scored on the songs it has. Each
 fold starts a Judge (src/models/judge.py) from the denoiser of --ckpt and trains it on pairs,
 the human chart's window and the run's at the same rows, windows every 4 bars, lanes mirrored at
 random, for --epochs; it then scores the held-out songs' windows every 8 bars: the run's, the
@@ -26,6 +27,13 @@ rows.npz (per-row scores of the held-out windows, "<key>|<chart>" -> [windows, L
 by grade, and for every --score run the same against the human charts, and its mean logit
 minus the judged run's per song (95% interval over songs): below 0, it looks more human to
 this judge.
+
+Checks before a judge counts (docs/EVALUATION.md): --shuffle-labels trains on pairs whose
+labels are swapped at random (the auc pooled over the folds should land at 0.40-0.60; each
+fold's judge ranks by an arbitrary direction, so one fold may stray; 0.7+ is a bug), and
+--score with the runs of scripts/corrupt_test.py --write-runs (human charts corrupted at
+three doses: the score should rise with the dose for the corruptions the judge can see).
+scripts/judge_vs_diag.py relates the judged run's per-song scores to its diagnostics.
 """
 
 from __future__ import annotations
@@ -67,6 +75,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--out", type=Path, default=Path("outputs/judge"))
     ap.add_argument("--name", default=None, help="run name (default: time stamp)")
     ap.add_argument("--no-audio", action="store_true", help="the judge hears silence")
+    ap.add_argument("--shuffle-labels", action="store_true",
+                    help="the null check: each training pair's labels swapped at random, so "
+                         "there is nothing to learn: the held-out auc pooled over the folds "
+                         "should be 0.40-0.60 (docs/EVALUATION.md); 0.7+ is a bug")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch-pairs", type=int, default=8, help="pairs a step (2x windows)")
@@ -159,8 +171,8 @@ class Songs:
             runs.append((label_of(path, a.ai), rows, charts))
             self.labels.append(runs[-1][0])
         self.store = open_mel(a.cache, fake=a.fake_mel)
-        keys = [k for k in ai_rows if all(k in c for _, _, c in runs) and k in man
-                and (a.cache / "tokens" / f"{k}.npz").exists() and self.store.has(k)]
+        keys = [k for k in ai_rows if k in ai_charts and k in man                # every song of
+                and (a.cache / "tokens" / f"{k}.npz").exists() and self.store.has(k)]  # the run
         if a.limit:
             keys = keys[:a.limit]
         self.songs = []
@@ -175,9 +187,10 @@ class Songs:
                     "grid": from_timing_points(tps), "offset": int(z["cell_offset"]),
                     "charts": {"human": human}, "sr": {"human": as_float(
                         ai_rows[k].get("sr_human_local"), sr_label)}}
-            for label, rows, charts in runs:
-                song["charts"][label] = charts[k]
-                song["sr"][label] = as_float(rows[k].get("sr_gen"), sr_label)
+            for label, rows, charts in runs:          # a --score run is scored on the songs
+                if k in charts:                        # it has; the judge trains on them all
+                    song["charts"][label] = charts[k]
+                    song["sr"][label] = as_float(rows[k].get("sr_gen"), sr_label)
             song["train"] = self.starts(song, TRAIN_STRIDE)
             song["test"] = self.starts(song, L)
             self.songs.append(song)
@@ -250,6 +263,9 @@ def train_fold(a, data: Songs, train: list[dict], device, fold: int, log_path: P
             items = [(s, st, "human") for s, st in chosen] + [(s, st, "ai") for s, st in chosen]
             x, mel, s_, b = data.batch(items, device, rng, a.mirror)
             y = torch.cat([torch.zeros(len(chosen)), torch.ones(len(chosen))]).to(device)
+            if a.shuffle_labels:
+                swap = torch.as_tensor(rng.random(len(chosen)) < 0.5, dtype=torch.float32)
+                y = torch.cat([swap, 1 - swap]).to(device)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16) if use_amp \
                     else contextlib.nullcontext():
                 logit = judge(x, mel, s_, b)
@@ -284,6 +300,8 @@ def score_fold(judge: Judge, data: Songs, test: list[dict], device, batch: int =
     for song in test:
         starts = song["test"]
         for chart in ("human", *data.labels):
+            if chart not in song["charts"]:
+                continue
             logits, rows = [], []
             for j in range(0, len(starts), batch):
                 items = [(song, st, chart) for st in starts[j:j + batch]]
@@ -312,17 +330,18 @@ def report(songs: list[dict], scores: dict, labels: list[str]) -> tuple[dict, li
                 float("nan"), "human_mean_logit": float(h.mean()) if len(h) else float("nan")}
 
     for chart in labels:
-        b = block(chart, keys)
-        b["by_grade"] = {g: block(chart, [k for k in keys if grade[k] == g])
-                         for g in GRADES if any(grade[k] == g for k in keys)}
-        if chart != "ai":
+        ks = [k for k in keys if (k, chart) in scores]          # a --score run's own songs
+        b = block(chart, ks)
+        b["by_grade"] = {g: block(chart, [k for k in ks if grade[k] == g])
+                         for g in GRADES if any(grade[k] == g for k in ks)}
+        if chart != "ai" and ks:
             d = np.array([scores[(k, chart)][0].mean() - scores[(k, "ai")][0].mean()
-                          for k in keys])
+                          for k in ks])
             lo, hi = boot_mean(d)
             b["minus_ai"] = {"mean": float(d.mean()), "lo": lo, "hi": hi,
                              "paired_vs_ai": paired(
-                                 np.concatenate([scores[(k, chart)][0] for k in keys]),
-                                 np.concatenate([scores[(k, "ai")][0] for k in keys]))}
+                                 np.concatenate([scores[(k, chart)][0] for k in ks]),
+                                 np.concatenate([scores[(k, "ai")][0] for k in ks]))}
         summary[chart] = b
         lines.append(f"{chart}: {b['windows']} windows of {b['songs']} songs  auc {b['auc']:.3f}  "
                      f"paired {b['paired']:.3f}  songs {b['songs_paired']:.3f}  "
@@ -378,6 +397,8 @@ def main(argv=None) -> int:
         w.writerow(["key", "grade", "fold", "start", "chart", "logit", "onset_rows"])
         for s in songs:
             for chart in ("human", *data.labels):
+                if (s["key"], chart) not in scores:             # not in that --score run
+                    continue
                 for st, lg in zip(s["test"], scores[(s["key"], chart)][0], strict=True):
                     w.writerow([s["key"], s["grade"], fold_by_key[s["key"]], st, chart,
                                 f"{lg:.4f}", onset_rows(s["charts"][chart], st,

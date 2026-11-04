@@ -341,6 +341,9 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert probe_bars.main(probe_args) == 0
     probe = json.loads((tmp_path / "cs" / "probe_bars.json").read_text())
     assert probe["songs"] == 2 and probe["bars"] > 0 and "1" in probe["thresholds"]
+    cal = probe["calibration"]
+    assert cal["expected_over_human"] > 0 and sum(b["bars"] for b in cal["bins"]) == \
+        pytest.approx(1.0)
     assert probe_bars.main([*probe_args, "--charts", str(oracle_run / "charts.npz")]) == 0
     assert (tmp_path / "cs" / f"probe_bars_{oracle_run.name}.csv").exists()
     assert probe_bars.main([*probe_args, "--context", "none"]) == 0
@@ -1053,4 +1056,48 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert judge.main([*args, "--name", "b", "--no-audio", "--folds", "5",       # as many as songs
                        "--score", str(rested), str(tmp_path / "none")]) == 0    # one left out
     assert json.loads((tmp_path / "judge" / "b" / "summary.json").read_text())["args"]["no_audio"]
+
+
+def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:
+    pytest.importorskip("rosu_pp_py")
+    from scripts import corrupt_test, evaluate, judge, judge_vs_diag
+    assert train.main(["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+                       "--out", str(tmp_path), "--run", "c", "--overfit", "4", "--steps", "20",
+                       "--batch-size", "4", "--warmup", "5", "--d-model", "64", "--layers", "2",
+                       "--heads", "2", "--d-ff", "128", "--log-every", "10", "--val-every", "20",
+                       "--sample-steps", "4", "--fake-mel", "--device", "cpu"]) == 0
+    ckpt = tmp_path / "c" / "best.pt"
+    songs = ["--split", "train", "--per-song", "--manifest", str(data / "manifest.csv"),
+             "--cache", str(data / "cache"), "--fake-mel"]
+    assert evaluate.main(["--ckpt", str(ckpt), "--root", str(data / "raw"), "--device", "cpu",
+                          "--steps", "4", *songs, "--n", "3"]) == 0
+    run = next((tmp_path / "c").glob("eval_*"))
+    out = tmp_path / "corrupt"
+    assert corrupt_test.main([*songs, "--n", "3", "--out", str(out), "--write-runs",
+                              "--corruptions", "lanes", "new"]) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["songs"] == 3 and set(summary["metrics"]["notes"]) == {"lanes", "new"}
+    assert summary["metrics"]["notes"]["new"]["rho"] == pytest.approx(1.0)   # taps added
+    assert "lanes" not in summary["verdict"]["notes"]["sensitive_to"]          # rows kept
+    assert (out / "summary.md").exists()
+    with open(out / "runs" / "new_0.08" / "per_song.csv", newline="") as f:
+        assert {"key", "grade", "sr_gen", "sr_human_local"} <= set(next(csv.DictReader(f)))
+    args = ["--ckpt", str(ckpt), "--ai", str(run), "--score", str(out / "runs" / "new_0.08"),
+            "--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--fake-mel", "--device", "cpu", "--out", str(tmp_path / "judge"), "--folds", "3",
+            "--epochs", "1", "--batch-pairs", "2", "--log-every", "1"]
+    assert judge.main([*args, "--name", "null", "--shuffle-labels"]) == 0
+    null = json.loads((tmp_path / "judge" / "null" / "summary.json").read_text())
+    assert null["args"]["shuffle_labels"] and "new_0.08" in null
+    assert corrupt_test.main([*songs, "--n", "2", "--out", str(tmp_path / "two"),
+                              "--write-runs", "--corruptions", "new"]) == 0
+    partial = tmp_path / "partial"                            # a --score run of 2 of the 3 songs
+    (tmp_path / "two" / "runs" / "new_0.08").rename(partial)
+    assert judge.main([*args, "--score", str(partial), "--name", "real"]) == 0
+    real = json.loads((tmp_path / "judge" / "real" / "summary.json").read_text())
+    assert real["ai"]["songs"] == 3 and real["partial"]["songs"] == 2   # trained on all 3
+    with open(run / "per_song.csv", newline="") as f:       # judge_vs_diag needs 10+ songs
+        assert len(list(csv.DictReader(f))) == 3
+    assert judge_vs_diag.main(["--judge", str(tmp_path / "judge" / "real"),
+                               "--run", str(run)]) == 2
     assert judge.main([*args, "--name", "c", "--limit", "1"]) == 2   # one song: none to hold out
