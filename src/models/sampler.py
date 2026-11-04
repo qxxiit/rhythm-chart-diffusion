@@ -53,6 +53,7 @@ filled, so sampling never gets stuck.
 
 from __future__ import annotations
 
+import math
 from itertools import combinations, permutations
 
 import numpy as np
@@ -136,6 +137,24 @@ def denoiser_probs(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float) 
 
 
 ORDERS = ("random", "confidence", "noisy", "block")
+SCHEDULES = ("linear", "cosine")
+
+
+def open_share(t: int, steps: int, schedule: str = "linear") -> float:
+    """The share of the MASK cells still left that open at step t (steps count down to 1).
+    linear: 1/t, so every step opens about as many cells (the reverse of the forward
+    process, §4.8). cosine: the window's MASK share is cos(pi/2 (steps - t) / steps) before
+    step t (MaskGIT's schedule): few cells while little of the chart is in view, more as
+    it fills (DECISIONS 2026-11-05). Step 1 opens what is left."""
+    if schedule not in SCHEDULES:
+        raise ValueError(f"unknown schedule {schedule!r}")
+    if t <= 1:
+        return 1.0
+    if schedule == "linear":
+        return 1.0 / t
+    before = math.cos(math.pi / 2 * (steps - t) / steps)
+    after = math.cos(math.pi / 2 * (steps - t + 1) / steps)
+    return 1.0 - after / before
 
 
 def steps_name(steps: int) -> str:
@@ -201,7 +220,8 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
                   left_closed: bool = True, right_closed: bool = True,
                   temperature: float = 1.0, hold_bias: float = 0.0, empty_bias: float = 0.0,
                   spread: bool = False, row_empty_bias: np.ndarray | None = None,
-                  row_onset_bias: np.ndarray | None = None) -> np.ndarray:
+                  row_onset_bias: np.ndarray | None = None,
+                  schedule: str = "linear") -> np.ndarray:
     """Fill the MASK cells of one window. Cells that are not MASK are kept as they are.
 
     x      [L, K] tokens: MASK where to generate, PAD past the end of the song
@@ -235,9 +255,14 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
     row_onset_bias: [L] subtracted from the log probability of TAP and HOLD_START per row
            (generate_song's onset_bias): fewer notes start there, while long notes that
            pass through go on (an EMPTY bias would also cut their bodies)
+    schedule: how many cells open at each step (open_share): "linear" as above, "cosine"
+           few at first and more later; for "random", "confidence" and "noisy" ("block"
+           and steps 0 keep their own)
     """
     if order not in ORDERS:
         raise ValueError(f"unknown order {order!r}")
+    if schedule not in SCHEDULES:
+        raise ValueError(f"unknown schedule {schedule!r}")
     x = np.array(x, dtype=np.int64)
     rng = rng or np.random.default_rng()
     weight = _class_weight(hold_bias, empty_bias)
@@ -259,14 +284,19 @@ def sample_window(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, *
             if sequential:
                 pick = todo[[int(rng.integers(len(todo)))]]
             else:
-                chosen = rng.random(len(todo)) < 1.0 / t
+                share = 1.0 / t if schedule == "linear" else open_share(t, steps, schedule)
+                chosen = rng.random(len(todo)) < share
+                if schedule != "linear" and not chosen.any():    # no pass spent on nothing
+                    chosen[int(rng.integers(len(todo)))] = True
                 pick = (_spread(todo, int(chosen.sum()), todo[:, 0] // D, rng) if spread
                         else todo[chosen])
         else:
             score = np.log(probs[todo[:, 0], todo[:, 1]].max(axis=-1) + 1e-12)
             if order == "noisy" and temperature > 0:
                 score = score + temperature * (t / steps) * rng.gumbel(size=len(todo))
-            pick = todo[np.argsort(-score, kind="stable")[:max(1, round(len(todo) / t))]]
+            count = round(len(todo) / t) if schedule == "linear" else round(
+                len(todo) * open_share(t, steps, schedule))
+            pick = todo[np.argsort(-score, kind="stable")[:max(1, count)]]
         _open_cells(x, pick, probs, rng, left_closed, right_closed, weight, row_empty_bias,
                     row_onset_bias)
     return x
@@ -2141,7 +2171,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   strong: float | None = None, light: float | None = None,
                   light_alike: bool = False, untangle_wide: bool = False,
                   untangle_insane: bool = False, recheck: float | None = None,
-                  recheck_add: float | None = None) -> np.ndarray:
+                  recheck_add: float | None = None, schedule: str = "linear") -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2150,7 +2180,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     timing_points, cell_offset
                   the song's timing and token origin; b is computed per window from them
     n_cells       non-PAD rows (how far the song goes)
-    steps, order, temperature, spread, hold_bias, empty_bias
+    steps, order, temperature, spread, hold_bias, empty_bias, schedule
                   per window, see sample_window (steps 0 = one cell per forward pass)
     lanes         "forward": after sampling, forward_lanes re-chooses every row's lanes
                   left to right with the rhythm known, at forward_temperature (None:
@@ -2264,7 +2294,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
             steps=steps, order=order, rng=rng, left_closed=left_closed, right_closed=right_closed,
             temperature=temperature, hold_bias=hold_bias, empty_bias=empty_bias, spread=spread,
             row_empty_bias=None if row_bias is None else row_bias[row0:row0 + L],
-            row_onset_bias=None if row_onset is None else row_onset[row0:row0 + L])
+            row_onset_bias=None if row_onset is None else row_onset[row0:row0 + L],
+            schedule=schedule)
 
     if mode == "independent":
         for c in range(n_chunks):

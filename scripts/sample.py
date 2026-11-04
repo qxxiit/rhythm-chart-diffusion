@@ -38,6 +38,7 @@ from src.models.sampler import (
     LANE_PASSES,
     LOUD_SIDES,
     ORDERS,
+    SCHEDULES,
     generate_song,
     parse_taper,
     steps_name,
@@ -61,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--steps", type=int, default=128,   # DECISIONS 2026-09-29
                     help="forward passes per window; 0 = one cell per pass")
     ap.add_argument("--order", choices=list(ORDERS), default="random")
+    ap.add_argument("--schedule", choices=list(SCHEDULES), default="linear",
+                    help="cells opened per step (sampler.open_share): linear 1/t; "
+                         "cosine few while little is in view, more later")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
     ap.add_argument("--refine", type=int, default=2,   # DECISIONS 2026-10-03
                     help="sweeps of lane refinement after sampling (sampler.refine_lanes)")
@@ -289,7 +293,8 @@ def main(argv: list[str] | None = None) -> int:
     hold_up = a.hold_up and a.hold_share is None and asked is not None and np.isfinite(asked)
     share = a.hold_share if a.hold_share is not None else asked if hold_up else None
     tokens = generate_song(model, mel, sr, tps, cell_offset, n_cells, steps=a.steps,
-                           order=a.order, mode=a.mode, seed=a.seed, temperature=a.temperature,
+                           order=a.order, schedule=a.schedule, mode=a.mode, seed=a.seed,
+                           temperature=a.temperature,
                            refine=a.refine, lane_temperature=a.lane_temp,
                            hold_bias=a.hold_bias, min_hold=a.min_hold,
                            release_gap=a.release_gap, lanes=a.lanes, spread=a.spread,

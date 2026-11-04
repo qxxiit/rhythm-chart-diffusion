@@ -178,6 +178,7 @@ from src.models.sampler import (
     LANE_PASSES,
     LOUD_SIDES,
     ORDERS,
+    SCHEDULES,
     STATS,
     generate_song,
     onset_strength,
@@ -312,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="forward passes per window; 0 = one cell per pass (the ceiling of "
                          "parallel sampling, about 10x the passes of 128)")
     ap.add_argument("--order", choices=list(ORDERS), default="random")
+    ap.add_argument("--schedule", choices=list(SCHEDULES), default="linear",
+                    help="cells opened per step (sampler.open_share): linear 1/t; "
+                         "cosine few while little is in view, more later")
     ap.add_argument("--spread", action="store_true",
                     help="cells opened together come from different beats (block: rows)")
     ap.add_argument("--temperature", type=float, default=1.0, help="--order noisy")
@@ -540,6 +544,8 @@ def main(argv: list[str] | None = None) -> int:
     tag = f"{a.split}{'_songs' if a.per_song else ''}_{a.mode}_{order}_T{steps_name(a.steps)}"
     if a.spread:
         tag += "_spread"
+    if a.schedule != "linear":
+        tag += f"_{a.schedule}"
     fwd_temp = a.lane_temp if a.forward_temp is None else a.forward_temp
     if a.lanes == "forward":
         tag += "_fwd" + ("" if a.refine and fwd_temp == a.lane_temp else f"t{fwd_temp:g}")
@@ -716,7 +722,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             tokens = generate_song(model, mel, sr + a.sr_offset, tps, offset, n_cells,
                                    steps=a.steps,
-                                   order=a.order, mode=a.mode, seed=sample_seed + i,
+                                   order=a.order, schedule=a.schedule, mode=a.mode,
+                                   seed=sample_seed + i,
                                    temperature=a.temperature, refine=a.refine,
                                    lane_temperature=a.lane_temp,
                                    hold_bias=a.hold_bias, min_hold=a.min_hold,
@@ -823,7 +830,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
-               "steps": a.steps, "spread": a.spread, "lanes": a.lanes, "refine": a.refine,
+               "steps": a.steps, "schedule": a.schedule, "spread": a.spread,
+               "lanes": a.lanes, "refine": a.refine,
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "copy_min_lag": a.copy_min_lag,
                "style": a.style, "style_guidance": a.style_guidance,
