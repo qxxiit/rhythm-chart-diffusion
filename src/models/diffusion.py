@@ -6,6 +6,8 @@
     sample_gamma    mask ratios for a batch, stratified over (0, 1]
     mask_tokens     forward process: each non-PAD position becomes MASK with probability gamma
                     (or, for chunks picked by row_mask, each whole row of 4 lanes)
+    count_weight    (n + 1) / k: the 1/gamma weight given the k of n positions masked
+    block_masks     masks shaped like the sampler's questions (whole bars; all but 2 bars)
     diffusion_loss  continuous-time loss  E_gamma[ (1/gamma) * sum_masked CE ] / N
 
 Deliberate differences from the design doc:
@@ -34,10 +36,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from src.data.tokenizer import MASK, PAD, K, L
+from src.data.tokenizer import HOLD_START, MASK, PAD, TAP, K, L
 
 N_CLASSES = 5                          # EMPTY, TAP, HOLD_START, HOLD_BODY, HOLD_END
 VOCAB = 7                              # + MASK, PAD as inputs
+BAR_ROWS = 48                          # rows of a 4/4 bar at 12 cells a beat (block_masks)
+LOSS_WEIGHTS = ("gamma", "count")      # diffusion_loss weight=
 
 
 @dataclass
@@ -271,12 +275,63 @@ def mask_tokens(x0: torch.Tensor, gamma: torch.Tensor,
     return torch.where(masked, torch.full_like(x0, MASK), x0), masked
 
 
+def count_weight(masked: torch.Tensor, valid: torch.Tensor,
+                 rows: torch.Tensor | None = None) -> torch.Tensor:
+    """[B] the weight 1/gamma given what was masked: (n + 1) / k for k of n positions.
+
+    With gamma ~ U(0, 1) and every position masked with probability gamma, the number masked
+    k is uniform on 0..n and, given k, which positions are masked does not depend on gamma;
+    the model is not told gamma. So all gamma adds to the loss is the noise of its weight,
+    whose mean given k is E[1/gamma | k] = (n + 1) / k (gamma | k ~ Beta(k + 1, n - k + 1)):
+    the same expectation with less variance (Rao-Blackwell). At k = 1 the variance of 1/gamma
+    is infinite; sample_gamma's eps is what keeps it finite. In row-masked chunks (rows, bool
+    [B]) rows are the units: (rows + 1) / masked rows. A chunk with nothing masked weighs 0.
+    """
+    k = masked.sum(dim=(1, 2)).float()
+    n = valid.sum(dim=(1, 2)).float()
+    if rows is not None:
+        k = torch.where(rows, masked.any(dim=2).sum(dim=1).float(), k)
+        n = torch.where(rows, valid.any(dim=2).sum(dim=1).float(), n)
+    return torch.where(k > 0, (n + 1) / k.clamp_min(1), torch.zeros_like(k))
+
+
+def block_masks(x0: torch.Tensor, generator: torch.Generator | None = None) -> torch.Tensor:
+    """[B, L, K] bool: masks shaped like the questions the sampler asks, which cell-by-cell
+    masks almost never make (one whole bar masked with the rest in view: gamma^192).
+
+    Half the chunks: 1 or 2 whole bars masked and the rest at a ratio under 0.5 (the passes
+    that mask a bar and ask again: rests, recheck, copies). The other half: the first 2 bars
+    in view and the rest at a ratio of 0.5-1 (continuing from 2 fixed bars). PAD is never
+    masked; the bars are drawn among those with non-PAD rows.
+    """
+    gen_device = generator.device if generator is not None else x0.device
+    u = torch.rand((x0.shape[0], 4), generator=generator, device=gen_device).cpu()
+    cells = torch.rand(tuple(x0.shape), generator=generator, device=gen_device).cpu()
+    valid = (x0 != PAD).cpu()
+    out = torch.zeros(tuple(x0.shape), dtype=torch.bool)
+    for i in range(x0.shape[0]):
+        filled = valid[i].any(dim=1).nonzero()
+        bars = max(1, -(-(int(filled.max()) + 1) // BAR_ROWS)) if len(filled) else 1
+        if u[i, 0] < 0.5:
+            width = 2 if bars > 1 and u[i, 1] < 0.5 else 1
+            start = int(u[i, 2] * (bars - width + 1)) * BAR_ROWS
+            m = cells[i] < 0.5 * float(u[i, 3])
+            m[start:start + width * BAR_ROWS] = True
+        else:
+            m = cells[i] < 0.5 + 0.5 * float(u[i, 3])
+            m[:2 * BAR_ROWS] = False
+        out[i] = m & valid[i]
+    return out.to(x0.device)
+
+
 def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: torch.Tensor,
                    b: torch.Tensor, gamma: torch.Tensor | None = None,
                    generator: torch.Generator | None = None,
                    row_mask: float = 0.0, genre: torch.Tensor | None = None,
                    mapper: torch.Tensor | None = None,
-                   stats: torch.Tensor | None = None) -> tuple[torch.Tensor, dict]:
+                   stats: torch.Tensor | None = None, *, weight: str = "gamma",
+                   complementary: bool = False,
+                   block_mask: float = 0.0) -> tuple[torch.Tensor, dict]:
     """L = E_gamma[ (1/gamma) * sum over masked positions of -log p(x0) ] / N   (§4.9).
 
     The 1/gamma weight makes every mask ratio count equally: a chunk masked at
@@ -286,29 +341,75 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
     weight stays right, since every position is still masked with probability gamma.
     genre, mapper: style indices for a model with style inputs (None: not passed);
     stats: chart-stat buckets for a model with chart-stat inputs (None: not passed).
+    weight: "gamma" divides each chunk by its ratio (1/gamma, as before); "count" weighs it by
+    the positions actually masked, (n + 1) / k (count_weight): the same expectation, less
+    variance (DECISIONS 2026-11-05).
+    complementary: every chunk is also scored with the complement of its mask (ratio
+    1 - gamma), so every position is a target once a step and a low ratio comes with a high
+    one (LaViDa, arXiv 2505.16839); twice the forward work.
+    block_mask: share of chunks masked by block_masks instead. Their masks are not the
+    forward process, so they are outside the ELBO and weigh n / k (their mean CE times n),
+    whatever weight says.
     Returns (loss, info) where info holds unweighted diagnostics.
     """
+    if weight not in LOSS_WEIGHTS:
+        raise ValueError(f"weight must be one of {LOSS_WEIGHTS}, not {weight!r}")
+    gen_device = generator.device if generator is not None else x0.device
     if gamma is None:
         gamma = sample_gamma(x0.shape[0], x0.device, generator)
     rows = None
     if row_mask > 0:
-        rows = torch.rand(x0.shape[0], generator=generator,
-                          device=generator.device if generator is not None else x0.device)
+        rows = torch.rand(x0.shape[0], generator=generator, device=gen_device)
         rows = rows < row_mask
     x_t, masked = mask_tokens(x0, gamma, generator, rows)
+    rows = None if rows is None else rows.to(x0.device)
+    valid = x0 != PAD
+    blocks = None
+    if block_mask > 0:
+        blocks = (torch.rand(x0.shape[0], generator=generator, device=gen_device)
+                  < block_mask).to(x0.device)
+        masked = torch.where(blocks.view(-1, 1, 1), block_masks(x0, generator), masked)
+        x_t = torch.where(masked, torch.full_like(x0, MASK), x0)
+    ratio = gamma
+    if complementary:
+        def twice(t):
+            return None if t is None else torch.cat([t, t])
+
+        masked = torch.cat([masked, valid & ~masked])
+        x0, valid, rows, blocks = twice(x0), twice(valid), twice(rows), twice(blocks)
+        mel, s, b, genre, mapper, stats = (twice(t) for t in (mel, s, b, genre, mapper, stats))
+        x_t = torch.where(masked, torch.full_like(x0, MASK), x0)
+        ratio = torch.cat([gamma, (1 - gamma).clamp_min(1e-3)])
     style = {k: v for k, v in (("genre", genre), ("mapper", mapper), ("stats", stats))
              if v is not None}
     logits = model(x_t, mel, s, b, **style).float()
     target = torch.where(x0 == PAD, torch.zeros_like(x0), x0)       # PAD is never scored
     ce = F.cross_entropy(logits.reshape(-1, N_CLASSES), target.reshape(-1),
                          reduction="none").view_as(x0)
-    per_chunk = (ce * masked).sum(dim=(1, 2)) / gamma
+    summed = (ce * masked).sum(dim=(1, 2))
+    if weight == "gamma":
+        per_chunk, w = summed / ratio, 1.0 / ratio
+    else:
+        w = count_weight(masked, valid, rows)
+        per_chunk = summed * w
+    if blocks is not None:
+        k = masked.sum(dim=(1, 2)).float()
+        w_block = torch.where(k > 0, valid.sum(dim=(1, 2)).float() / k.clamp_min(1),
+                              torch.zeros_like(k))
+        per_chunk = torch.where(blocks, summed * w_block, per_chunk)
+        w = torch.where(blocks, w_block, w)
     loss = per_chunk.mean() / (L * K)
     with torch.no_grad():
         n_masked = masked.sum()
+        onset = ((x0 == TAP) | (x0 == HOLD_START)).any(dim=2, keepdim=True).expand_as(x0)
+        on, off = masked & onset, masked & ~onset
         info = {
             "masked_ce": float((ce * masked).sum() / n_masked.clamp_min(1)),
-            "mask_rate": float(n_masked / (x0 != PAD).sum().clamp_min(1)),
+            "mask_rate": float(n_masked / valid.sum().clamp_min(1)),
+            "masked_ce_onset_rows": float((ce * on).sum() / on.sum().clamp_min(1)),
+            "masked_ce_other_rows": float((ce * off).sum() / off.sum().clamp_min(1)),
+            "weight_max": float(w.max()),
+            "chunk_spread": float(per_chunk.max() / per_chunk.mean().clamp_min(1e-12)),
         }
     return loss, info
 

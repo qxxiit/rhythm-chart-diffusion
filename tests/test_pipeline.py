@@ -181,6 +181,29 @@ def test_train_overfit_runs_and_learns(data: Path, tmp_path: Path) -> None:
     assert 0.0 <= summary["mean_coverage"] <= 1.0
 
 
+def test_train_with_the_mask_options(data: Path, tmp_path: Path) -> None:
+    args = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--out", str(tmp_path), "--run", "m", "--overfit", "2", "--steps", "60",
+            "--batch-size", "4", "--lr", "2e-3", "--warmup", "10", "--d-model", "64",
+            "--layers", "2", "--heads", "2", "--d-ff", "128", "--log-every", "10",
+            "--val-every", "60", "--sample-steps", "8", "--window", "bar", "--fake-mel",
+            "--row-mask", "0.5", "--loss-weight", "count", "--complementary",
+            "--block-mask", "0.5", "--device", "cpu"]
+    assert train.main(args) == 0
+    with open(tmp_path / "m" / "log.csv", newline="") as f:
+        losses = [float(r["loss"]) for r in csv.DictReader(f)]
+    assert losses[-1] < losses[0]
+    with open(tmp_path / "m" / "log_more.csv", newline="") as f:
+        more = list(csv.DictReader(f))
+    assert len(more) == len(losses) and float(more[0]["weight_max"]) > 0
+    assert 0.0 <= float(more[-1]["clipped_share"]) <= 1.0
+    with open(tmp_path / "m" / "val_more.csv", newline="") as f:
+        val_more = next(csv.DictReader(f))
+    assert {"val_ce@0.02", "val_ce@1.0", "on@0.5", "off@0.5", "on@1.0"} <= set(val_more)
+    with open(tmp_path / "m" / "val.csv", newline="") as f:
+        assert "val_ce@1.0" not in next(csv.DictReader(f))          # val.csv keeps its columns
+
+
 def test_style_conditioning_end_to_end(data: Path, tmp_path: Path) -> None:
     from scripts import build_style
     from src.data.style import read_style

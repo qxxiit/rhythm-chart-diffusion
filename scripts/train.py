@@ -14,7 +14,16 @@ Reads data/manifest.csv and data/cache (tokens + log-Mel, layout in src/data/cac
 Writes outputs/<run>/: config.json, log.csv (every --log-every steps), val.csv,
 last.pt and best.pt (and traj/ with --snapshot-every). Before a run, write the
 prediction (final loss, when it converges, how it could fail) in docs/EXPERIMENTS.md
-(design doc §6, 예측 기록).
+(design doc §6, 예측 기록). log_more.csv: since the last line, the largest chunk weight, the
+largest chunk loss over the batch mean and the share of steps whose gradient was clipped
+(the tail of 1/gamma); val_more.csv: masked CE
+at 0.02, 0.05 and 1.0 (nothing in view but the audio) and, at every ratio, in the rows
+with an onset (on@) and the others (off@).
+
+--loss-weight count weighs a chunk by the positions masked, (n + 1) / k, instead of
+1/gamma: the same objective with less variance. --complementary also scores every chunk
+with the complement of its mask. --block-mask p masks a share p of the chunks like the
+sampler's questions (whole bars; all but the first 2 bars). DECISIONS 2026-11-05.
 
 --style data/style.csv (scripts/build_style.py) adds the genre and mapper inputs
 (src/data/style.py): the vocab is built from the train charts and saved in the
@@ -65,6 +74,7 @@ from src.data.dataset import ChunkDataset
 from src.data.style import MIN_MAPPER_CHARTS, build_vocab, encode, read_style, sizes
 from src.data.tokenizer import HOLD_START, MASK, PAD, TAP, grammar_violations
 from src.models.diffusion import (
+    LOSS_WEIGHTS,
     Denoiser,
     DenoiserConfig,
     diffusion_loss,
@@ -73,7 +83,9 @@ from src.models.diffusion import (
 )
 from src.models.sampler import sample_window
 
-VAL_GAMMAS = (0.1, 0.3, 0.5, 0.7, 0.9)
+VAL_GAMMAS = (0.1, 0.3, 0.5, 0.7, 0.9)          # val_ce = their mean (comparable across runs)
+VAL_GAMMAS_EXTRA = (0.02, 0.05, 1.0)            # reported, not in val_ce: the ends of the range
+                                                # (1.0: nothing in view but the audio)
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -103,6 +115,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--row-mask", type=float, default=0.0,
                     help="share of chunks masked by whole rows (all 4 lanes) instead of cell "
                          "by cell; validation always masks cell by cell")
+    ap.add_argument("--loss-weight", choices=LOSS_WEIGHTS, default="gamma",
+                    help="gamma: each chunk's CE sum divided by its mask ratio (as before); "
+                         "count: weighed by the positions masked, (n + 1) / k, the same "
+                         "expectation with less variance (diffusion.count_weight)")
+    ap.add_argument("--complementary", action="store_true",
+                    help="also score every chunk with the complement of its mask, so every "
+                         "position is a target each step (twice the forward work)")
+    ap.add_argument("--block-mask", type=float, default=0.0,
+                    help="share of chunks masked like the sampler's questions (1-2 whole bars "
+                         "with the rest under 0.5, or all but the first 2 bars at 0.5-1; "
+                         "diffusion.block_masks), scored as their mean CE")
     ap.add_argument("--no-audio-add", action="store_true",
                     help="cross-attention only, as in the design doc (실험 큐 5)")
     ap.add_argument("--style", type=Path, default=None,
@@ -183,12 +206,20 @@ def drop_stats(stats: torch.Tensor, null: int, p: float) -> torch.Tensor:
 
 @torch.no_grad()
 def validate(model, loader, device, amp, max_batches: int,
-             null: tuple[int, int] | None = None, stats_null: int | None = None) -> dict:
+             null: tuple[int, int] | None = None, stats_null: int | None = None,
+             more: dict | None = None) -> dict:
     """Masked CE at fixed mask ratios with fixed masks, so runs are comparable. With style
     (null = the no-label indices) or chart stats (stats_null = the no-value bucket): val_ce
-    with each chart's own, val_ce_null without any."""
+    with each chart's own, val_ce_null without any.
+
+    more (a dict, filled in place; train.py writes it to val_more.csv so val.csv keeps its
+    columns): masked CE at VAL_GAMMAS_EXTRA too (own labels, masks of their own), and at
+    every ratio split into the cells of rows with an onset in the human chart (on@: which
+    lanes, and whether) and the other rows (off@: rests and hold bodies)."""
     model.eval()
     sums = {g: 0.0 for g in VAL_GAMMAS}
+    split = {g: [0.0, 0.0] for g in (*VAL_GAMMAS, *VAL_GAMMAS_EXTRA)}
+    extra = {g: 0.0 for g in VAL_GAMMAS_EXTRA}
     sum_null = 0.0
     n = 0
     for i, batch in enumerate(loader):
@@ -211,14 +242,33 @@ def validate(model, loader, device, amp, max_batches: int,
                                              genre=genre, mapper=mapper, stats=stats)
                 if k == 0:
                     sums[g] += info["masked_ce"]
+                    split[g][0] += info["masked_ce_onset_rows"]
+                    split[g][1] += info["masked_ce_other_rows"]
                 else:
                     sum_null += info["masked_ce"] / len(VAL_GAMMAS)
+        if more is not None:
+            for j, g in enumerate(VAL_GAMMAS_EXTRA):
+                gamma = torch.full((batch["x0"].shape[0],), g, device=device)
+                gen = torch.Generator().manual_seed(10_000 * i + 100 + j)
+                with amp():
+                    _, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"],
+                                             batch["b"], gamma=gamma, generator=gen,
+                                             genre=batch.get("genre"), mapper=batch.get("mapper"),
+                                             stats=batch.get("stats"))
+                extra[g] += info["masked_ce"]
+                split[g][0] += info["masked_ce_onset_rows"]
+                split[g][1] += info["masked_ce_other_rows"]
         n += 1
     model.train()
     out = {f"val_ce@{g}": sums[g] / max(n, 1) for g in VAL_GAMMAS}
     out["val_ce"] = sum(out.values()) / len(VAL_GAMMAS)
     if null is not None or stats_null is not None:
         out["val_ce_null"] = sum_null / max(n, 1)
+    if more is not None:
+        more.update({f"val_ce@{g}": extra[g] / max(n, 1) for g in VAL_GAMMAS_EXTRA})
+        for g in sorted(split):
+            more[f"on@{g}"] = split[g][0] / max(n, 1)
+            more[f"off@{g}"] = split[g][1] / max(n, 1)
     return out
 
 
@@ -453,6 +503,7 @@ def main(argv=None) -> int:
     micro, seen, t0 = 0, 0, time.time()
     running = {"loss": 0.0, "masked_ce": 0.0, "mask_rate": 0.0}
     n_running = 0
+    spikes = {"weight_max": 0.0, "spread_max": 0.0, "clipped": 0, "steps": 0}  # log_more.csv
     while step < a.steps:
         for batch in loader:
             batch = to_device(batch, device)
@@ -465,17 +516,23 @@ def main(argv=None) -> int:
             with amp():
                 loss, info = diffusion_loss(model, batch["x0"], batch["mel"], batch["s"],
                                             batch["b"], row_mask=a.row_mask, genre=genre,
-                                            mapper=mapper, stats=stats)
+                                            mapper=mapper, stats=stats, weight=a.loss_weight,
+                                            complementary=a.complementary,
+                                            block_mask=a.block_mask)
             (loss / a.grad_accum).backward()
             micro += 1
             seen += batch["x0"].shape[0]
             running["loss"] += loss.item()
             running["masked_ce"] += info["masked_ce"]
             running["mask_rate"] += info["mask_rate"]
+            spikes["weight_max"] = max(spikes["weight_max"], info["weight_max"])
+            spikes["spread_max"] = max(spikes["spread_max"], info["chunk_spread"])
             n_running += 1
             if micro % a.grad_accum:
                 continue
             grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), a.clip))
+            spikes["clipped"] += int(grad_norm > a.clip)
+            spikes["steps"] += 1
             opt.step()
             opt.zero_grad(set_to_none=True)
             sched.step()
@@ -497,13 +554,22 @@ def main(argv=None) -> int:
                       f"  lr {lr:.2e}  |g| {grad_norm:.2f}  {rate:.0f} chunks/s", flush=True)
                 if wandb:
                     wandb.log({**row, "lr": lr, "grad_norm": grad_norm}, step=step)
+                append_csv(run_dir / "log_more.csv",
+                           ["step", "weight_max", "spread_max", "clipped_share"],
+                           [step, f"{spikes['weight_max']:.1f}", f"{spikes['spread_max']:.2f}",
+                            f"{spikes['clipped'] / max(spikes['steps'], 1):.3f}"])
                 running = dict.fromkeys(running, 0.0)
+                spikes = dict.fromkeys(spikes, 0)
                 n_running, seen, t0 = 0, 0, time.time()
 
             if step % a.val_every == 0 or step == a.steps:
-                val = validate(model, val_loader, device, amp, a.val_batches, null, stats_null)
+                more = {}
+                val = validate(model, val_loader, device, amp, a.val_batches, null, stats_null,
+                               more=more)
                 append_csv(run_dir / "val.csv", ["step", *val.keys()],
                            [step, *(f"{v:.5f}" for v in val.values())])
+                append_csv(run_dir / "val_more.csv", ["step", *more.keys()],
+                           [step, *(f"{v:.5f}" for v in more.values())])
                 print(f"  val_ce {val['val_ce']:.4f}  " + "  ".join(
                     f"@{g} {val[f'val_ce@{g}']:.3f}" for g in VAL_GAMMAS)
                     + (f"  null {val['val_ce_null']:.4f}" if "val_ce_null" in val else ""),
