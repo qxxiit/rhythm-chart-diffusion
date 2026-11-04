@@ -3050,6 +3050,60 @@ How it could fail: the judge finds a tell no player sees (e.g. the exact SR, or 
 fine positions of long-note ends) and wins on that alone; then auc is high everywhere and the
 scored runs do not move. The rows (5) and the grades say where it looks.
 
+### 2026-11-05 · The checks before a number counts; F without each family; M3; the sampler's settings (predictions)
+
+docs/EVALUATION.md (patch 0056) fixes the question, the endpoints and the systems before
+these results. New (patches 0057-0060), none of it in F: `train.py --loss-weight count`,
+`--complementary`, `--block-mask` and val_more.csv / log_more.csv for the next model;
+`--schedule cosine` in the sampler; `scripts/corrupt_test.py` (the human charts with 4
+corruptions x 3 doses, src/evaluation/corrupt.py); `judge.py --shuffle-labels`, and a
+`--score` run over fewer songs scored on those it has (the judge still trains on all of
+`--ai`); `scripts/judge_vs_diag.py`; the calibration of the expected starts in
+`probe_bars.py`; `scripts/results_table.py` (the one table, the diagnostics as the share inside
+the human band of the grade). `run_1105.sh`, one phase at a time (240 val songs unless said):
+
+Predictions, meta (~3 h):
+
+1. F's judge with shuffled labels: auc and paired 0.40-0.60 pooled over the five folds (on
+   random labels each fold's judge ranks by an arbitrary direction, so a fold or a grade may
+   stray further). 0.7+ pooled is a bug in the pipeline, and no judge number counts until it
+   is found.
+2. The corruption test: new_onsets sensitive to new and timing (rho +1, agree 0.9+), invariant
+   to lanes and jumptrill; chord_share sensitive to jumptrill (+); move_stair / move_trill /
+   move_jack to lanes; hold_share falls with new and jumptrill (taps added) and is invariant to
+   timing and lanes; bar_lane_repeat and section_copy fall with lanes. 25-40% of the columns
+   blind to all four (most of the guideline checks and the dynamics columns).
+3. F's judge scoring the corrupted human charts (minus F's own mean logit, paired against the
+   human chart): rising with the dose for jumptrill (paired 0.60-0.75 at 0.8) and new (0.60-0.80
+   at 8%), less for lanes (0.55-0.70 at 0.8), timing near 0.5 (0.50-0.60 at 0.4): F's tells are
+   the flow among chords and the new positions, not the one-cell timing.
+4. judge_vs_diag on F: R^2 over 5 folds 0.1-0.3, the top gaps among new_onsets, chord_share
+   and move_*: most of what the judge sees is in no diagnostic yet.
+5. The probe's calibration with a bar masked: expected starts over human 0.95-1.05; in the bars
+   with fewer than 1 expected, humans leave 30-60% empty; with nothing in view, 0.90-1.10 over
+   all but flatter (the bins under 1 expected hold 20-40% rests).
+
+Predictions, families (~30 min), the mean logit minus F's per song under F's judge
+(score phase): without rests -0.05 to +0.15; without reuse and copies +0.05 to +0.30; without
+holds -0.10 to +0.10; without chords -0.10 to +0.10; without jacks 0.00 to +0.20. At least one
+family's interval includes 0: the first candidate to leave the default.
+
+Predictions, m3 (~3 h): M3 above F by +0.10 to +0.40 per song under F's judge; hold_share inside
+the human band 10-25 points less often than F's; M3's own judge auc at or above F's.
+
+Predictions, sweep (~5 h, first 60 songs, F's passes on each): cosine at 128 steps -0.10 to
++0.05 against F, new_onsets inside the band 0-5 points more often; 256 steps -0.05 to -0.15;
+lane temperature 0.85-1: the flow among chords closer to the human rate and -0.20 to 0.00
+against F, jacks up before the passes untangle them.
+
+Predictions, ladder (~5 h): under F's judge M0 above M1 above T above F, M0 by +0.3 to +1.0
+per song; each system's own judge auc 0.90 or more.
+
+How it could fail: the judge finds a tell that no corruption makes (then 3 stays near 0.5
+while its auc on F stays high, and 4's R^2 is low: the next diagnostic to look for is what
+the judge's rows point at); a dose too weak for a metric (effect under 0.2 sd: neither
+sensitive nor invariant, the doses are to be raised, not the criteria lowered).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
