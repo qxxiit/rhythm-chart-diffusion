@@ -6,10 +6,12 @@
 RUN: evaluate.py directories (per_song.csv). Columns: the songs; with --judge, each judge
 run's auc and paired for the runs it judged or scored (the run's own judge when it was --ai),
 and a scored run's mean logit minus the judged run's per song with its 95% interval; the
-diagnostics as the share of the run's charts inside the human band (the 10th-90th percentile
-of the human charts of the same grade, from the human_* columns; grades with fewer than 10
-songs pooled; 80% for the human charts themselves, the first row); SR error and F1@50 as
-sanity checks. Aggregate only.
+diagnostics together, when scripts/diag_judge.py has been run on the run (its boosted trees'
+auc and paired, diag:auc and diag:paired: the run's charts told from the human ones by all the
+diagnostics at once); the diagnostics one by one as the share of the run's charts inside the
+human band (the 10th-90th percentile of the human charts of the same grade, from the human_*
+columns; grades with fewer than 10 songs pooled; 80% for the human charts themselves, the
+first row); SR error and F1@50 as sanity checks. Aggregate only.
 """
 
 from __future__ import annotations
@@ -88,6 +90,15 @@ def judge_columns(judges: list[Path], run: Path) -> dict:
     return out
 
 
+def diag_columns(run: Path) -> dict:
+    """diag_judge.py's trees on the run, when it has been run there."""
+    path = run / "diag_judge.json"
+    if not path.exists():
+        return {}
+    d = json.loads(path.read_text())
+    return {"diag:auc": d["trees"]["auc"], "diag:paired": d["trees"]["paired"]}
+
+
 def fmt(v) -> str:
     if isinstance(v, str):
         return v
@@ -109,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = read_rows(run)
         row = {"run": run.name, "songs": len(rows)}
         row.update(judge_columns(a.judge, run))
+        row.update(diag_columns(run))
         row.update({m: band_share(rows, m, bands(rows, m)) for m in metrics})
         row["sr_error"] = float(np.nanmean([num(r, "sr_error") for r in rows]))
         row["f1@50"] = float(np.nanmean([num(r, "f1@50") for r in rows]))

@@ -35,7 +35,10 @@ decides a default.
    band, the 10th-90th percentile of the human charts of the same grade (80% for human
    charts). Candidates: new_onsets; flow among chords (jumptrills) and single-note flow
    (stairs, trills); the longest run in one lane; 3+ chords; section_rhythm and section_copy;
-   hold_share. A metric stays only if it passes the metric checks below.
+   hold_share. A metric stays only if it passes the metric checks below. Also all of them at
+   once (added 11-07, DECISIONS): `scripts/diag_judge.py`, a classifier on every diagnostic of
+   the run's chart against the human chart's, 5 folds by song (auc, paired, the metrics it
+   leans on), because a run can sit inside every band and still be told apart.
 
 ## Data
 

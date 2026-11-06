@@ -168,6 +168,9 @@ python scripts/judge_vs_diag.py --judge J --run R      # ✅ what of the judge's
                                        #    the diagnostics explain (ridge R^2 over 5 folds)
 python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results table: judge
                                        #    columns, diagnostics as the share inside the human band
+python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
+                                       #    from the human ones by all the diagnostics at once
+                                       #    (auc, paired, what it leans on); seconds, aggregate only
 ```
 
 ## Known issues

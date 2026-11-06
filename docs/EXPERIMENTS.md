@@ -3104,6 +3104,131 @@ while its auc on F stays high, and 4's R^2 is low: the next diagnostic to look f
 the judge's rows point at); a dose too weak for a metric (effect under 0.2 sd: neither
 sensitive nor invariant, the doses are to be raised, not the criteria lowered).
 
+### 2026-11-07 · run_1105 meta and the judges of 10-15: results; the diagnostics as a judge
+
+`run_1105.sh meta` (240 val songs; predictions in the 11-05 entry) and `run_judge.sh` of 10-15
+(predictions in the 10-15 entry), read on 11-06/07. Per-song rows were not read (the playtest
+songs stay blind); everything here is aggregate.
+
+**1. F's judge with shuffled labels:** auc 0.503, paired 0.499 pooled, 0.47-0.53 by grade
+(34 min). Hit: the pipeline holds, the judge numbers count.
+
+**2. The corruption test:** 32 of 62 columns sensitive to at least one corruption. Hits:
+new_onsets (timing +3.96, new +0.80; invariant to lanes and jumptrills), chord_share
+(jumptrill +1.17), move_trill and move_jack (lanes +1.26, +2.56), bar_lane_repeat (lanes
+-0.74), hold_share invariant to timing and lanes. Misses: move_stair (lanes -0.50 but agree
+0.79), hold_share falls with new and jumptrill only by 0.05-0.08 of the spread, section_copy
+with lanes at rho -0.77; blind 30 of 62 (48%, predicted 25-40%), 12 of them untestable here
+(9 long-note columns, which no corruption touches, and 3 comparison columns with no human
+value).
+
+**3. F's judge scoring the corrupted human charts** (paired: the corrupted window above the
+human chart's at the same rows; songs: the same with a song's windows averaged):
+
+| corruption | doses | paired | songs | mean logit | predicted at the largest dose |
+|---|---|---|---|---|---|
+| (F itself) | | 0.912 | 0.971 | +6.27 (human -5.57) | |
+| timing (taps one cell over) | 10 / 20 / 40% | 0.932 / 0.947 / 0.939 | 0.988 / 0.988 / 0.988 | +1.87 / +3.58 / +4.27 | 0.50-0.60: miss |
+| new (taps on empty rows) | 2 / 4 / 8% | 0.697 / 0.735 / 0.786 | 0.796 / 0.842 / 0.879 | -2.97 / -1.97 / -0.56 | 0.60-0.80, rising: hit |
+| jumptrill | 0.2 / 0.4 / 0.8 | 0.571 / 0.562 / 0.431 | 0.617 / 0.633 / 0.467 | -4.41 / -4.99 / -6.19 | 0.60-0.75, rising: miss |
+| lanes | 0.2 / 0.4 / 0.8 | 0.373 / 0.336 / 0.338 | 0.354 / 0.308 / 0.338 | -6.86 / -7.38 / -7.62 | 0.55-0.70: miss (the other side) |
+
+One of four. Where the notes start is what the judge reacts to most: a tenth of the taps one
+cell over is taken for AI in 98.8% of the songs, more than F itself. Shuffled lanes go the
+other way, more human than the human charts; they add jacks (+2.56 of the spread), which F
+has fewer of than the human charts (below). Jumptrills by grade: Easy and Normal 0.52-0.70 at
+every dose, Expert 0.10-0.16 at 0.4 and 0.8. The prediction's reading ("F's tells are the flow
+among chords and the new positions, not the one-cell timing") is half wrong.
+
+**4. judge_vs_diag on F:** R^2 0.05 in sample, -0.03 over 5 folds, every |rho| 0.15 or less;
+F's mean logit above the human chart's by +11.67 per song, in 97% of the songs. Miss
+(0.1-0.3). Two readings were open: the judge sees what no diagnostic does (a), or it is
+saturated and the size of a song's gap says little (b). The diagnostics judge below decides
+for (b): the diagnostics together tell F's charts from the human ones nearly as well.
+
+**5. The probe's calibration** (bar masked, oracle stats): expected starts over the human
+chart's 0.993 (hit, 0.95-1.05); in the bars with under 1 expected the human charts leave 36%
+empty (hit, 30-60%), though below 0.5 expected the model is too sure (0.25-0.5 expected: the
+human charts have 1.03 there). With nothing in view: 1.022 (hit) and flatter (bars under 1
+expected 1.6% of bars → 0.41%), those holding 43% rests (miss, 20-40%). What the context
+carries: rests auc 0.986 → 0.917; bars with long notes 0.954 → 0.820 (within a song 0.916 →
+0.699): where long notes go comes mostly from the chart around, little from the sound alone,
+which random-order sampling has least of when it decides most cells.
+
+**The judges of 10-15** (F against the human charts; the scored runs as mean logit minus F's
+per song, 95% interval):
+
+| | with the audio | without |
+|---|---|---|
+| F: auc / paired / songs | 0.900 / 0.912 / 0.971 | 0.857 / 0.882 / 0.963 |
+| by grade, auc: Easy / Normal / Hard / Insane / Expert / Expert+ | 0.870 / 0.846 / 0.909 / 0.910 / 0.910 / 0.951 | 0.827 / 0.841 / 0.863 / 0.861 / 0.830 / 0.972 |
+| `--recheck 0.3` | -0.53 [-1.01, -0.06] | -0.64 [-1.09, -0.19] |
+| `--recheck 0.3 --recheck-add 0.7` | -0.81 [-1.22, -0.38] | -0.75 [-1.17, -0.32] |
+| `--recheck 0.5` | -0.52 [-1.00, -0.03] | -0.69 [-1.17, -0.21] |
+| T_ref (T + fill holes + rests) | -0.27 [-0.75, +0.20] | +0.23 [-0.25, +0.68] |
+| full-v1, no pass | -4.23 [-4.89, -3.61] | -4.12 [-4.76, -3.51] |
+
+Predictions (10-15): 1 hit (0.900, 0.912, 0.971); 2 half (Easy 0.870 inside 0.75-0.90 but
+Normal lowest; Insane and Expert 0.91, under 0.92-0.99); 3 hit (the audio adds 0.043); 4 one of
+five (T_ref within ±0.3; full-v1 far below F, not above; recheck 0.3 lower than predicted,
+-0.53 against -0.02 to -0.15; 0.5 no lower than 0.3; 0.3 with taps added the lowest, not in
+between); 5 (rows) not read yet. F_corrupt's own judge of F (same seed and data): auc 0.8997,
+paired 0.9119: the judge is reproducible on the MacBook.
+
+Read: the chart gives itself away, not its fit to the sound (0.04 of auc). Recheck lowers F by
+0.5-0.8 logit, 4-7% of the 11.8 between F and the human charts: real and small. T_ref and F
+are the same to the judge: the passes after the rests (reuse, long notes, chords, jacks) do not
+move what it sees (the families will say which, if any). full-v1 with no pass, which has more
+notes on new positions than F (17.8% against 13.8%, 10-15), scores far below F: the judge has
+learned F's own tells, so under F's judge a run unlike F scores lower whatever its quality.
+The score phase's numbers for M3 and the sweep need their own judges (M3 has one) or the
+diagnostics judge beside them.
+
+**The diagnostics as a judge** (new, `scripts/diag_judge.py`; F's per_song.csv, 55 columns,
+no new_onsets in it): logistic 0.872 (paired 0.891), trees 0.935 (paired 0.937), labels
+swapped in half the songs 0.50-0.53; by grade (trees) Easy 0.93, Normal 0.87, Hard 0.90,
+Insane 0.98, Expert 0.99. Each family of columns alone (trees, a scratch run): long notes
+0.84, lanes 0.84, rhythm 0.82. No single column above auc 0.66; band shares 0.73-1.00, median
+0.87 (the human charts 0.80); F's spread under the human charts' for 42 of 55 columns (median
+0.90x): too typical, inside every band.
+
+| | F | human | F lower in |
+|---|---|---|---|
+| section_rhythm | 0.380 | 0.547 | 70% |
+| alike_rhythm | 0.485 | 0.622 | 64% |
+| bar_rhythm_repeat | 0.346 | 0.435 | 73% |
+| hold_beats (spread 0.38x) | 0.760 | 1.004 | 67% |
+| release_on_onset | 0.694 | 0.759 | 67% |
+| move_stair (spread 0.50x) | 0.166 | 0.211 | 62% |
+| move_jack | 0.031 | 0.044 | 67% |
+| short_holds / quick_regrab | 0 in every song | 0.027 / 0.019 | (the human charts have some in 23% / 22% of songs) |
+
+The trees lean most on move_stair, release_on_onset, move_jack, quick_regrab, short_holds,
+hold_beats. F's gap over the 55 columns points the way of the corruptions the judge reacts to
+(cosine with each corruption's effects at its largest dose: timing 0.70, new 0.58,
+jumptrill 0.16, lanes 0.04). The rhythm repeats less than the human charts' at every scale
+in spite of the reuse passes; the long notes have the asked share but not the human shape
+(short, alike from song to song; clean_holds' guideline rules leave no short hold and no
+quick regrab, which a fifth of the human charts have); fewer stairs and jacks.
+
+Predictions for the diagnostics judge on the families and M3 (written before the families'
+results were read), `python scripts/diag_judge.py ${F}_st-oracle $(cat
+outputs/run_1105/no_*.path) ${F}_rk0.3a0.7_st-oracle --out outputs/run_1105/diag_judge.md`
+(F rescored on 10-15 has new_onsets; all runs on the same columns):
+
+1. F rescored with new_onsets: trees 0.94-0.97, new_onsets among the three it leans on most.
+2. Each family out, trees auc minus F rescored's: rests -0.01 to +0.01; reuse +0.01 to +0.03
+   (section_rhythm and alike_rhythm lower still); long notes +0.01 to +0.04 (hold_share short
+   of the human charts' without the hold-up, the shape as it is); chords -0.01 to +0.01; jacks
+   -0.02 to +0.02 (more jacks, toward the human rate, and the untangle's other effects gone).
+3. Recheck 0.3 + 0.7: -0.01 to -0.03 (fewer new positions).
+4. The five families in the same order by the diagnostics judge and by F's judge in the
+   score phase (minus F per song): Spearman 0.5 or more.
+5. M3: trees 0.01-0.04 above F (density and long-note share no longer the human chart's).
+
+Also: the sweep phase takes about 8 h, not 5 (two of its six settings are 256 steps, twice
+the time of 128).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

@@ -17,6 +17,7 @@ rosu-pp-py==4.0.2
 
 # Analysis & visualization
 pandas>=2.0
+scikit-learn>=1.2   # scripts/diag_judge.py (librosa needs it too)
 matplotlib>=3.7
 tqdm>=4.66
 
