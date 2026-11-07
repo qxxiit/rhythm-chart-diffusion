@@ -273,6 +273,7 @@ def score(gen, ref, back, tokens, sr: float, sr_gen: float, sr_human: float) -> 
     return row
 
 
+NOT_NUMERIC = ("key", "path", "grade", "genre", "mapper_known", "stat_key", "_index")
 CI_KEYS = ("f1@20", "f1@50", "f1@50_any_lane", "precision@50", "recall@50", "density_ratio",
            "motion_pred", "hold_share",
            "sr_error", "rho_all", "rho_in", "coverage", "new_onsets")
@@ -436,6 +437,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ln-tidy", type=float, default=None,
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds, tag _lt); also on --from-charts")
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                    help="only the songs whose index is K modulo N, so N processes share the "
+                         "GPU (the seeds stay the full run's, so the charts match it); the "
+                         "directory gets _shardKofN, and scripts/merge_shards.py makes the run")
     ap.add_argument("--sr-min", type=float, default=None,
                     help="only the charts at this SR or above (the seeds stay those of the "
                          "full run, so the charts match it)")
@@ -651,10 +656,21 @@ def main(argv: list[str] | None = None) -> int:
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
+    shard = None
+    if a.shard is not None:
+        try:
+            shard = tuple(int(x) for x in a.shard.split("/"))
+            assert len(shard) == 2 and 0 <= shard[0] < shard[1]
+        except (ValueError, AssertionError):
+            print(f"--shard {a.shard}: K/N with 0 <= K < N", file=sys.stderr)
+            return 2
+        out_dir = out_dir.with_name(out_dir.name + f"_shard{shard[0]}of{shard[1]}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results, charts = [], {}
     for i, r in enumerate(rows):
+        if shard is not None and i % shard[1] != shard[0]:
+            continue
         if a.sr_min is not None and float(r["sr"]) < a.sr_min:
             continue
         z = np.load(a.cache / "tokens" / f"{r['key']}.npz")
@@ -816,6 +832,8 @@ def main(argv: list[str] | None = None) -> int:
         if a.stats != "none":
             row.update({f"stat_{n}": wanted.get(n, float("nan")) for n in chartstats.NAMES})
             row["stat_key"] = stat_key
+        if shard is not None:
+            row["_index"] = i                     # merge_shards.py puts the rows back in order
         results.append(row)
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
               f"(target {sr:.2f})  {cost['seconds']:.0f} s  {r['path']}", flush=True)
@@ -825,8 +843,7 @@ def main(argv: list[str] | None = None) -> int:
         w = csv.DictWriter(f, fieldnames=list(results[0]), lineterminator="\n")
         w.writeheader()
         w.writerows(results)
-    numeric = [k for k in results[0]
-               if k not in ("key", "path", "grade", "genre", "mapper_known", "stat_key")]
+    numeric = [k for k in results[0] if k not in NOT_NUMERIC]
     summary = {"songs": len(results), "distinct_songs": len({r["audio_key"] for r in rows}),
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
@@ -854,7 +871,7 @@ def main(argv: list[str] | None = None) -> int:
                "min_hold": a.min_hold, "release_gap": a.release_gap,
                "lane_temp": a.lane_temp if a.refine or a.lanes != "sampled" else None,
                "forward_temp": fwd_temp if a.lanes == "forward" else None,
-               "seed": a.seed, "sample_seed": sample_seed,
+               "seed": a.seed, "sample_seed": sample_seed, "shard": a.shard,
                "far_k": a.far_k, "ckpt": str(a.ckpt),
                "rosu_pp_py": ROSU_VERSION,
                **{f"mean_{k}": nan_mean([x[k] for x in results]) for k in numeric},

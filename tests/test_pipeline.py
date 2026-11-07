@@ -729,6 +729,42 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert refined["refine"] == 1 and refined["lane_temp"] == 0
     assert refined["lanes"] == "sampled" and not refined["spread"] and refined["empty_bias"] == 0
     assert refined["mean_passes"] > 0 and refined["mean_seconds"] > 0
+    # shards: N processes on the songs whose index is K mod N give the unsharded run's charts
+    from scripts import merge_shards
+    sharded = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train", "--per-song",
+               "--n", "3", "--steps", "4", "--sample-seed", "3", "--manifest",
+               str(data / "manifest.csv"), "--root", str(data / "raw"),
+               "--cache", str(data / "cache"), "--device", "cpu"]
+    assert evaluate.main(sharded) == 0
+    whole = tmp_path / "r" / "eval_train_songs_continue_random_T4_s3"
+    whole.rename(whole.with_name(whole.name + "_ref"))
+    ref = whole.with_name(whole.name + "_ref")
+    assert evaluate.main([*sharded, "--shard", "2/2"]) == 2               # K < N
+    assert merge_shards.main([str(whole)]) == 2                           # no shards yet
+    assert evaluate.main([*sharded, "--shard", "1/2"]) == 0
+    assert merge_shards.main([str(whole)]) == 2                           # shard 0 missing
+    assert evaluate.main([*sharded, "--shard", "0/2"]) == 0
+    assert merge_shards.main([str(whole)]) == 0
+    one, two = np.load(ref / "charts.npz"), np.load(whole / "charts.npz")
+    assert sorted(one.files) == sorted(two.files) and len(one.files) == 3
+    assert all((one[k] == two[k]).all() for k in one.files)
+    with open(ref / "per_song.csv", newline="") as f:
+        rows_ref = list(csv.DictReader(f))
+    with open(whole / "per_song.csv", newline="") as f:
+        rows_merged = list(csv.DictReader(f))
+    assert list(rows_ref[0]) == list(rows_merged[0])                      # no _index left
+    timing = {"seconds"}
+    assert [{k: v for k, v in r.items() if k not in timing} for r in rows_ref] == \
+        [{k: v for k, v in r.items() if k not in timing} for r in rows_merged]
+    merged = json.loads((whole / "summary.json").read_text())
+    single = json.loads((ref / "summary.json").read_text())
+    assert merged["songs"] == 3 and merged["shards"] == 2 and "shard" not in merged
+    assert merged["mean_f1@50"] == single["mean_f1@50"]
+    assert merged["ci95_f1@50"] == single["ci95_f1@50"]
+    assert merge_shards.main([str(whole)]) == 2                           # already there
+    assert evaluate.main([*sharded, "--from-charts", str(whole), "--rest", "1",
+                          "--shard", "0/2"]) == 0                          # passes, sharded too
+    assert (tmp_path / "r" / "eval_train_songs_continue_random_T4_s3_rb1_shard0of2").exists()
     common = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train", "--per-song",
               "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
               "--cache", str(data / "cache"), "--device", "cpu"]

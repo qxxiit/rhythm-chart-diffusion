@@ -169,6 +169,8 @@ python scripts/judge_vs_diag.py --judge J --run R      # ✅ what of the judge's
 python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results table: judge
                                        #    columns, diagnostics as the share inside the human band
                                        #    (--songs-of RUN: every row on that run's songs)
+python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
+                                       #    sharing the GPU; the charts are the one-process run's)
 python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
                                        #    from the human ones by all the diagnostics at once
                                        #    (auc, paired, what it leans on); seconds, aggregate only

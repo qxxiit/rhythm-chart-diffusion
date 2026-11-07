@@ -3382,6 +3382,11 @@ and the diagnostics judge with F rescored; written before it ran):
 How it could fail: an own judge at or above F's would say the remaining tell is not how many notes
 sit on new positions but how they sit (the one-cell timing of the probe), which a schedule leaves.
 
+run_1108 was restarted at song 19 with three processes sharing the GPU (`evaluate.py --shard K/N`
+and `scripts/merge_shards.py`): one process drew a song in 65 s with the CPU at 10% and the GPU
+mostly waiting on it. The seeds go by the song's index in the full run, so the shards' charts are
+the one-process run's (tests/test_pipeline.py checks charts, rows and means).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

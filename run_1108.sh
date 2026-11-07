@@ -9,8 +9,13 @@
 #   diag    (seconds) the diagnostics judge with F rescored
 #   table   (seconds) results.md with it
 # All four: for p in cosine judge diag table; do sh run_1108.sh $p; done
+# SHARDS=N (default 3): the drawing and the passes run as N processes sharing the GPU, each on
+# the songs whose index is K mod N (evaluate.py --shard; the charts are the one-process run's),
+# then scripts/merge_shards.py puts them together. One process left the GPU mostly idle (11-08:
+# 65 s a song, CPU 10%); SHARDS=1 is the old way.
 set -ex
 PHASE=${1:-cosine}
+SHARDS=${SHARDS:-3}
 P=outputs/full-v4/best.pt
 T=${T:-outputs/full-v4/eval_val_songs_continue_random_T128_fwd_ref2t0.5_lbq0.1_og1_ot2.7-5-0.35_st-oracle_lg2}
 TAG_F=_hu-oracle_rc0kh1_sc1_cs4kb_cp0l8_al2k4_lt0.5_fh0.5_rb1_li0.5a_ujmgi_cc2_st-oracle_lg2
@@ -33,10 +38,23 @@ J="python scripts/judge.py --ckpt $P"
 
 case $PHASE in
 cosine)
-    $E --n 0 --stats oracle $BASE --schedule cosine --sample-seed 0
-    [ -d "$COS" ] && echo $COS > $D/base_cos240.path
-    $E --n 0 --stats oracle --from-charts $COS $RESTS $REUSE $HOLDS $CHORDS $JACKS
-    [ -d "$COSF" ] && echo $COSF > $D/cos240.path
+    k=0
+    while [ $k -lt $SHARDS ]; do
+        $E --n 0 --stats oracle $BASE --schedule cosine --sample-seed 0 --shard $k/$SHARDS &
+        k=$((k + 1))
+    done
+    wait
+    python scripts/merge_shards.py $COS
+    echo $COS > $D/base_cos240.path
+    k=0
+    while [ $k -lt $SHARDS ]; do
+        $E --n 0 --stats oracle --from-charts $COS $RESTS $REUSE $HOLDS $CHORDS $JACKS \
+            --shard $k/$SHARDS &
+        k=$((k + 1))
+    done
+    wait
+    python scripts/merge_shards.py $COSF
+    echo $COSF > $D/cos240.path
     ;;
 judge)
     $J --ai $COSF --name cosine
