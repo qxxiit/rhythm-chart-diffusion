@@ -30,6 +30,9 @@ decides a default.
    on held-out songs (5 folds by audio), by grade, with intervals over songs. It counts only
    after the judge checks below. The judge that picks charts (best-of-N, resampling) is never
    the one that scores them: another seed and fold split, and the last word is the playtest.
+   A judge is read for the run it learned (added 11-07, DECISIONS): another run scored by it
+   only shows how much of that run's tells it has, so runs are compared by their own judges'
+   auc, or by the diagnostics judge, on the same songs.
 3. **Diagnostics: where the charts give themselves away**, never a success criterion. Six to
    eight metrics, each reported as one number: the share of the AI charts inside the human
    band, the 10th-90th percentile of the human charts of the same grade (80% for human

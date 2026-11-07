@@ -59,3 +59,28 @@ def test_the_diagnostics_judge_finds_the_shifted_metric_and_not_the_alike_run(tm
     assert rows[1]["diag:auc"] == pytest.approx(f["trees"]["auc"])
     assert rows[2]["diag:paired"] == pytest.approx(a["trees"]["paired"])
     assert "diag:auc" not in rows[0]                          # the human charts' row
+
+
+def test_runs_of_different_songs_are_judged_on_the_songs_they_share(tmp_path) -> None:
+    from scripts import diag_judge, results_table
+    rng = np.random.default_rng(1)
+    n = 80
+    human = {f"human_{m}": rng.normal(size=n) for m in ("a", "b")}
+    write_run(tmp_path / "all", {"a": rng.normal(2.0, 1.0, n), "b": rng.normal(size=n), **human})
+    few = 40                                                  # the first 40 songs, as a sweep
+    write_run(tmp_path / "few", {"a": rng.normal(size=few), "b": rng.normal(size=few),
+                                 **{k: v[:few] for k, v in human.items()}})
+    assert diag_judge.main([str(tmp_path / "all"), str(tmp_path / "few"), "--repeats", "1"]) == 0
+    assert not (tmp_path / "all" / "diag_judge.json").exists()
+    s = json.loads((tmp_path / "all" / "diag_judge_40songs.json").read_text())
+    assert s["songs"] == 40 and s["songs_of_run"] == 80
+    assert "of its 80" in (tmp_path / "all" / "diag_judge_40songs.md").read_text()
+    assert json.loads((tmp_path / "few" / "diag_judge.json").read_text())["songs"] == 40
+    # the table on the 40 songs takes the 40-song files of both
+    table = tmp_path / "t.md"
+    assert results_table.main([str(tmp_path / "all"), str(tmp_path / "few"), "--metrics", "a",
+                               "--songs-of", str(tmp_path / "few"), "--out", str(table)]) == 0
+    rows = json.loads(table.with_suffix(".json").read_text())
+    assert [r["songs"] for r in rows] == [40, 40, 40]
+    assert rows[1]["diag:auc"] == pytest.approx(s["trees"]["auc"])
+    assert "diag:auc" in rows[2]

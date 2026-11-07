@@ -5,8 +5,9 @@ diagnostics alone? (docs/EVALUATION.md; EXPERIMENTS 2026-11-07)
 
 RUN: evaluate.py directories (per_song.csv with the columns X and human_X). Each song gives
 two rows, the diagnostics of the run's chart and of the human chart: every X with a human_X
-that all the runs given have (the others are named and left out, so the runs of one call are
-judged on the same columns). Two classifiers tell the rows apart, 5 folds by song (a song's two
+that all the runs given have (the others are named and left out), on the songs all of them
+have (a 240-song run beside the sweep's 60 is judged on those 60, and its files then say so:
+diag_judge_60songs.json), so the runs of one call are judged on the same columns and songs. Two classifiers tell the rows apart, 5 folds by song (a song's two
 charts always in the same fold), 10 times over: logistic regression (median-imputed,
 standardised, C 0.1) and boosted trees (sklearn's HistGradientBoostingClassifier, which takes
 the gaps as they are). Numbers: auc over the charts and paired (the run's chart above the
@@ -27,8 +28,8 @@ seconds once the charts are scored, and names what gives a run away, from the di
 only. On F (240 val songs, 2026-11-07): logistic 0.87, trees 0.93 (the judge, songs: 0.97),
 no single metric above 0.66, every band share 0.72 or more.
 
-Writes <run>/diag_judge.json and <run>/diag_judge.md for each run, and with --out one table
-of the runs (and .json beside). Aggregate only: no per-song rows (the playtest songs stay
+Writes <run>/diag_judge.json and <run>/diag_judge.md for each run (diag_judge_<N>songs.* when
+only N of its songs were judged), and with --out one table of the runs (and .json beside). Aggregate only: no per-song rows (the playtest songs stay
 blind).
 """
 
@@ -245,9 +246,11 @@ def f3(v) -> str:
     return "" if v is None or (isinstance(v, float) and not math.isfinite(v)) else f"{v:.3f}"
 
 
-def run_markdown(name: str, r: dict, dropped: list[str]) -> str:
+def run_markdown(name: str, r: dict, dropped: list[str], own: int | None = None) -> str:
+    of = "" if own is None or own == r["songs"] else f" (of its {own}: the songs every run of " \
+        "the call has)"
     lines = [f"# The diagnostics as a judge: {name}", "",
-             f"{r['songs']} songs, {r['metrics']} metrics (5 folds by song x repeats). "
+             f"{r['songs']} songs{of}, {r['metrics']} metrics (5 folds by song x repeats). "
              "Aggregate only.", ""]
     if dropped:
         lines += [f"Left out (not in every run of the call): {', '.join(dropped)}", ""]
@@ -302,13 +305,20 @@ def main(argv: list[str] | None = None) -> int:
     if not common:
         print("no X / human_X columns common to the runs")
         return 2
+    keys = set.intersection(*(set(df["key"].astype(str)) for df in frames.values()))
+    if len(keys) < 2 * FOLDS:
+        print(f"only {len(keys)} songs common to the runs")
+        return 2
     rows = []
     for run, df in frames.items():
+        own = len(df)
+        df = df[df["key"].astype(str).isin(keys)].reset_index(drop=True)
         dropped = [m for m in paired_metrics(df) if m not in common]
         r = judge_run(df, common, a.repeats, a.seed)
-        r["run"], r["dropped"] = str(run), dropped
-        (run / "diag_judge.json").write_text(json.dumps(r, indent=1))
-        (run / "diag_judge.md").write_text(run_markdown(run.name, r, dropped))
+        r["run"], r["dropped"], r["songs_of_run"] = str(run), dropped, own
+        stem = "diag_judge" if own == len(df) else f"diag_judge_{len(df)}songs"
+        (run / f"{stem}.json").write_text(json.dumps(r, indent=1))
+        (run / f"{stem}.md").write_text(run_markdown(run.name, r, dropped, own))
         top = list(r["importance"])[:3]
         rows.append({"run": run.name, "songs": r["songs"], "metrics": r["metrics"],
                      "logistic auc": r["logistic"]["auc"],

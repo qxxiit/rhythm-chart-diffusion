@@ -3229,6 +3229,89 @@ outputs/run_1105/no_*.path) ${F}_rk0.3a0.7_st-oracle --out outputs/run_1105/diag
 Also: the sweep phase takes about 8 h, not 5 (two of its six settings are 256 steps, twice
 the time of 128).
 
+### 2026-11-07 (2) · The families, M3 and the sweep under the judges; a judge is read for its own run; run_1107 (predictions)
+
+`run_1105.sh families, m3, sweep, score, table` (predictions in the 11-05 entry and the first
+11-07 entry) and the diagnostics judge on the families, recheck and M3, read on 11-07.
+Aggregate only.
+
+**The families** (F's judge F_1105: mean logit minus F's per song, 95% interval; the
+diagnostics judge: trees auc against the human charts, F rescored 0.948):
+
+| F without | F's judge | predicted (11-05) | diagnostics judge | single diagnostics moved away from the human charts (F → without) |
+|---|---|---|---|---|
+| rests | -0.27 [-0.52, -0.03] | -0.05 to +0.15: miss | 0.951 | steady_bars 0.355 → 0.329 (human 0.414) |
+| reuse | +0.19 [-0.20, +0.60] | +0.05 to +0.30: hit | 0.986 | bar_rhythm_repeat 0.346 → 0.110 (0.435), alike_rhythm 0.485 → 0.162 (0.622), section_rhythm 0.380 → 0.117 (0.547) |
+| holds | -0.14 [-0.49, +0.19] | -0.10 to +0.10: miss | 0.957 | ln_sections 0.322 (0.483), ln_scattered 0.311 (0.191), ln_bars 0.026 (0.064) |
+| chords | -0.29 [-0.49, -0.11] | -0.10 to +0.10: miss | 0.948 | none clearly; chord_over 0.010 → 0.013 (0.012), the cap a guideline |
+| jacks | -0.16 [-0.29, -0.05] | 0.00 to +0.20: miss | 0.954 | fast_jacks 0.442 → 0.546 (0.314); move_jack 0.031 either way |
+
+One of five under F's judge (the revised prediction of 11-07 03:00 for reuse, within ±0.3,
+also holds). Under F's judge every family is within 0.3 logit of F (2.5% of the 11.8 between F
+and the human charts); without chords, rests or jacks the charts look a little less like F to
+it. The diagnostics judge sees only reuse (0.948 → 0.986, paired 0.958 → 0.992; the model
+alone repeats a bar's rhythm a quarter as often as the human charts). Each family moves at
+least one diagnostic toward the human charts or keeps a guideline, so all five stay (the
+charter's rule). The jack shortfall of F is not the untangle's (move_jack 0.031 with or
+without it), which was the guess of the first 11-07 entry. Diagnostics judge predictions (first
+11-07 entry): 1 hit (F rescored 0.948, new_onsets first); 2 three of five; 3 miss: recheck
+0.954 (+0.006): new_onsets 0.138 → 0.124 but the repeats it breaks, bar_rhythm_repeat 0.346 →
+0.295, alike_rhythm 0.485 → 0.402, section_rhythm 0.380 → 0.325. post_song runs recheck (and
+the rests family's fill holes, rests, light bars) after the copies, deciding bar by bar: per-bar
+edits belong before the copies or the same for a bar and its copies (an experiment for after
+this week's no-new-pass rule).
+
+**M3** (F without oracle inputs): its own judge auc 0.904, paired 0.913, songs 0.983 (F's own
+0.900 / 0.912 / 0.975); the diagnostics judge 0.948 (F 0.948); under F's judge -0.83 [-1.50,
+-0.18]; hold_share inside the band 0.713 (F 0.821). Predictions (11-05): own judge at or above
+F's hit (0.904); hold share 10-25 points less often hit (-10.8); above F by +0.10 to +0.40
+under F's judge miss (the other side). The first 11-07 entry's prediction 5 (trees +0.01 to
++0.04) miss: 0.000. Without the human chart's density and long-note share the charts are as
+human to both judges that learned them.
+
+**The sweep** (first 60 songs, F's passes on each; F's judge, minus F on the same songs):
+
+| setting | F's judge | predicted (11-05) |
+|---|---|---|
+| cosine, 128 steps | -0.64 [-1.66, +0.45] | -0.10 to +0.05 |
+| linear, 256 steps | -1.21 [-2.30, -0.05] | -0.05 to -0.15 |
+| cosine, 256 steps | -1.46 [-2.56, -0.42] | |
+| lane temperature 0.7 / 0.85 / 1 | -1.04 / -1.16 / -1.05 (intervals about ±0.8) | 0.85-1: -0.20 to 0.00 |
+
+All lower than predicted and alike: no dose response in the lane temperature. The sweep runs are
+new draws with today's code, F and T draws of 10-10; there was no draw of F's own settings
+beside them (a gap in run_1105.sh), so the settings cannot be told from the redraw. The
+results table set them (60 songs) beside F (240): their band shares, SR error and judge auc do
+not compare (`results_table.py --songs-of` now restricts every row to one run's songs, the
+judge columns again from each judge's windows; `diag_judge.py` judges the runs of one call on
+the songs they share).
+
+Read: a judge is read for the run it learned. F's judge put M3 0.83 below F though M3's own
+judge and the diagnostics judge found M3 and F alike; it put full-v1 raw 4.2 below F (10-15)
+with more notes on new positions; it does not see the repeats that reuse adds (a +0.19 that
+includes 0, against 0.95 → 0.99 for the diagnostics), the tell F itself barely has (0.35
+against 0.44) and so never learned. It shows how much of F's tells a run has, no more (DECISIONS
+2026-11-07, EVALUATION.md). Runs are compared by their own judges' auc or by the diagnostics
+judge, on the same songs.
+
+Predictions for `run_1107.sh` (ctrl, sweepj, diag, town, ladder, table; written before any
+of it ran), with the judge of no_reuse already running:
+1. no_reuse's own judge, F scored by it: if an 8-bar judge sees the repeats, auc 0.93-0.98 and
+   F below no_reuse by 1 logit or more per song; if not, auc near 0.90 and F within ±0.3.
+2. The control (F's settings and seed drawn again today, 60 songs) under F_sweep: within ±0.4
+   of F. At -0.6 or lower, the sweep's -1 was the redraw, not the settings.
+3. Under F_sweep, each sweep run minus the control: cosine -0.3 to +0.3; 256 steps -0.5 to
+   +0.1; cosine and 256 -0.6 to 0.0; lane temperature 0.7-1 -0.3 to -1.0 (the judge takes lane
+   variety for human, as with the shuffled lanes). F_1105 and F_sweep agree within 0.3 on each.
+4. The diagnostics judge on the 60 songs: every sweep run within ±0.03 of the control (60 songs
+   cannot tell less); lane temperature 1 inside the human band of move_trill and move_jack 5
+   points or more often than the control.
+5. T's own judge: auc 0.91-0.96, above F's 0.90 (the passes take out some of what a judge
+   learns).
+6. The ladder: own judges M0 0.95-0.99, M1 0.93-0.98, both above T's and F's; under F's judge
+   M0 and M1 below F by 1 to 5 logit (as full-v1 raw), against the 11-05 prediction (M0 above
+   F by +0.3 to +1.0), which stands as written.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
