@@ -46,7 +46,7 @@ full view on the same 96 songs: own 0.901, human 0.944).
 Time (EXPERIMENTS 2026-11-08 (2)): --stop-bounds ends the run after a fold (from --min-folds
 on) once the auc so far and its 95% interval over songs lie between the same two bounds (the
 question asked is answered; the songs of the folds run are reported, the summary says where it
-stopped). --eval-epochs scores the held-out songs after every epoch as well (by_epoch in the
+stopped); --max-folds K runs K folds at most, for a judge whose answer decides nothing. --eval-epochs scores the held-out songs after every epoch as well (by_epoch in the
 summary; the training is the same), to learn how many epochs a judge needs.
 """
 
@@ -129,6 +129,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="stop after a fold once the auc so far and its 95%% interval over "
                          "songs lie between the same two of these, e.g. 0.65,0.86")
     ap.add_argument("--min-folds", type=int, default=2, help="folds before --stop-bounds")
+    ap.add_argument("--max-folds", type=int, default=None,
+                    help="run at most this many of the folds (a judge whose answer decides "
+                         "nothing: the songs of these folds are reported)")
     ap.add_argument("--eval-epochs", action="store_true",
                     help="score the held-out songs after every epoch too (summary by_epoch)")
     return ap.parse_args(argv)
@@ -551,6 +554,11 @@ def main(argv=None) -> int:
             print(f"decided after {fold + 1} of {n_folds} folds: [{lo:.3f}, {hi:.3f}] holds no "
                   f"bound of {bounds}; the other folds are not run", flush=True)
             break
+        if a.max_folds and fold + 1 >= a.max_folds and fold + 1 < n_folds:
+            stopped = {"after_folds": fold + 1, "of": n_folds, "max_folds": a.max_folds,
+                       "auc": so_far, "ci": [lo, hi]}
+            print(f"{fold + 1} of {n_folds} folds run (--max-folds)", flush=True)
+            break
     scored = [s for s in songs if (s["key"], "human") in scores]
     with open(run_dir / "windows.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -583,8 +591,9 @@ def main(argv=None) -> int:
         lines.append("by epoch: " + ", ".join(f"{e['epoch']}: auc {e['auc']:.3f}"
                                               for e in summary["by_epoch"]))
     if stopped:
-        lines.append(f"stopped after {stopped['after_folds']} of {n_folds} folds "
-                     f"(--stop-bounds {a.stop_bounds})")
+        why = (f"--max-folds {a.max_folds}" if "max_folds" in stopped
+               else f"--stop-bounds {a.stop_bounds}")
+        lines.append(f"stopped after {stopped['after_folds']} of {n_folds} folds ({why})")
     summary["args"] = {k: (str(v) if isinstance(v, Path) else
                            [str(x) for x in v] if isinstance(v, list) else v)
                        for k, v in vars(a).items()}

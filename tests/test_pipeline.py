@@ -1124,6 +1124,9 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert {r["fold"] for r in kept} == {"0"} and kept
     assert all(seen[(r["key"], r["start"], r["chart"])] == r["onset_rows"] for r in kept)
     assert judge.main([*args, "--name", "x", "--stop-bounds", "a,b"]) == 2
+    assert judge.main([*args, "--name", "m", "--max-folds", "1"]) == 0
+    m = json.loads((tmp_path / "judge" / "m" / "summary.json").read_text())
+    assert m["folds_run"] == 1 and m["stopped"]["max_folds"] == 1
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

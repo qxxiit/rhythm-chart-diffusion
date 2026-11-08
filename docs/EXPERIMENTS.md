@@ -3513,6 +3513,67 @@ Readings as in 11-08 (2). How it could fail: full outside 0.88-0.92 would make t
 SR matter (own: the human SR from the .osu file, the run's from its tokens; view: both from
 tokens).
 
+### 2026-11-08 (4) · run_1110: what the judge reads, with the SR as shown; the rhythm against the music; alike bars (predictions)
+
+`run_1110.sh` (11-08, ~18:36 to 19:29). On the 96 songs of the first two folds, each row's step
+against the row above (95% over songs, `judge_table.py`):
+
+| judge | shown | auc | step | prediction |
+|---|---|---|---|---|
+| view_full (run_1109) | everything, the human chart's SR | 0.944 | | |
+| cosine (11-08 (2)) | everything, own SR | 0.901 | -0.043 [-0.063, -0.025] | |
+| srv_full | everything, the SR as shown | 0.909 | +0.008 [-0.002, +0.019] | 0.885-0.910: hit |
+| srv_taps | long notes as taps | 0.840 | -0.069 [-0.109, -0.034] | 0.86-0.90, step -0.01 to -0.04: miss |
+| srv_rhythm | taps on lanes drawn at random | 0.742 | -0.098 [-0.147, -0.051] | 0.78-0.86, step -0.04 to -0.09: miss |
+| srv_deaf | rhythm without audio | 0.606 (240 songs, 5 folds: 0.641 [0.596, 0.688]) | -0.136 [-0.168, -0.104] | 0.72-0.80, step -0.03 to -0.07: miss |
+
+The source of the SR does not matter (+0.008, the interval holds 0): the own-SR judges read
+as they ran. Of the full view's 0.409 above chance, removed in this order: the holds 0.069
+(17%), the lanes 0.098 (24%), the rhythm against the music 0.136 (33%), the rhythm's own
+pattern 0.106 (26%). Every step is larger than predicted, about twice its size under the
+human SR (11-08 (3)), whose tell held up every view. And they overlap: without audio the full
+view loses 0.043 (F-noaudio 0.857 against 0.900), the rhythm view 0.136, so the same tell
+rides on the lanes, the holds and the rhythm against the music at once, and taking one away
+leaves the others to find it. That is why one pass, or a quarter of the new positions, hardly
+moves the judge. The largest single piece is where the notes sit against the music; the
+rhythm's own pattern is near the human one (0.61-0.64 without audio). Time: 9 min a judge at 2
+epochs and 2 folds; srv_deaf sat on its bound 0.65 and ran all 5 folds (23 min) though
+nothing after it depended on it (DECISIONS 2026-11-08: such a judge runs `--max-folds 2`).
+Epoch 1 within 0.007-0.013 of epoch 2.
+
+**The rhythm against the music** (no run: the cosine run's charts and the human ones, the
+3-band rise of the log-Mel (bands 0-19, 20-49, 50-79) at each row, its largest within ±2
+frames, z within the song; beat positions on the 174 songs with one timing point). Per song,
+AI minus human with 95% over songs:
+
+| | human | AI | AI - human |
+|---|---|---|---|
+| onset rows | 0.196 | 0.186 | -0.010 [-0.014, -0.006] |
+| the sound under a note (rise, z) | +0.205 | +0.224 | +0.019 [+0.003, +0.039] |
+| rows of the loudest 10% of rises with a note | 0.271 | 0.269 | -0.002 [-0.010, +0.007] |
+| the louder rows chosen within a beat position (auc): beat / 1/2 / 1/4 | 0.686 / 0.632 / 0.589 | 0.695 / 0.629 / 0.582 | +0.009 / -0.003 / -0.007, each holding 0 |
+| the same within triplet positions | 0.612 | 0.569 | -0.042 [-0.072, -0.014] |
+| bars alike in sound (top quarter, inside 8 bars) with the same rhythm | 0.419 | 0.354 | -0.064 [-0.094, -0.036] |
+| of those, one or two rows apart | 0.277 | 0.321 | +0.044 [+0.019, +0.071] |
+
+By position and loudness (pooled): notes on beats and half beats at 0.98-1.01 of the human
+rate in every third of loudness; 1/4 at 0.86-0.92, triplets 0.70-0.75, 1/12 0.61-0.69, loud
+or quiet alike; the half-beat chords a little larger (1.36-1.47 notes against 1.29-1.37). Notes
+on new positions sit on quiet sounds in both (z -0.12 AI, -0.15 human; on the set's positions
++0.28, +0.24). So the AI follows the sound as closely as the mappers do; what differs is small:
+the same rhythm when the music repeats (two thirds of that gap near-copies, one or two rows
+apart, which align_alike at 2 nats leaves), fewer of the fine divisions, triplets that follow
+the sound less. None large: the tell is spread, as the views said.
+
+**Predictions for `run_1111.sh`** (the cosine draw with F's passes again, align_alike at 6
+nats instead of 2; its own judge as srv_full, the same 2 folds; written before it ran):
+1. Bars alike in sound with the same rhythm 0.354 → 0.38-0.42 (human 0.419); one or two rows
+   apart 0.321 → 0.28-0.30. alike_rhythm 0.532 → 0.56-0.60 (0.619).
+2. Its own judge against srv_full on the same 96 songs: a step of -0.015 to +0.005. A step of
+   -0.015 or more (its interval clear of 0) makes repetition a piece the judge sees, worth a
+   better pass; near 0 confirms the overlap, and the next lever acts on the whole window.
+3. Onset rows, new_onsets and SR error within ±0.005 of the cosine run.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
