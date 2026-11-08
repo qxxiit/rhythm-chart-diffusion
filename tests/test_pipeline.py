@@ -729,7 +729,7 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert refined["refine"] == 1 and refined["lane_temp"] == 0
     assert refined["lanes"] == "sampled" and not refined["spread"] and refined["empty_bias"] == 0
     assert refined["mean_passes"] > 0 and refined["mean_seconds"] > 0
-    # shards: N processes on the songs whose index is K mod N give the unsharded run's charts
+    # shards: N processes, each on its share of the songs, give the unsharded run's charts
     from scripts import merge_shards
     sharded = ["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train", "--per-song",
                "--n", "3", "--steps", "4", "--sample-seed", "3", "--manifest",
@@ -1092,6 +1092,29 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert judge.main([*args, "--name", "b", "--no-audio", "--folds", "5",       # as many as songs
                        "--score", str(rested), str(tmp_path / "none")]) == 0    # one left out
     assert json.loads((tmp_path / "judge" / "b" / "summary.json").read_text())["args"]["no_audio"]
+    # the epochs scored on the way, a view, and a stop once the question is answered
+    two = [*args, "--epochs", "2"]
+    assert judge.main([*two, "--name", "e0"]) == 0
+    assert judge.main([*two, "--name", "e1", "--eval-epochs"]) == 0
+
+    def windows(name: str) -> list[dict]:
+        with open(tmp_path / "judge" / name / "windows.csv", newline="") as f:
+            return list(csv.DictReader(f))
+    assert [r["logit"] for r in windows("e0")] == [r["logit"] for r in windows("e1")]  # the same
+    e1 = json.loads((tmp_path / "judge" / "e1" / "summary.json").read_text())
+    assert [e["epoch"] for e in e1["by_epoch"]] == [1, 2]
+    assert e1["by_epoch"][-1]["auc"] == e1["ai"]["auc"] and len(e1["ai"]["auc_ci"]) == 2
+    assert e1["folds_run"] == 2 and e1["stopped"] is None
+    assert judge.main([*args, "--name", "v", "--view", "rhythm", "--sr", "human",
+                       "--stop-bounds", "2", "--min-folds", "1"]) == 0
+    v = json.loads((tmp_path / "judge" / "v" / "summary.json").read_text())
+    assert v["stopped"]["after_folds"] == 1 and v["folds_run"] == 1 and v["ai"]["songs"] < 3
+    assert v["args"]["view"] == "rhythm" and v["args"]["sr"] == "human"
+    seen = {(r["key"], r["start"], r["chart"]): r["onset_rows"] for r in windows("a")}
+    kept = windows("v")
+    assert {r["fold"] for r in kept} == {"0"} and kept
+    assert all(seen[(r["key"], r["start"], r["chart"])] == r["onset_rows"] for r in kept)
+    assert judge.main([*args, "--name", "x", "--stop-bounds", "a,b"]) == 2
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

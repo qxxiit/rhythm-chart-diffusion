@@ -170,7 +170,14 @@ python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results t
                                        #    columns, diagnostics as the share inside the human band
                                        #    (--songs-of RUN: every row on that run's songs)
 python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
-                                       #    sharing the GPU; the charts are the one-process run's)
+                                       #    sharing the GPU, the songs shared by length; the charts
+                                       #    are the one-process run's)
+python scripts/judge.py --ckpt C --ai R [--view taps|rhythm --sr human] [--stop-bounds B,B]
+                                       # ✅ the judge (8-bar windows, 5 folds by audio); --view: what
+                                       #    of the charts it sees; --stop-bounds: stop once decided;
+                                       #    --eval-epochs: the auc after every epoch
+python scripts/judge_table.py J ...    # ✅ judges of one run side by side, also on the songs they
+                                       #    all have (judges that stopped at different folds)
 python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
                                        #    from the human ones by all the diagnostics at once
                                        #    (auc, paired, what it leans on); seconds, aggregate only

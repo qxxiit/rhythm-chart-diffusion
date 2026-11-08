@@ -88,10 +88,17 @@ only if taking it out makes the judge or a diagnostic worse, or breaks a guideli
   or the change under 0.05 of the spread. Sensitive to none = blind: it leaves the
   diagnostics. In the spirit of ChartGenEval (Lin, arXiv 2607.12857), which checks its
   metrics the same way and has no human correlation either.
+- **What a judge reads** (`judge.py --view`, 11-08): a judge trained on every chart with part of
+  it taken away alike (taps: long notes as taps; rhythm: taps on lanes drawn at random), each
+  shown with the human chart's SR (`--sr human`), next to the full view with that SR; read as
+  nested, each view removing one more thing. Its rows (rows.npz) cannot say this: they repeat
+  the window's verdict on every row (11-08).
 
 ## Rules
 
 - Predictions go in EXPERIMENTS.md before a run, as since 10-10.
+- With them, when the run may stop early (a judge's `--stop-bounds`, a chain's skips), and
+  it is cut there (11-08).
 - One results table: a row per (system, setting) with the same columns: primary (when there
   is a playtest), judge auc and paired with intervals, the band shares of the diagnostics, SR
   error, F1@50 as a sanity check.

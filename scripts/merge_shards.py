@@ -1,5 +1,6 @@
 """Put the shards of an evaluate.py run together (evaluate.py --shard K/N, N processes sharing
-the GPU, each on the songs whose index is K modulo N, with the seeds of the full run).
+the GPU, each on its share of the songs (evaluate.py shard_of, by length), with the seeds of the
+full run).
 
     python scripts/merge_shards.py RUN_DIR      # reads RUN_DIR_shard0ofN ... RUN_DIR_shard{N-1}ofN
 

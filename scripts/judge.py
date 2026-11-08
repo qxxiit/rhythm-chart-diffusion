@@ -34,6 +34,17 @@ fold's judge ranks by an arbitrary direction, so one fold may stray; 0.7+ is a b
 --score with the runs of scripts/corrupt_test.py --write-runs (human charts corrupted at
 three doses: the score should rise with the dose for the corruptions the judge can see).
 scripts/judge_vs_diag.py relates the judged run's per-song scores to its diagnostics.
+
+What the judge is shown (EXPERIMENTS 2026-11-08 (2)): --view taps or rhythm shows every chart
+(the human one, the run's, the scored runs') with part of it taken away alike, so a judge
+trained on that can only use what is left (view_tokens); --sr human gives every chart the human
+chart's SR, which a view needs (the SR of the whole chart would tell some of what it hides).
+
+Time (EXPERIMENTS 2026-11-08 (2)): --stop-bounds ends the run after a fold (from --min-folds
+on) once the auc so far and its 95% interval over songs lie between the same two bounds (the
+question asked is answered; the songs of the folds run are reported, the summary says where it
+stopped). --eval-epochs scores the held-out songs after every epoch as well (by_epoch in the
+summary; the training is the same), to learn how many epochs a judge needs.
 """
 
 from __future__ import annotations
@@ -45,6 +56,7 @@ import json
 import math
 import sys
 import time
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -54,13 +66,26 @@ import torch
 from src.data.beat_grid import from_timing_points
 from src.data.cache import read_manifest
 from src.data.mel import open_mel
-from src.data.tokenizer import BAR, BEATS_PER_CHUNK, HOLD_START, PAD, TAP, D, K, L
+from src.data.tokenizer import (
+    BAR,
+    BEATS_PER_CHUNK,
+    EMPTY,
+    HOLD_BODY,
+    HOLD_END,
+    HOLD_START,
+    PAD,
+    TAP,
+    D,
+    K,
+    L,
+)
 from src.evaluation.playability import grade_of
 from src.models.diffusion import load_denoiser, pick_device
 from src.models.judge import Judge
 
 TRAIN_STRIDE = 4 * BAR                 # training windows every 4 bars (half overlapping)
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")
+VIEWS = ("full", "taps", "rhythm")
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -90,7 +115,48 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--log-every", type=int, default=50)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--view", choices=VIEWS, default="full",
+                    help="what of every chart the judge sees (view_tokens): full; taps (long "
+                         "notes as taps); rhythm (taps on lanes drawn at random)")
+    ap.add_argument("--sr", choices=("own", "human"), default="own",
+                    help="the SR each chart is shown with: its own (rosu) or the human chart's "
+                         "for all, which --view taps and rhythm need")
+    ap.add_argument("--stop-bounds", default=None, metavar="B[,B...]",
+                    help="stop after a fold once the auc so far and its 95%% interval over "
+                         "songs lie between the same two of these, e.g. 0.65,0.86")
+    ap.add_argument("--min-folds", type=int, default=2, help="folds before --stop-bounds")
+    ap.add_argument("--eval-epochs", action="store_true",
+                    help="score the held-out songs after every epoch too (summary by_epoch)")
     return ap.parse_args(argv)
+
+
+def view_tokens(tokens: np.ndarray, view: str, seed=(0,)) -> np.ndarray:
+    """A chart [rows, K] as --view shows it; the same for every chart of a song, so a judge can
+    only use what is kept.
+
+        full    the chart
+        taps    long notes as taps at their heads (bodies and tails empty): nothing of which
+                notes are held, nor for how long
+        rhythm  taps, and each onset row's notes on lanes drawn at random (as many as it had,
+                seed: the song and the chart): which rows have notes and how many, nothing of
+                the lanes
+    """
+    if view == "full":
+        return tokens
+    x = np.array(tokens, copy=True)
+    x[x == HOLD_START] = TAP
+    x[(x == HOLD_BODY) | (x == HOLD_END)] = EMPTY
+    if view == "rhythm":
+        n = (x == TAP).sum(axis=1)
+        rows = np.flatnonzero(n)
+        perm = np.argsort(np.random.default_rng(list(seed)).random((len(rows), K)), axis=1)
+        x[rows] = EMPTY
+        x[np.repeat(rows, n[rows]), perm[np.arange(K)[None, :] < n[rows][:, None]]] = TAP
+    return x
+
+
+def stable_hash(s: str) -> int:
+    return zlib.crc32(s.encode("utf-8"))
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -154,6 +220,29 @@ def boot_mean(values: np.ndarray, n: int = 2000, seed: int = 0) -> tuple[float, 
     return float(lo), float(hi)
 
 
+def auc_ci(scores: dict, keys: list[str], chart: str = "ai", n: int = 1000,
+           seed: int = 0) -> tuple[float, float, float]:
+    """(auc, lo, hi): the chart's windows against the human ones over the songs keys, and its
+    95% interval with the songs drawn again (a song's windows go together)."""
+    c = [scores[(k, chart)][0] for k in keys]
+    h = [scores[(k, "human")][0] for k in keys]
+    if not keys:
+        return float("nan"), float("nan"), float("nan")
+    point = auc(np.concatenate(c), np.concatenate(h))
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(n):
+        idx = rng.integers(len(keys), size=len(keys))
+        draws.append(auc(np.concatenate([c[i] for i in idx]), np.concatenate([h[i] for i in idx])))
+    lo, hi = np.nanpercentile(draws, [2.5, 97.5])
+    return point, float(lo), float(hi)
+
+
+def decided(lo: float, hi: float, bounds: list[float]) -> bool:
+    """The interval [lo, hi] lies between the same two bounds (no bound inside it)."""
+    return math.isfinite(lo) and math.isfinite(hi) and not any(lo <= b <= hi for b in bounds)
+
+
 class Songs:
     """The songs both the human cache and every run have, with what the windows need."""
 
@@ -191,6 +280,11 @@ class Songs:
                 if k in charts:                        # it has; the judge trains on them all
                     song["charts"][label] = charts[k]
                     song["sr"][label] = as_float(rows[k].get("sr_gen"), sr_label)
+            view = getattr(a, "view", "full")
+            song["charts"] = {c: view_tokens(t, view, (a.seed, stable_hash(k), stable_hash(c)))
+                              for c, t in song["charts"].items()}   # onset rows stay
+            if getattr(a, "sr", "own") == "human":
+                song["sr"] = {c: song["sr"]["human"] for c in song["sr"]}
             song["train"] = self.starts(song, TRAIN_STRIDE)
             song["test"] = self.starts(song, L)
             self.songs.append(song)
@@ -241,7 +335,10 @@ def folds_of(songs: list[dict], n_folds: int, seed: int) -> list[int]:
     return [fold[s["group"]] for s in songs]
 
 
-def train_fold(a, data: Songs, train: list[dict], device, fold: int, log_path: Path):
+def train_fold(a, data: Songs, train: list[dict], device, fold: int, log_path: Path,
+               on_epoch=None):
+    """The fold's judge; on_epoch(judge, epoch) after every epoch but the last (--eval-epochs:
+    it only scores, so the training is the same)."""
     trunk = load_denoiser(a.ckpt, device)
     judge = Judge(trunk, audio=not a.no_audio).to(device)
     judge.train()
@@ -256,7 +353,11 @@ def train_fold(a, data: Songs, train: list[dict], device, fold: int, log_path: P
         1 + math.cos(math.pi * min(1.0, max(0, i - warm) / max(1, steps - warm)))))
     use_amp = device.type == "cuda"
     step, run_loss, run_acc, n_run = 0, 0.0, 0.0, 0
-    for _ in range(a.epochs):
+    for epoch in range(a.epochs):
+        if epoch and on_epoch is not None:
+            judge.eval()
+            on_epoch(judge, epoch)
+            judge.train()
         order = rng.permutation(len(pairs))
         for j in range(0, len(order), a.batch_pairs):
             chosen = [pairs[i] for i in order[j:j + a.batch_pairs]]
@@ -294,12 +395,14 @@ def train_fold(a, data: Songs, train: list[dict], device, fold: int, log_path: P
 
 
 @torch.no_grad()
-def score_fold(judge: Judge, data: Songs, test: list[dict], device, batch: int = 16):
-    """{(key, chart): (logits [windows], rows [windows, L])} for the held-out songs."""
+def score_fold(judge: Judge, data: Songs, test: list[dict], device, batch: int = 16,
+               charts: tuple[str, ...] | None = None):
+    """{(key, chart): (logits [windows], rows [windows, L])} for the held-out songs (every
+    chart, or those given)."""
     out = {}
     for song in test:
         starts = song["test"]
-        for chart in ("human", *data.labels):
+        for chart in charts or ("human", *data.labels):
             if chart not in song["charts"]:
                 continue
             logits, rows = [], []
@@ -332,6 +435,9 @@ def report(songs: list[dict], scores: dict, labels: list[str]) -> tuple[dict, li
     for chart in labels:
         ks = [k for k in keys if (k, chart) in scores]          # a --score run's own songs
         b = block(chart, ks)
+        if chart == "ai":
+            _, lo, hi = auc_ci(scores, ks)
+            b["auc_ci"] = [lo, hi]
         b["by_grade"] = {g: block(chart, [k for k in ks if grade[k] == g])
                          for g in GRADES if any(grade[k] == g for k in ks)}
         if chart != "ai" and ks:
@@ -343,8 +449,9 @@ def report(songs: list[dict], scores: dict, labels: list[str]) -> tuple[dict, li
                                  np.concatenate([scores[(k, chart)][0] for k in ks]),
                                  np.concatenate([scores[(k, "ai")][0] for k in ks]))}
         summary[chart] = b
-        lines.append(f"{chart}: {b['windows']} windows of {b['songs']} songs  auc {b['auc']:.3f}  "
-                     f"paired {b['paired']:.3f}  songs {b['songs_paired']:.3f}  "
+        ci = f" [{b['auc_ci'][0]:.3f}, {b['auc_ci'][1]:.3f}]" if "auc_ci" in b else ""
+        lines.append(f"{chart}: {b['windows']} windows of {b['songs']} songs  auc {b['auc']:.3f}"
+                     f"{ci}  paired {b['paired']:.3f}  songs {b['songs_paired']:.3f}  "
                      f"mean logit {b['mean_logit']:+.3f} (human {b['human_mean_logit']:+.3f})")
         if "minus_ai" in b:
             m = b["minus_ai"]
@@ -360,6 +467,17 @@ def report(songs: list[dict], scores: dict, labels: list[str]) -> tuple[dict, li
 
 def main(argv=None) -> int:
     a = parse_args(argv)
+    bounds = []
+    if a.stop_bounds:
+        try:
+            bounds = [float(x) for x in a.stop_bounds.split(",")]
+        except ValueError:
+            print(f"--stop-bounds {a.stop_bounds}: numbers with commas, e.g. 0.65,0.86",
+                  file=sys.stderr)
+            return 2
+    if a.view != "full" and a.sr == "own":
+        print(f"--view {a.view} with each chart's own SR: the SR of the whole chart tells the "
+              "judge some of what the view hides (--sr human)", file=sys.stderr)
     torch.manual_seed(a.seed)
     device = pick_device(a.device)
     data = Songs(a)
@@ -380,22 +498,38 @@ def main(argv=None) -> int:
     print(f"{run_dir}: {len(songs)} songs, {n_folds} folds, {n_pairs:,} training pairs "
           f"(every {TRAIN_STRIDE} rows), {sum(len(s['test']) for s in songs):,} held-out windows "
           f"a chart; charts: human, {', '.join(data.labels)}; audio {'off' if a.no_audio else 'on'}"
-          f"; {device}", flush=True)
+          f"; view {a.view}, SR {a.sr}; {device}", flush=True)
     t0 = time.time()
-    scores, fold_by_key = {}, {}
+    scores, fold_by_key, by_epoch, stopped = {}, {}, {}, None
     for fold in range(n_folds):
         train = [s for s, f in zip(songs, fold_of, strict=True) if f != fold]
         test = [s for s, f in zip(songs, fold_of, strict=True) if f == fold]
-        judge = train_fold(a, data, train, device, fold, log_path)
+
+        def at_epoch(judge, epoch, test=test):
+            done = score_fold(judge, data, test, device, charts=("human", "ai"))
+            by_epoch.setdefault(epoch, {}).update({k: (v[0],) for k, v in done.items()})
+
+        judge = train_fold(a, data, train, device, fold, log_path,
+                           at_epoch if a.eval_epochs else None)
         scores.update(score_fold(judge, data, test, device))
         fold_by_key.update({s["key"]: fold for s in test})
-        print(f"fold {fold}: {len(train)} songs trained, {len(test)} held out, "
-              f"{time.time() - t0:.0f}s", flush=True)
         del judge
+        keys = [s["key"] for s in songs if (s["key"], "human") in scores]
+        so_far, lo, hi = auc_ci(scores, keys)
+        print(f"fold {fold}: {len(train)} songs trained, {len(test)} held out, "
+              f"{time.time() - t0:.0f}s; auc so far {so_far:.3f} [{lo:.3f}, {hi:.3f}] over "
+              f"{len(keys)} songs", flush=True)
+        if bounds and fold + 1 >= a.min_folds and fold + 1 < n_folds and decided(lo, hi, bounds):
+            stopped = {"after_folds": fold + 1, "of": n_folds, "bounds": bounds,
+                       "auc": so_far, "ci": [lo, hi]}
+            print(f"decided after {fold + 1} of {n_folds} folds: [{lo:.3f}, {hi:.3f}] holds no "
+                  f"bound of {bounds}; the other folds are not run", flush=True)
+            break
+    scored = [s for s in songs if (s["key"], "human") in scores]
     with open(run_dir / "windows.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["key", "grade", "fold", "start", "chart", "logit", "onset_rows"])
-        for s in songs:
+        for s in scored:
             for chart in ("human", *data.labels):
                 if (s["key"], chart) not in scores:             # not in that --score run
                     continue
@@ -404,9 +538,27 @@ def main(argv=None) -> int:
                                 f"{lg:.4f}", onset_rows(s["charts"][chart], st,
                                                         min(st + L, s["n"]))])
     rows = {f"{k}|{c}": v[1].astype(np.float16) for (k, c), v in scores.items()}
-    rows.update({f"{s['key']}|starts": np.asarray(s["test"], dtype=np.int64) for s in songs})
+    rows.update({f"{s['key']}|starts": np.asarray(s["test"], dtype=np.int64) for s in scored})
     np.savez_compressed(run_dir / "rows.npz", **rows)
-    summary, lines = report(songs, scores, data.labels)
+    summary, lines = report(scored, scores, data.labels)
+    summary["folds_run"], summary["folds"], summary["stopped"] = (
+        len({fold_by_key[s["key"]] for s in scored}), n_folds, stopped)
+    if a.eval_epochs:
+        keys = [s["key"] for s in scored]
+        summary["by_epoch"] = []
+        for epoch, sc in [*sorted(by_epoch.items()), (a.epochs, scores)]:
+            ks = [k for k in keys if (k, "human") in sc and (k, "ai") in sc]
+            if not ks:
+                continue
+            c = np.concatenate([sc[(k, "ai")][0] for k in ks])
+            h = np.concatenate([sc[(k, "human")][0] for k in ks])
+            summary["by_epoch"].append({"epoch": epoch, "songs": len(ks), "auc": auc(c, h),
+                                        "paired": paired(c, h)})
+        lines.append("by epoch: " + ", ".join(f"{e['epoch']}: auc {e['auc']:.3f}"
+                                              for e in summary["by_epoch"]))
+    if stopped:
+        lines.append(f"stopped after {stopped['after_folds']} of {n_folds} folds "
+                     f"(--stop-bounds {a.stop_bounds})")
     summary["args"] = {k: (str(v) if isinstance(v, Path) else
                            [str(x) for x in v] if isinstance(v, list) else v)
                        for k, v in vars(a).items()}

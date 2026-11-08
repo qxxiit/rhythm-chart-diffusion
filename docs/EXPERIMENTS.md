@@ -3387,6 +3387,91 @@ and `scripts/merge_shards.py`): one process drew a song in 65 s with the CPU at 
 mostly waiting on it. The seeds go by the song's index in the full run, so the shards' charts are
 the one-process run's (tests/test_pipeline.py checks charts, rows and means).
 
+### 2026-11-08 (2) · run_1108: cosine on all songs; what the judge reads; views (predictions)
+
+`run_1108.sh` (11-08 06:06 to 09:44 on three processes: the draw merged 08:51, F's passes 09:10,
+its own judge 09:43 in 1,990 s). Aggregate only. Against F per song (240 val songs, the same seeds;
+95% intervals over songs):
+
+| | F | cosine | human | prediction | |
+|---|---|---|---|---|---|
+| new_onsets | 0.138 | 0.118 (-0.020 [-0.034, -0.010]) | 0.051 | -0.010 to -0.020 | hit: a quarter (23%) of the excess gone |
+| move_jack | 0.031 | 0.033 (+0.002 [-0.006, +0.011]) | 0.044 | -0.005 to -0.015 | miss |
+| hold_beats | 0.755 | 0.771 (+0.017 [-0.012, +0.046]) | 1.004 | +0.02 to +0.06 | just under (before the passes +0.040 [+0.012, +0.070]) |
+| own judge auc | 0.900 | 0.893 (-0.007 [-0.026, +0.011]) | | 0.880-0.900 | in range, within the noise |
+| diagnostics judge, trees / logistic | 0.948 / 0.887 | 0.953 / 0.871 | | trees 0.948 ±0.01 | hit |
+
+The failure branch (own judge at F's or above) is not taken, but the step is inside its interval:
+"a small step" is not shown either. Of the sweep's 60 songs (the first 60 of these, and the same
+charts to the byte, 60 of 60: the shards check on a real run), the jacks fell there (-0.014) and
+rose on the other 180 (+0.007); long notes +0.050 there, +0.014 on the others; new positions -0.015
+there, -0.022 on the others. What the sweep found with an interval just clear of 0 did not hold,
+the new positions did. Of the 56 diagnostics, 13 moved outside their interval: nearer the human
+charts alike_rhythm 0.480 → 0.532 (0.619), copy_far 0.046 → 0.060 (0.068), motion_pred 0.121 →
+0.127 (0.132), fast_jacks 0.442 → 0.370 (0.314); further coverage 0.050 → 0.059 (0.042),
+coverage_p2 (trill and jumptrill runs) 0.019 → 0.024 (0.010), loud_slope 0.206 → 0.216 (0.194),
+and rest_bars 0.0072 → 0.0100 (0.0075) and light_bars 0.0625 → 0.0700 (0.0626) past the human
+level. The mean gap over the 56, in human sd, 0.183 → 0.168 (0.363 → 0.348 before the passes).
+Taken as the base (DECISIONS 2026-11-08): the same 128 steps, no cost.
+
+**Why the judge barely moves when the new positions fall** (aggregate checks on run_1108's
+charts and the judges' rows):
+- `judge_vs_diag.py`: per song, no diagnostic explains how sure F's judge or cosine's is (ridge on
+  the 8 nearest gaps, R^2 over 5 folds -0.03 and -0.12; every |rho| 0.25 or less; new_onsets
+  +0.12 / +0.09). The judges are close to sure everywhere (+11 logit a song, AI above in 98-99% of
+  the songs), which leaves this check little to work with.
+- Snap (where in the beat's 12 cells the onsets sit, the 174 songs with one timing point): 1/1
+  0.46, 1/2 0.33, 1/4 0.146 (human 0.156), 1/3 0.029 (0.034), 1/6 0.013 (0.016), 1/12 0.013
+  (0.016); beats that mix 1/4 with a triplet 0.027 (0.038). The AI divides the beat as the
+  mappers do; per window the judge's difference follows none of these by more than rho 0.14.
+- The rows (rows.npz; a window's logit is the mean of its rows' scores): in the AI windows every
+  kind of row scores about the same, +5 to +7 (F's judge: an AI onset on a row where the human
+  chart has one +6.5, on a new position +6.3, an empty row +6.5, a long note's row +6.6), in the
+  human windows -2 to -7. Onsets on new positions carry 0.14 of the 11.9 logits between the
+  charts (1%). The judge does not point at notes; the rows only repeat the window's verdict.
+- F's judge without audio (F-noaudio): 0.857 against 0.900 with it: most of the telling is in
+  the chart.
+
+So what is left is a property of the 8 bars as a whole, which taking a quarter of the excess
+notes off new positions hardly changes. Which part of the chart carries it is the next question.
+
+**Predictions for `run_1109.sh`** (written before it ran). The cosine run judged again with part
+of every chart, the human one's too, taken away alike (`judge.py --view`), every chart shown with
+the human chart's SR (the SR of the whole chart would tell what a view hides), a new judge each:
+nested, each removes one more thing.
+1. full (everything, the human SR): auc 0.875-0.900. Under 0.86 would make the SR a tell.
+2. taps (long notes as taps): 0.80-0.88, a little carried by the holds (release_on_onset is
+   among the three the diagnostics judge leans on; hold_beats 0.77 against 1.00).
+3. rhythm (taps on lanes drawn at random: which rows have notes and how many): 0.72-0.85.
+4. deaf (rhythm without audio): 0.62-0.78.
+5. Epochs (--eval-epochs): the full view's auc after its first epoch within 0.01 of its third.
+Readings: full minus taps is what the holds carry, taps minus rhythm the lanes, rhythm minus
+deaf the rhythm against the music, deaf minus 0.5 the rhythm's own pattern. How it could fail:
+rhythm at 0.86 or more puts nearly all of the tell in which rows get notes (the onset model, not
+the passes, is the lever); taps under 0.65 puts it in the holds, rhythm under 0.65 with taps
+above 0.86 in the lanes.
+
+**Time from now on.** Every run says with its predictions when it may stop early, and is cut
+there:
+- A judge stops after a fold, from the second on, once its auc and 95% interval over songs lie
+  between the same two bounds where the reading changes (`--stop-bounds`; run_1109: 0.65 and
+  0.86). Two folds (~96 songs) give about ±0.03, enough for bounds 0.2 apart; ~14 min a judge
+  instead of ~35. The songs of the folds run are reported (`judge_table.py` compares judges on
+  the songs they all have). Stopping on an interval is optional stopping, so these are readings
+  between bounds, not tests.
+- A chain skips what an earlier answer makes moot: the rhythm view is not run when taps leaves
+  little (under 0.65; it can only leave less), the deaf view not when rhythm does.
+- Epochs: measured before they are cut (`--eval-epochs` scores the held-out songs after each
+  epoch; the training is the same, tests/test_pipeline.py). If one epoch does, judges take a
+  third of the time.
+- Shards are shared by length (`evaluate.py shard_of`, longest first to the least loaded):
+  run_1108's by index ended 15 min apart (shard 0 had 94 min of one-process work, the others 80
+  and 84). Each process drew a song at x1.9-2.0 its one-process time, steady through the run
+  (not heat), so three processes give x1.5: one process already used about two thirds of the
+  GPU, not "mostly waiting" as written above.
+- Draws next: an interim reading at a third and two thirds of the songs against the prediction
+  (the rows as they are written), when the next draw is planned.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

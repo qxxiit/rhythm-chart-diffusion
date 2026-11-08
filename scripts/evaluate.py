@@ -203,6 +203,26 @@ def weak_onsets(tokens: np.ndarray, strength: np.ndarray, n_cells: int) -> float
     return float(np.mean(strength[:n_cells][rows] < np.median(strength[:n_cells])))
 
 
+def shard_of(rows: list[dict], cache: Path, n: int, sr_min: float | None = None) -> list[int]:
+    """Each song's shard for --shard K/N: the longest song first, each to the shard with the
+    fewest rows so far (a song's time goes with its length; 11-08, shards by index ended 15
+    minutes apart), ties by index; a song --sr-min leaves out weighs nothing. Every process
+    finds the same from the cache, and the seeds stay the full run's."""
+    sizes = []
+    for r in rows:
+        if sr_min is not None and float(r["sr"]) < sr_min:
+            sizes.append(0)
+            continue
+        with np.load(cache / "tokens" / f"{r['key']}.npz") as z:
+            sizes.append(int(z["n_cells"]))
+    load, out = [0] * n, [0] * len(rows)
+    for i in sorted(range(len(rows)), key=lambda i: (-sizes[i], i)):
+        k = min(range(n), key=lambda s: (load[s], s))
+        out[i] = k
+        load[k] += sizes[i]
+    return out
+
+
 def row_times(timing_points, cell_offset: int, n_cells: int) -> np.ndarray:
     """[n_cells] ms of each token row (row r is BeatGrid cell r - cell_offset)."""
     return from_timing_points(timing_points).time_from_cell(np.arange(n_cells) - cell_offset, D)
@@ -438,9 +458,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="in bars of taps, long notes shorter than this many beats become taps "
                          "(sampler.tidy_holds, tag _lt); also on --from-charts")
     ap.add_argument("--shard", default=None, metavar="K/N",
-                    help="only the songs whose index is K modulo N, so N processes share the "
-                         "GPU (the seeds stay the full run's, so the charts match it); the "
-                         "directory gets _shardKofN, and scripts/merge_shards.py makes the run")
+                    help="only shard K of N, the songs shared out by length (shard_of), so N "
+                         "processes share the GPU and end together (the seeds stay the full "
+                         "run's, so the charts match it); the directory gets _shardKofN, and "
+                         "scripts/merge_shards.py makes the run")
     ap.add_argument("--sr-min", type=float, default=None,
                     help="only the charts at this SR or above (the seeds stay those of the "
                          "full run, so the charts match it)")
@@ -665,11 +686,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"--shard {a.shard}: K/N with 0 <= K < N", file=sys.stderr)
             return 2
         out_dir = out_dir.with_name(out_dir.name + f"_shard{shard[0]}of{shard[1]}")
+        assigned = shard_of(rows, a.cache, shard[1], a.sr_min)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results, charts = [], {}
     for i, r in enumerate(rows):
-        if shard is not None and i % shard[1] != shard[0]:
+        if shard is not None and assigned[i] != shard[0]:
             continue
         if a.sr_min is not None and float(r["sr"]) < a.sr_min:
             continue
