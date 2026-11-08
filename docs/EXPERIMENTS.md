@@ -3671,6 +3671,80 @@ The playtest gate is read off 3: at songs 0.90 or under, or auc 0.85 or under, a
 check becomes worth the blind songs. How it could fail: no larger step than 4 draws made puts
 the limit in what the choosing judge sees (the rhythm alone), not in the number of draws.
 
+### 2026-11-09 (1) · run_1113: 8 draws on all songs; the lanes chosen too (predictions)
+
+run_1112's rhythm-view fresh judges (the entry before left them for this one): the cosine run
+0.664, the chosen run 0.535, -0.129 [-0.227, -0.034] (prediction 3, -0.02 to -0.06: miss,
+far larger). In what the choosing judge sees, the chosen charts are nearly human (0.5 is
+chance). The diagnostics judge on the 120 songs: logistic 0.852 → 0.831, trees 0.941 → 0.939.
+
+`run_1113.sh` (23:35 to 04:42; the drawing 4 h 26 min). 8 draws a window, all 240 val songs,
+the same choosing judge (sel_rhythm); fresh standard judges (seed 1, --sr view, 2 epochs, 2
+folds) on the chosen run and the cosine run, the same 96 songs:
+
+| | cosine | 8 draws | difference (95%) | human | prediction |
+|---|---|---|---|---|---|
+| standard judge auc | 0.911 | 0.878 | -0.033 [-0.068, +0.002] | | -0.03 to -0.07: hit, at the edge |
+| songs (each song's windows averaged) | 0.969 | 0.958 | | | 0.90-0.96: hit |
+| gain (the choosing judge's logits a window) | | 3.36 | the same 120 songs: 4 draws 2.44, 8 draws 3.42 | | 3.0-3.6: hit |
+| a song's time (the plain draw's, a process) | | x1.74 | 4 draws x1.05 | | x1.1-1.4: miss |
+| density | | | -2.4% | | -1% to -4%: hit |
+| new_onsets | 0.118 | 0.108 | -0.010 [-0.016, -0.004] | 0.051 | -0.01 to -0.03: hit, at the edge |
+| sr_error | 0.246 | 0.279 | +0.033 [+0.002, +0.065] | | |
+| rhythm_rep1 | 0.255 | 0.329 | | 0.266 | |
+| motion_pred | 0.127 | 0.151 | | 0.132 | |
+| release_on_onset | 0.692 | 0.729 | | 0.759 | |
+| hold_share | 0.215 | 0.203 | | 0.218 | |
+| move_jack | 0.033 | 0.040 | | 0.044 | |
+
+The diagnostics judge: logistic 0.871 → 0.860, trees 0.953 → 0.938. The playtest gate (songs
+0.90 or under, or auc 0.85 or under) is not passed. The choosing judge's scores went down 40%
+further than with 4 draws, the fresh judge's step not (-0.033 here, -0.040 with 4 draws under
+the weaker 120-song judges): the failure reading written before it ran, the limit is what the
+choosing judge sees (the rhythm alone), not the number of draws. 8 draws also push the one-bar
+repeats and the lane motion's predictability past the human charts and spread the SR, for
+x1.74 the time: 4 draws stay the setting (DECISIONS 2026-11-09).
+
+**The lanes chosen too** (`run_1114.sh`). run_1112's rhythm-view fresh judge fell to 0.535
+(0.664 for the cosine run), the full view only to 0.818: what is left to tell is in the lanes
+and the long notes, which the choosing judge never saw. The lane passes now draw 4 versions of
+the lanes at once (`sampler.forward_lanes_k`, `refine_lanes_k`: one forward pass of 4 a row;
+the versions share the rhythm, chord sizes and holds) and the song keeps, span by span, the
+version a full-view judge scores lowest (`sampler.choose_lanes`, `evaluate.py
+--lane-select-judge J --lane-select-k 4`). The spans start 4 bars into the judges' windows
+(`lane_spans`: row 0, then L/2, L/2 + L, ...), so a seam between two versions lies in the
+middle of a window a judge scores; where the versions on its two sides differ, the 2 beats on
+each side are chosen again with both sides in view (`refine_rows`, the refine pass on those
+rows alone), so no lane pattern breaks there. The choosing judge: the full view of the cosine
+draw before F's passes, the human chart's SR, 5 folds kept (sel_lanes). forward_lanes chooses
+every lane from the rhythm, chord sizes and holds alone (the lanes a chart had never enter; a
+test checks it), so the lanes are chosen on run_1112's chosen draw as saved (`--from-charts`,
+`sampler.relane_song`): the same 120 songs and rhythm, lanes as its passes would have drawn
+them, then F's passes; the drawing is not done again. Fresh judge as s1_sel (seed 1, --sr view,
+2 epochs, all 5 folds of the 120 songs), so the step is paired with run_1112's on the same
+songs. Stopped early as run_1112: after 30 songs, a lane gain (the chosen version under the
+mean of its 4, in that judge's logits) under a tenth of its gap stops it (`select_watch.py
+--field lane`).
+
+Predictions (written before it ran):
+1. The choosing judge (full view, human SR, the cosine draw before the passes, 5 folds): auc
+   0.92-0.96 (the rhythm view's 0.877 and the lanes and long notes on top); its gap 7-10 logits.
+2. The lane gain: 0.5-1.5 logits a span, 7-20% of the gap (the versions of a window's lanes
+   read less apart than its rhythm draws, 2.45); the run goes on.
+3. The fresh full-view judge, the lanes chosen minus run_1112's chosen run on the same 120
+   songs: -0.01 to -0.04; songs under 0.90.
+4. Lanes toward the human charts: move_jack 0.043 → 0.044-0.051, motion_pred 0.139 →
+   0.125-0.137 (human 0.128); the rhythm as it was (density within ±0.5%, new_onsets within
+   ±0.005: only F's passes can move it); sr_error 0 to -0.03.
+5. A song at 60-100 s a process (the lane passes are half the cosine draw's 117 s, at x1.1
+   for 4 versions; the seams and F's passes on top).
+How it could fail: a gain under a tenth stops it, and the lanes' tell is the lane model's
+habit rather than a draw's luck (a lane model trained on its own, or the taps view as the
+judge, are the levers); a gain and no step, and F's passes undo the lanes (carry_rhythm,
+copy_sections and align_alike choose the lanes of the bars they rewrite again) or the choice
+learned the choosing judge's quirks; a step with the lane motion past the human, and the
+choice overshoots as 8 draws did.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

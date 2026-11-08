@@ -1161,6 +1161,27 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert all(float(r["select_gain"]) >= 0 for r in picked)
     assert json.loads((chosen / "summary.json").read_text())["select_k"] == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--select-judge", str(pick)]) == 2
+    # the lanes chosen by a full-view judge: while drawing, and again on the saved charts
+    lanes = ["--lanes", "forward", "--refine", "1", "--lane-select-judge", str(keep),
+             "--lane-select-k", "2"]
+    assert evaluate.main([*common, *lanes]) == 0
+    drawn = next((tmp_path / "j").glob("eval_*_lsel2keep*"))
+    assert json.loads((drawn / "summary.json").read_text())["lane_select_k"] == 2
+    assert evaluate.main([*common, "--from-charts", str(run), *lanes]) == 0
+    again = run.parent / (run.name + "_lsel2keep")
+    with open(again / "per_song.csv", newline="") as f:
+        relaned = list(csv.DictReader(f))
+    assert len(relaned) == 3 and all(float(r["lane_select_windows"]) >= 1 for r in relaned)
+    assert all(float(r["lane_select_gain"]) >= 0 and int(r["lane_seams"]) >= 0
+               for r in relaned)
+    old, new = np.load(run / "charts.npz"), np.load(again / "charts.npz")
+    for r in relaned:                               # the rhythm and the long notes stay
+        a, b = old[r["key"]], new[r["key"]]
+        assert np.array_equal(np.isin(a, (TAP, HOLD_START)).any(-1),
+                              np.isin(b, (TAP, HOLD_START)).any(-1))
+        assert np.array_equal(a == HOLD_START, b == HOLD_START)
+        assert np.array_equal((a == TAP).sum(-1), (b == TAP).sum(-1))
+    assert evaluate.main([*common, "--lane-select-judge", str(keep)]) == 2   # no lane passes
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

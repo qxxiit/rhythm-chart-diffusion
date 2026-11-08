@@ -54,7 +54,7 @@ filled, so sampling never gets stuck.
 from __future__ import annotations
 
 import math
-from itertools import combinations, permutations
+from itertools import combinations, pairwise, permutations
 
 import numpy as np
 import torch
@@ -107,7 +107,8 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "tidied_holds": 0, "section_bars": 0, "section_back": 0, "capped_rows": 0,
          "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0,
          "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0,
-         "select_windows": 0, "select_gain": 0.0}
+         "select_windows": 0, "select_gain": 0.0, "lane_select_windows": 0,
+         "lane_select_gain": 0.0, "lane_seams": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -550,6 +551,223 @@ def refine_lanes(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_l
                 break
             w0 += half
     return song
+
+
+def forward_lanes_k(model, songs: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                    n_cells: int, *, temperature: float = 0.5,
+                    rng: np.random.Generator | None = None, release_gap: int = 0,
+                    past: int = L - L // 4, jack_bias: float = 0.0) -> np.ndarray:
+    """forward_lanes for k versions of one song at once (choose_lanes).
+
+    songs     [k, n_rows, K]: the same rhythm, chord sizes and holds (they start as copies),
+              changed in place and returned. They have the same rows to choose, so each
+              row's k windows go through the model in one pass; every version draws its
+              own lanes (the one rng in turn), so the versions part as they go.
+    """
+    rng = rng or np.random.default_rng()
+    fpc = model.config.frames_per_cell
+    k = len(songs)
+    todo = lane_choice_rows(songs[0], n_cells, release_gap)
+    waiting = np.zeros(songs[0].shape, dtype=bool)
+    for row, free, _ in todo:
+        waiting[row, free] = True
+    for row, free, n in todo:
+        w0 = int(np.clip(row - past, 0, songs.shape[1] - L))
+        xs = songs[:, w0:w0 + L].astype(np.int64).copy()
+        xs[:, waiting[w0:w0 + L]] = MASK
+        probs = denoiser_probs_batch(model, xs, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+        for i in range(k):
+            p = probs[i, row - w0]
+            chosen = _lane_sets(free, n, p[:, TAP], p[:, EMPTY], temperature, rng,
+                                jack_bonus(songs[i], row, jack_bias))
+            songs[i, row, free] = EMPTY
+            songs[i, row, list(chosen)] = TAP
+        waiting[row] = False
+    return songs
+
+
+def refine_lanes_k(model, songs: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                   n_cells: int, *, sweeps: int = 2, temperature: float = 0.5, stride: int = 8,
+                   rng: np.random.Generator | None = None, release_gap: int = 0,
+                   jack_bias: float = 0.0) -> np.ndarray:
+    """refine_lanes for k versions of one song at once (as forward_lanes_k): the rows a pass
+    re-chooses are the same in every version (taps and holds stay), their k windows one
+    forward pass, each version's lanes its own draw."""
+    rng = rng or np.random.default_rng()
+    fpc = model.config.frames_per_cell
+    half, quarter = L // 2, L // 4
+    for _ in range(sweeps):
+        w0 = 0
+        while True:
+            last = w0 + L >= n_cells
+            lo = 0 if w0 == 0 else w0 + quarter
+            hi = min(w0 + L, n_cells) if last else w0 + 3 * quarter
+            for j in rng.permutation(stride):
+                todo = []
+                for row in range(lo + (j - lo) % stride, hi, stride):
+                    free, n = _free_lanes(songs[0], row, release_gap)
+                    if 0 < n < len(free):
+                        todo.append((row, free, n))
+                if not todo:
+                    continue
+                xs = songs[:, w0:w0 + L].astype(np.int64).copy()
+                for row, free, _ in todo:
+                    xs[:, row - w0, free] = MASK
+                probs = denoiser_probs_batch(model, xs, frames[w0 * fpc:(w0 + L) * fpc], s,
+                                             beat_len(w0))
+                for i in range(len(songs)):
+                    for row, free, n in todo:
+                        p = probs[i, row - w0]
+                        chosen = _lane_sets(free, n, p[:, TAP], p[:, EMPTY], temperature, rng,
+                                            jack_bonus(songs[i], row, jack_bias))
+                        songs[i, row, free] = EMPTY
+                        songs[i, row, list(chosen)] = TAP
+            if last:
+                break
+            w0 += half
+    return songs
+
+
+def refine_rows(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len, lo: int,
+                hi: int, *, sweeps: int = 2, temperature: float = 0.5, stride: int = 8,
+                rng: np.random.Generator | None = None, release_gap: int = 0,
+                jack_bias: float = 0.0) -> np.ndarray:
+    """refine_lanes on the rows lo..hi-1 alone (choose_lanes' seams): in one window of L rows
+    centred on them (as far as the song allows), those rows' lanes are chosen again per
+    residue class mod stride with the rest of the chart visible, `sweeps` times. Rhythm,
+    chord sizes and holds stay. Changes song in place and returns it."""
+    rng = rng or np.random.default_rng()
+    fpc = model.config.frames_per_cell
+    w0 = int(np.clip((lo + hi) // 2 - L // 2, 0, len(song) - L))
+    lo, hi = max(lo, w0), min(hi, w0 + L)
+    for _ in range(sweeps):
+        for j in rng.permutation(stride):
+            todo = []
+            for row in range(lo + (j - lo) % stride, hi, stride):
+                free, n = _free_lanes(song, row, release_gap)
+                if 0 < n < len(free):
+                    todo.append((row, free, n))
+            if not todo:
+                continue
+            x = song[w0:w0 + L].astype(np.int64).copy()
+            for row, free, _ in todo:
+                x[row - w0, free] = MASK
+            probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+            for row, free, n in todo:
+                p = probs[row - w0]
+                chosen = _lane_sets(free, n, p[:, TAP], p[:, EMPTY], temperature, rng,
+                                    jack_bonus(song, row, jack_bias))
+                song[row, free] = EMPTY
+                song[row, list(chosen)] = TAP
+    return song
+
+
+LANE_SEAM = 2 * D               # choose_lanes: rows on each side of a seam chosen again
+
+
+def lane_spans(n_cells: int) -> list[tuple[int, int]]:
+    """(start, end) of the spans choose_lanes keeps one version of the lanes for: they begin
+    at row 0 and at half a window past every window start of a judge (L/2, L/2 + L, ...),
+    so the seams between versions lie in the middle of the 8-bar windows a judge scores. A
+    span is chosen by the window of L rows from its start."""
+    bounds = [0, *range(L // 2, n_cells, L), n_cells]
+    return [(a, b) for a, b in pairwise(bounds) if b > a]
+
+
+def choose_lanes(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                 n_cells: int, select, k: int, *, lanes: str = "forward", refine: int = 2,
+                 temperature: float = 0.5, forward_temperature: float | None = None,
+                 rng: np.random.Generator | None = None, release_gap: int = 0,
+                 jack_bias: float = 0.0, seam: int = LANE_SEAM) -> np.ndarray:
+    """The lane passes on k versions of the song at once, the song then put together from
+    the versions a judge likes (generate_song's and relane_song's lane_select).
+
+    The versions start as copies of song: forward_lanes_k if lanes == "forward" (at
+    forward_temperature, default temperature), refine_lanes_k `refine` sweeps, so they share
+    the rhythm, chord sizes and holds and each has lanes of its own, drawn as the plain
+    passes draw them. Each span of lane_spans keeps the version whose window
+    select(cands, mel, b) scores lowest (a [k] array; cands are the k windows of L rows
+    from the span's start). Where the versions on the two sides of a seam differ, the
+    rows within `seam` of it are chosen again with both sides visible (refine_rows,
+    max(refine, 1) sweeps), so no lane pattern breaks there; the seams lie mid-window,
+    where a judge scoring the chart would see what is left of them. Changes song in
+    place and returns it; STATS lane_select_windows, lane_select_gain (as select_gain)
+    and lane_seams.
+    """
+    rng = rng or np.random.default_rng()
+    r = model.config.frames_per_cell
+    songs = np.repeat(song[None], k, axis=0)
+    if lanes == "forward":
+        forward_lanes_k(model, songs, frames, s, beat_len, n_cells, rng=rng,
+                        release_gap=release_gap, jack_bias=jack_bias,
+                        temperature=temperature if forward_temperature is None
+                        else forward_temperature)
+    if refine:
+        refine_lanes_k(model, songs, frames, s, beat_len, n_cells, sweeps=refine,
+                       temperature=temperature, rng=rng, release_gap=release_gap,
+                       jack_bias=jack_bias)
+    kept = []
+    for a, b in lane_spans(n_cells):
+        scores = np.asarray(select([songs[i, a:a + L] for i in range(k)],
+                                   frames[a * r:(a + L) * r], beat_len(a)), dtype=np.float64)
+        best = int(np.argmin(scores))
+        STATS["lane_select_windows"] += 1
+        STATS["lane_select_gain"] += float(scores.mean() - scores[best])
+        song[a:b] = songs[best, a:b]
+        kept.append((a, best))
+    for (_, left), (a, right) in pairwise(kept):
+        if left != right:
+            STATS["lane_seams"] += 1
+            refine_rows(model, song, frames, s, beat_len, max(0, a - seam),
+                        min(n_cells, a + seam), sweeps=max(1, refine), temperature=temperature,
+                        rng=rng, release_gap=release_gap, jack_bias=jack_bias)
+    return song
+
+
+def relane_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_points,
+                cell_offset: int, n_cells: int, *, lanes: str = "forward", refine: int = 2,
+                lane_temperature: float = 0.5, forward_temperature: float | None = None,
+                jack_bias: float = 0.0, release_gap: int | None = None, seed: int = 0,
+                genre: int | None = None, mapper: int | None = None, stats=None,
+                style_guidance: float = 0.0, lane_guidance: float | None = None,
+                select=None, select_k: int = 1) -> np.ndarray:
+    """generate_song's lane passes once more on a chart drawn with them, before its later
+    passes ([n_chunks, L, K] tokens, e.g. an evaluate.py charts.npz of a run without them):
+    forward_lanes if lanes == "forward" (at forward_temperature, default lane_temperature),
+    refine_lanes `refine` sweeps at lane_temperature, with lane_guidance (default
+    style_guidance) towards the style / stats. forward_lanes chooses the lanes of every
+    row with a choice from the rhythm, chord sizes and holds alone (the lanes the chart
+    had never enter), so the chart gets lanes as its run would have drawn them; with
+    select and select_k > 1 they are chosen as generate_song's lane_select (choose_lanes).
+    release_gap: default hold_rules(s)'s, as generate_song's. A new array."""
+    lane_model = None
+    if lane_guidance is not None and lane_guidance != style_guidance:
+        lane_model = Styled(model, genre, mapper, lane_guidance, stats=stats)
+    if genre is not None or mapper is not None or style_guidance or stats is not None:
+        model = Styled(model, genre, mapper, style_guidance, stats=stats)
+    lane_model = lane_model or model
+    song = np.concatenate([np.asarray(tokens, dtype=np.int64).reshape(-1, K),
+                           np.full((L, K), PAD, dtype=np.int64)])
+    frames, _ = _song_frames(model, mel, len(song))
+    beat_len = _beat_len_fn(timing_points, cell_offset)
+    release_gap = hold_rules(s)[1] if release_gap is None else release_gap
+    rng = np.random.default_rng([seed, 1])            # not post_song's stream for this seed
+    if select is not None and select_k > 1 and (lanes == "forward" or refine):
+        choose_lanes(lane_model, song, frames, s, beat_len, n_cells, select, select_k,
+                     lanes=lanes, refine=refine, temperature=lane_temperature,
+                     forward_temperature=forward_temperature, rng=rng,
+                     release_gap=release_gap, jack_bias=jack_bias)
+    else:
+        if lanes == "forward":
+            forward_lanes(lane_model, song, frames, s, beat_len, n_cells, rng=rng,
+                          release_gap=release_gap, jack_bias=jack_bias,
+                          temperature=lane_temperature if forward_temperature is None
+                          else forward_temperature)
+        if refine:
+            refine_lanes(lane_model, song, frames, s, beat_len, n_cells, sweeps=refine,
+                         temperature=lane_temperature, rng=rng, release_gap=release_gap,
+                         jack_bias=jack_bias)
+    return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
 
 
 HOLD_REACH = L // 4             # refine_holds looks at most 8 beats past an onset
@@ -2235,7 +2453,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   light_alike: bool = False, untangle_wide: bool = False,
                   untangle_insane: bool = False, recheck: float | None = None,
                   recheck_add: float | None = None, schedule: str = "linear",
-                  select=None, select_k: int = 1) -> np.ndarray:
+                  select=None, select_k: int = 1, lane_select=None,
+                  lane_select_k: int = 1) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2328,6 +2547,11 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   the lowest select(cands, mel, b) is kept (src/models/select.py: a judge
                   that held the song out); STATS select_gain adds the mean minus the lowest
                   score of each window. None or select_k 1: one draw, as without
+    lane_select, lane_select_k
+                  the lane passes draw lane_select_k versions of the lanes together and
+                  the song keeps, span by span, the one lane_select(cands, mel, b) likes
+                  (choose_lanes: its seams are chosen again). None or 1: one set of
+                  lanes, as without
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
     carry_rhythm, strong_chords, copy_sections, copy_bars, clean_holds again if a bar was
     copied, align_alike, tidy_holds, fill_holes, rest_bars, thin_bars, recheck_notes,
@@ -2394,16 +2618,22 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     release_gap = auto_gap if release_gap is None else release_gap
     if min_hold > 0 or release_gap > 0:
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
-    if lanes == "forward":
-        forward_lanes(lane_model, song, frames, s, beat_len, n_cells, rng=rng,
-                      release_gap=release_gap,
-                      jack_bias=jack_bias,
-                      temperature=lane_temperature if forward_temperature is None
-                      else forward_temperature)
-    if refine:
-        refine_lanes(lane_model, song, frames, s, beat_len, n_cells, sweeps=refine,
-                     temperature=lane_temperature, rng=rng, release_gap=release_gap,
-                     jack_bias=jack_bias)
+    if lane_select is not None and lane_select_k > 1 and (lanes == "forward" or refine):
+        choose_lanes(lane_model, song, frames, s, beat_len, n_cells, lane_select,
+                     lane_select_k, lanes=lanes, refine=refine, temperature=lane_temperature,
+                     forward_temperature=forward_temperature, rng=rng,
+                     release_gap=release_gap, jack_bias=jack_bias)
+    else:
+        if lanes == "forward":
+            forward_lanes(lane_model, song, frames, s, beat_len, n_cells, rng=rng,
+                          release_gap=release_gap,
+                          jack_bias=jack_bias,
+                          temperature=lane_temperature if forward_temperature is None
+                          else forward_temperature)
+        if refine:
+            refine_lanes(lane_model, song, frames, s, beat_len, n_cells, sweeps=refine,
+                         temperature=lane_temperature, rng=rng, release_gap=release_gap,
+                         jack_bias=jack_bias)
     if holds or hold_share is not None:
         refine_holds(model, song, frames, s, beat_len, n_cells, min_hold=min_hold,
                      release_gap=release_gap, hold_share=hold_share, only_more=hold_up,

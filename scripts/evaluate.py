@@ -115,7 +115,10 @@ human chart's SR with the song's real timing, then score:
 --from-charts DIR scores the charts an earlier run saved (charts.npz) instead of
 sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry-rhythm,
 --strong-chords, --copy-sections, --copy-bias, --alike, --ln-tidy, --fill-holes, --rest,
---untangle, --chord-cap, in that order): minutes instead of hours.
+--untangle, --chord-cap, in that order): minutes instead of hours. With
+--lane-select-judge the lane passes (--lanes forward, --refine) first draw the lanes of the
+saved charts again, --lane-select-k versions chosen by the judge (sampler.relane_song; the
+saved charts must be a run's before its later passes; tag _lsel<k><name>).
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
 are those of the passes run here. Writes to
@@ -183,6 +186,7 @@ from src.models.sampler import (
     generate_song,
     onset_strength,
     post_song,
+    relane_song,
     steps_name,
 )
 from src.models.select import WindowJudge
@@ -500,6 +504,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--select-k", type=int, default=4, help="draws a window (--select-judge)")
     ap.add_argument("--select-draws", type=int, default=2,
                     help="random lane draws the rhythm view's judge averages over")
+    ap.add_argument("--lane-select-judge", type=Path, default=None,
+                    help="a judge.py --save-models run (full view): the lane passes draw "
+                         "--lane-select-k versions of the lanes and every span keeps the one "
+                         "the song's held-out fold judge finds most human, the seams drawn "
+                         "again (sampler.choose_lanes; tag _lsel<k><name>); with --from-charts "
+                         "on the saved charts' rhythm and holds")
+    ap.add_argument("--lane-select-k", type=int, default=4,
+                    help="versions of the lanes (--lane-select-judge)")
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
@@ -550,6 +562,13 @@ def main(argv: list[str] | None = None) -> int:
             print("--select-judge chooses while drawing: not with --from-charts", file=sys.stderr)
             return 2
         selector = WindowJudge(a.select_judge, next(model.parameters()).device)
+    lane_selector = None
+    if a.lane_select_judge is not None:
+        if a.lanes != "forward" and not a.refine:
+            print("--lane-select-judge chooses among the lane passes' draws: give --lanes "
+                  "forward and / or --refine", file=sys.stderr)
+            return 2
+        lane_selector = WindowJudge(a.lane_select_judge, next(model.parameters()).device)
     labels = read_style(a.style_csv) if a.style_csv.exists() else {}
     vocab = getattr(model, "style", None)
     if a.style == "oracle" and (vocab is None or not labels):
@@ -665,6 +684,9 @@ def main(argv: list[str] | None = None) -> int:
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
     if a.select_judge is not None:
         tag += f"_sel{a.select_k}{a.select_judge.name}"
+    lane_tag = f"_lsel{a.lane_select_k}{a.lane_select_judge.name}" \
+        if a.lane_select_judge is not None else ""
+    tag += lane_tag
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
     if a.sample_seed is not None:
         tag += f"_s{a.sample_seed}"
@@ -683,7 +705,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{a.from_charts}: no saved chart for {len(missing)} of the {len(rows)} charts "
                   "(use that run's --per-song / --n / --seed)", file=sys.stderr)
             return 2
-        suffix = hold_tag + carry_tag + strong_tag + section_tag + (
+        suffix = lane_tag + hold_tag + carry_tag + strong_tag + section_tag + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
             if a.copy_bias is not None else "") + alike_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
@@ -731,6 +753,13 @@ def main(argv: list[str] | None = None) -> int:
                 else sr
             select = selector.scorer(r["key"], ref_sr, draws=a.select_draws,
                                      seed=sample_seed + i)
+        lsel0, lgain0, seams0 = (STATS["lane_select_windows"], STATS["lane_select_gain"],
+                                 STATS["lane_seams"])
+        lane_select = None
+        if lane_selector is not None:
+            ref_sr = star_rating_file(a.root / r["path"]) \
+                if lane_selector.meta["sr"] == "human" else sr
+            lane_select = lane_selector.scorer(r["key"], ref_sr, draws=1, seed=sample_seed + i)
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
@@ -755,6 +784,15 @@ def main(argv: list[str] | None = None) -> int:
         buckets = chartstats.encode(spec, wanted) if a.stats != "none" else None
         if saved is not None:
             tokens = saved[r["key"]]
+            if lane_selector is not None:
+                tokens = relane_song(model, tokens, mel, sr, tps, offset, n_cells,
+                                     lanes=a.lanes, refine=a.refine,
+                                     lane_temperature=a.lane_temp,
+                                     forward_temperature=a.forward_temp,
+                                     jack_bias=a.jack_bias, release_gap=a.release_gap,
+                                     seed=sample_seed + i, stats=buckets,
+                                     lane_guidance=a.lane_guidance, select=lane_select,
+                                     select_k=a.lane_select_k if lane_select else 1, **style)
             if a.copy_bias is not None or a.refine_holds or share is not None \
                     or a.rest is not None or a.fill_holes is not None \
                     or a.carry_rhythm is not None or a.ln_tidy is not None \
@@ -810,6 +848,8 @@ def main(argv: list[str] | None = None) -> int:
                                    alike_keep=a.alike_keep, strong=a.strong_chords,
                                    lane_guidance=a.lane_guidance,
                                    select=select, select_k=a.select_k if select else 1,
+                                   lane_select=lane_select,
+                                   lane_select_k=a.lane_select_k if lane_select else 1,
                                    **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -818,6 +858,12 @@ def main(argv: list[str] | None = None) -> int:
             cost["select_windows"] = n_sel
             cost["select_gain"] = round((STATS["select_gain"] - gain0) / n_sel, 4) \
                 if n_sel else float("nan")
+        if lane_selector is not None:
+            n_sel = STATS["lane_select_windows"] - lsel0
+            cost["lane_select_windows"] = n_sel
+            cost["lane_select_gain"] = round((STATS["lane_select_gain"] - lgain0) / n_sel, 4) \
+                if n_sel else float("nan")
+            cost["lane_seams"] = STATS["lane_seams"] - seams0
         if a.copy_bias is not None:
             cost["copied_bars"] = STATS["copied_bars"] - copies0
         if a.refine_holds or share is not None:
@@ -888,6 +934,8 @@ def main(argv: list[str] | None = None) -> int:
             row["_index"] = i                     # merge_shards.py puts the rows back in order
         results.append(row)
         gain = f"  select gain {cost['select_gain']:.3f}" if "select_gain" in cost else ""
+        if "lane_select_gain" in cost:
+            gain += f"  lane gain {cost['lane_select_gain']:.3f}"
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
               f"(target {sr:.2f})  {cost['seconds']:.0f} s{gain}  {r['path']}", flush=True)
 
@@ -903,6 +951,8 @@ def main(argv: list[str] | None = None) -> int:
                "steps": a.steps, "schedule": a.schedule, "spread": a.spread,
                "select_judge": str(a.select_judge) if a.select_judge else None,
                "select_k": a.select_k if a.select_judge else None,
+               "lane_select_judge": str(a.lane_select_judge) if a.lane_select_judge else None,
+               "lane_select_k": a.lane_select_k if a.lane_select_judge else None,
                "lanes": a.lanes, "refine": a.refine,
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "copy_min_lag": a.copy_min_lag,

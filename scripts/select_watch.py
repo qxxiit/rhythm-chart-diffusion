@@ -2,11 +2,12 @@
 2026-11-08 (5); DECISIONS 2026-11-08: a run is cut where its reading is decided).
 
     python scripts/select_watch.py --logs L ... --judge J --pids P ... [--after 30]
-        [--min-share 0.1] [--every 60]
+        [--min-share 0.1] [--every 60] [--field select|lane]
 
 Reads "select gain X" from the per-song lines of the evaluate.py logs (--select-judge: how far,
 in the judge's logits, each window's chosen draw lies under the mean of its draws, averaged
-over the song). Once --after songs are done, their mean gain is set against the judge's gap
+over the song), or with --field lane "lane gain X" (--lane-select-judge: the same for the
+versions of the lanes, span by span). Once --after songs are done, their mean gain is set against the judge's gap
 between the run's windows and the human ones (models.json "gap"): under --min-share of it, the
 choosing cannot carry the charts far toward the human ones, so the processes --pids are
 stopped (SIGTERM) and STOPPED is written next to the first log (with the numbers); otherwise
@@ -24,7 +25,11 @@ import signal
 import time
 from pathlib import Path
 
-GAIN = re.compile(r"^\[\d+/\d+\] .* select gain (-?[0-9.]+|nan) ")
+FIELDS = ("select", "lane")
+
+
+def gain_pattern(field: str = "select") -> re.Pattern:
+    return re.compile(rf"^\[\d+/\d+\] .* {field} gain (-?[0-9.]+|nan) ")
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -36,16 +41,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--min-share", type=float, default=0.1,
                     help="the mean gain under this share of the judge's gap stops the run")
     ap.add_argument("--every", type=float, default=60.0, help="seconds between looks")
+    ap.add_argument("--field", choices=FIELDS, default="select",
+                    help="the gain read: the windows' (select) or the lanes' (lane)")
     return ap.parse_args(argv)
 
 
-def gains(logs: list[Path]) -> list[float]:
-    out = []
+def gains(logs: list[Path], field: str = "select") -> list[float]:
+    pattern, out = gain_pattern(field), []
     for p in logs:
         if not p.exists():
             continue
         for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
-            m = GAIN.match(line)
+            m = pattern.match(line)
             if m and m.group(1) != "nan":
                 out.append(float(m.group(1)))
     return out
@@ -77,7 +84,7 @@ def main(argv=None) -> int:
     a = parse_args(argv)
     gap = float(json.loads((a.judge / "models.json").read_text(encoding="utf-8"))["gap"])
     while True:
-        found = gains(a.logs)
+        found = gains(a.logs, a.field)
         if len(found) >= a.after:
             stop, line = decide(found, gap, a.after, a.min_share)
             print(line, flush=True)
