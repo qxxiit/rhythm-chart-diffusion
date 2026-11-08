@@ -178,6 +178,12 @@ python scripts/judge.py --ckpt C --ai R [--view taps|rhythm --sr view] [--stop-b
                                        #    --max-folds K; --eval-epochs: the auc after every epoch
 python scripts/judge_table.py J ...    # ✅ judges of one run side by side, also on the songs they
                                        #    all have, each minus the row above (nested views)
+python scripts/evaluate.py ... --select-judge J --select-k 4
+                                       # ✅ every window drawn k times, the draw the song's
+                                       #    held-out fold judge (judge.py --save-models,
+                                       #    src/models/select.py) finds most human kept
+python scripts/select_watch.py --logs L --judge J --pids P   # ✅ stops such a drawing after
+                                       #    30 songs when the choice moves little
 python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
                                        #    from the human ones by all the diagnostics at once
                                        #    (auc, paired, what it leans on); seconds, aggregate only

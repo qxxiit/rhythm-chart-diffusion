@@ -106,7 +106,8 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "filled_holes": 0, "carried_bars": 0, "carried_ln_bars": 0,
          "tidied_holds": 0, "section_bars": 0, "section_back": 0, "capped_rows": 0,
          "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0,
-         "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0}
+         "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0,
+         "select_windows": 0, "select_gain": 0.0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -134,6 +135,23 @@ def denoiser_probs(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float) 
                    torch.tensor([b], dtype=torch.float32, device=device))
     model.train(was_training)
     return torch.softmax(logits.float(), dim=-1)[0].cpu().numpy().astype(np.float64)
+
+
+@torch.no_grad()
+def denoiser_probs_batch(model, xs: np.ndarray, mel: torch.Tensor, s: float,
+                         b: float) -> np.ndarray:
+    """p(x0 | x) for k windows of the same rows at once (one forward pass of k): [k, L, K, 5]."""
+    k = len(xs)
+    STATS["passes"] += k * (2 if getattr(model, "guidance", 0) else 1)
+    device = mel.device
+    was_training = model.training
+    model.eval()
+    logits = model(torch.as_tensor(xs, dtype=torch.long, device=device),
+                   mel[None].expand(k, -1, -1),
+                   torch.full((k,), float(s), dtype=torch.float32, device=device),
+                   torch.full((k,), float(b), dtype=torch.float32, device=device))
+    model.train(was_training)
+    return torch.softmax(logits.float(), dim=-1).cpu().numpy().astype(np.float64)
 
 
 ORDERS = ("random", "confidence", "noisy", "block")
@@ -1987,6 +2005,51 @@ def strong_chords(song: np.ndarray, n_cells: int, strength: np.ndarray, times: n
 LANE_PASSES = ("sampled", "forward")
 
 
+def sample_windows(model, x: np.ndarray, mel: torch.Tensor, s: float, b: float, k: int, *,
+                   steps: int = 32, order: str = "random",
+                   rng: np.random.Generator | None = None, left_closed: bool = True,
+                   right_closed: bool = True, temperature: float = 1.0,
+                   hold_bias: float = 0.0, empty_bias: float = 0.0, spread: bool = False,
+                   row_empty_bias: np.ndarray | None = None,
+                   row_onset_bias: np.ndarray | None = None,
+                   schedule: str = "linear") -> list[np.ndarray]:
+    """k draws of sample_window for one window (generate_song's select). For the random order
+    the k windows go through the denoiser together, one forward pass of k a step (the GPU is
+    mostly idle at one window); every draw opens its own cells with the same rng, so the k
+    differ. Other orders, spread or steps 0: k calls of sample_window."""
+    rng = rng or np.random.default_rng()
+    if k <= 1 or order != "random" or steps <= 0 or spread:
+        return [sample_window(model, x, mel, s, b, steps=steps, order=order, rng=rng,
+                              left_closed=left_closed, right_closed=right_closed,
+                              temperature=temperature, hold_bias=hold_bias,
+                              empty_bias=empty_bias, spread=spread,
+                              row_empty_bias=row_empty_bias, row_onset_bias=row_onset_bias,
+                              schedule=schedule) for _ in range(max(1, k))]
+    if schedule not in SCHEDULES:
+        raise ValueError(f"unknown schedule {schedule!r}")
+    xs = np.repeat(np.array(x, dtype=np.int64)[None], k, axis=0)
+    weight = _class_weight(hold_bias, empty_bias)
+    for t in range(steps, 0, -1):
+        todos = [np.argwhere(xi == MASK) for xi in xs]
+        if not any(len(td) for td in todos):
+            break
+        probs = denoiser_probs_batch(model, xs, mel, s, b)
+        for i, todo in enumerate(todos):
+            if not len(todo):
+                continue
+            if t == 1:
+                pick = todo
+            else:
+                share = 1.0 / t if schedule == "linear" else open_share(t, steps, schedule)
+                chosen = rng.random(len(todo)) < share
+                if schedule != "linear" and not chosen.any():
+                    chosen[int(rng.integers(len(todo)))] = True
+                pick = todo[chosen]
+            _open_cells(xs[i], pick, probs[i], rng, left_closed, right_closed, weight,
+                        row_empty_bias, row_onset_bias)
+    return list(xs)
+
+
 def _song_frames(model, mel: np.ndarray, n_rows: int,
                  n_cells_for_ssm: int = 0) -> tuple[torch.Tensor, np.ndarray | None]:
     """(frames for n_rows token rows on the model's device, padded with silence past the
@@ -2171,7 +2234,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   strong: float | None = None, light: float | None = None,
                   light_alike: bool = False, untangle_wide: bool = False,
                   untangle_insane: bool = False, recheck: float | None = None,
-                  recheck_add: float | None = None, schedule: str = "linear") -> np.ndarray:
+                  recheck_add: float | None = None, schedule: str = "linear",
+                  select=None, select_k: int = 1) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2259,6 +2323,11 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     min_hold, release_gap
                   clean_holds after sampling; None = by the target SR (hold_rules),
                   0, 0 = keep the holds as sampled
+    select, select_k
+                  every window is drawn select_k times (sample_windows) and the draw with
+                  the lowest select(cands, mel, b) is kept (src/models/select.py: a judge
+                  that held the song out); STATS select_gain adds the mean minus the lowest
+                  score of each window. None or select_k 1: one draw, as without
     Order of work: sample, clean_holds, forward_lanes, refine_lanes, refine_holds,
     carry_rhythm, strong_chords, copy_sections, copy_bars, clean_holds again if a bar was
     copied, align_alike, tidy_holds, fill_holes, rest_bars, thin_bars, recheck_notes,
@@ -2289,13 +2358,24 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
         if onset_bias else None
 
     def fill(row0: int, left_closed: bool, right_closed: bool) -> None:
-        song[row0:row0 + L] = sample_window(
-            model, song[row0:row0 + L], frames[row0 * r:(row0 + L) * r], s, beat_len(row0),
-            steps=steps, order=order, rng=rng, left_closed=left_closed, right_closed=right_closed,
-            temperature=temperature, hold_bias=hold_bias, empty_bias=empty_bias, spread=spread,
-            row_empty_bias=None if row_bias is None else row_bias[row0:row0 + L],
-            row_onset_bias=None if row_onset is None else row_onset[row0:row0 + L],
-            schedule=schedule)
+        kw = {"steps": steps, "order": order, "rng": rng, "left_closed": left_closed,
+              "right_closed": right_closed, "temperature": temperature,
+              "hold_bias": hold_bias, "empty_bias": empty_bias, "spread": spread,
+              "row_empty_bias": None if row_bias is None else row_bias[row0:row0 + L],
+              "row_onset_bias": None if row_onset is None else row_onset[row0:row0 + L],
+              "schedule": schedule}
+        window_mel = frames[row0 * r:(row0 + L) * r]
+        if select is None or select_k <= 1:
+            song[row0:row0 + L] = sample_window(model, song[row0:row0 + L], window_mel, s,
+                                                beat_len(row0), **kw)
+            return
+        cands = sample_windows(model, song[row0:row0 + L], window_mel, s, beat_len(row0),
+                               select_k, **kw)
+        scores = np.asarray(select(cands, window_mel, beat_len(row0)), dtype=np.float64)
+        best = int(np.argmin(scores))
+        STATS["select_windows"] += 1
+        STATS["select_gain"] += float(scores.mean() - scores[best])
+        song[row0:row0 + L] = cands[best]
 
     if mode == "independent":
         for c in range(n_chunks):

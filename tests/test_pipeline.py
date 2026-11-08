@@ -1127,6 +1127,40 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert judge.main([*args, "--name", "m", "--max-folds", "1"]) == 0
     m = json.loads((tmp_path / "judge" / "m" / "summary.json").read_text())
     assert m["folds_run"] == 1 and m["stopped"]["max_folds"] == 1
+    # the fold judges kept, scoring as they did; a drawing that chooses by them
+    from src.data.beat_grid import from_timing_points
+    from src.data.mel import open_mel
+    from src.models.select import WindowJudge
+    assert judge.main([*args, "--name", "keep", "--save-models"]) == 0
+    keep = tmp_path / "judge" / "keep"
+    meta = json.loads((keep / "models.json").read_text())
+    assert meta["saved"] == [0, 1] and len(meta["fold_of"]) == 3 and meta["view"] == "full"
+    assert (keep / "fold0.pt").exists() and (keep / "fold1.pt").exists()
+    seen = next(r for r in windows("keep") if r["chart"] == "human")
+    key, start = seen["key"], int(seen["start"])
+    with open(run / "per_song.csv", newline="") as f:
+        sr_human = float(next(r for r in csv.DictReader(f) if r["key"] == key)["sr_human_local"])
+    z = np.load(data / "cache" / "tokens" / f"{key}.npz")
+    grid = from_timing_points([(float(t), float(b)) for t, b in z["timing_points"]])
+    cell = start - int(z["cell_offset"])
+    beat = float(grid.time_from_cell(cell + L, 12) - grid.time_from_cell(cell, 12)) / (L / 12)
+    mel = torch.as_tensor(open_mel(data / "cache", fake=True).frames(
+        key, grid, int(z["cell_offset"]), start, L), dtype=torch.float32)
+    human = judge.window(z["tokens"].reshape(-1, K), start)
+    score = WindowJudge(keep, torch.device("cpu")).scorer(key, sr_human)
+    assert abs(float(score([human], mel, beat)[0]) - float(seen["logit"])) < 0.05
+    assert WindowJudge(keep, torch.device("cpu")).scorer("no such song", 3.0) is None
+    assert judge.main([*args, "--name", "pick", "--view", "rhythm", "--sr", "human",
+                       "--save-models"]) == 0
+    pick = tmp_path / "judge" / "pick"
+    assert evaluate.main([*common, "--select-judge", str(pick), "--select-k", "2"]) == 0
+    chosen = next((tmp_path / "j").glob("eval_*_sel2pick*"))
+    with open(chosen / "per_song.csv", newline="") as f:
+        picked = list(csv.DictReader(f))
+    assert len(picked) == 3 and all(float(r["select_windows"]) >= 1 for r in picked)
+    assert all(float(r["select_gain"]) >= 0 for r in picked)
+    assert json.loads((chosen / "summary.json").read_text())["select_k"] == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--select-judge", str(pick)]) == 2
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

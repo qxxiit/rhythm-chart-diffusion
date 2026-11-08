@@ -3574,6 +3574,42 @@ nats instead of 2; its own judge as srv_full, the same 2 folds; written before i
    better pass; near 0 confirms the overlap, and the next lever acts on the whole window.
 3. Onset rows, new_onsets and SR error within ±0.005 of the cosine run.
 
+### 2026-11-08 (5) · Windows chosen by a judge (predictions)
+
+The tell is spread over the 8-bar window and rides on several parts at once (11-08 (4)), so a
+pass that fixes one part leaves the others to give the chart away. What sees the whole window
+is a judge. `evaluate.py --select-judge J --select-k 4` draws every window of the song 4 times
+(`sampler.sample_windows`: the 4 go through the denoiser together, one forward pass of 4 a
+step) and keeps the draw the song's judge scores lowest (`src/models/select.py`). The judges
+are a `judge.py --save-models` run's fold judges, each scoring only the songs its fold held
+out, so a song is chosen for by a judge that never saw it. What a window's drawing decides is
+its rhythm (the lane passes after it choose the lanes again), so the choosing judge is trained
+on the rhythm view of the cosine draw before F's passes, with the human chart's SR (the SR a
+draw is asked for). The judge that chooses never scores the result (docs/EVALUATION.md): fresh
+judges with another seed and fold split, trained on the chosen run and on the cosine run, the
+same 120 songs, all 5 folds each. `run_1112.sh`: the choosing judge, the first 120 val songs
+drawn so on three processes, F's passes, the fresh judges, the steps.
+
+Stopped early (`scripts/select_watch.py`): after 30 songs, if the mean gain of the choice (a
+window's chosen draw under the mean of its 4, in the judge's logits) is under a tenth of the
+judge's gap between the run's windows and the human ones, the draws of a window are too alike
+for a choice to carry the chart far, and the drawing stops there (STOPPED next to the first
+shard's log); nothing after it runs.
+
+Predictions (written before it ran):
+1. The choosing judge (rhythm view, human SR, the cosine draw before the passes, 5 folds): auc
+   0.78-0.88.
+2. The gain over the first 30 songs: 0.3-1.0 logits a window, 10-35% of that judge's gap: the
+   drawing goes on.
+3. The fresh judges, the chosen run minus the cosine run on the same 120 songs: full view
+   -0.01 to -0.04, rhythm view -0.02 to -0.06.
+4. Notes within ±3% of the cosine run; sr_error -0.00 to -0.05 (the choosing judge reads the
+   difficulty against the SR asked for); new_onsets 0 to -0.015.
+5. A song at 1.5-2.5 times the cosine draw's time a process.
+How it could fail: the gain under a tenth stops it, and the tell is the model's rather than
+the draw's (retraining is the lever); a large gain and no step under the fresh judges, and the
+choice learned the choosing judge's own quirks.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

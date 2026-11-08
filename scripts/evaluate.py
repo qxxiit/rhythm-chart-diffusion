@@ -185,6 +185,7 @@ from src.models.sampler import (
     post_song,
     steps_name,
 )
+from src.models.select import WindowJudge
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
@@ -492,6 +493,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sample-seed", type=int, default=None,
                     help="sampler seed only (default: --seed); the charts stay those of --seed")
+    ap.add_argument("--select-judge", type=Path, default=None,
+                    help="a judge.py --save-models run: every window is drawn --select-k "
+                         "times and the draw the song's held-out fold judge finds most human "
+                         "is kept (src/models/select.py; tag _sel<k><name>)")
+    ap.add_argument("--select-k", type=int, default=4, help="draws a window (--select-judge)")
+    ap.add_argument("--select-draws", type=int, default=2,
+                    help="random lane draws the rhythm view's judge averages over")
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
@@ -536,6 +544,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no {a.split} songs with SR, tokens and mel", file=sys.stderr)
         return 2
     model = load_denoiser(a.ckpt, pick_device(a.device))
+    selector = None
+    if a.select_judge is not None:
+        if a.from_charts is not None:
+            print("--select-judge chooses while drawing: not with --from-charts", file=sys.stderr)
+            return 2
+        selector = WindowJudge(a.select_judge, next(model.parameters()).device)
     labels = read_style(a.style_csv) if a.style_csv.exists() else {}
     vocab = getattr(model, "style", None)
     if a.style == "oracle" and (vocab is None or not labels):
@@ -649,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.min_hold is not None or a.release_gap is not None:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
+    if a.select_judge is not None:
+        tag += f"_sel{a.select_k}{a.select_judge.name}"
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
     if a.sample_seed is not None:
         tag += f"_s{a.sample_seed}"
@@ -708,6 +724,13 @@ def main(argv: list[str] | None = None) -> int:
         if not style and a.stats != "none" and a.style_guidance:
             style = {"style_guidance": a.style_guidance}           # guidance towards the stats
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
+        sel0, gain0 = STATS["select_windows"], STATS["select_gain"]
+        select = None
+        if selector is not None:              # the SR the selection judge was trained with
+            ref_sr = star_rating_file(a.root / r["path"]) if selector.meta["sr"] == "human" \
+                else sr
+            select = selector.scorer(r["key"], ref_sr, draws=a.select_draws,
+                                     seed=sample_seed + i)
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
@@ -785,9 +808,16 @@ def main(argv: list[str] | None = None) -> int:
                                    untangle=a.untangle, untangle_move=a.untangle_move,
                                    untangle_grades=a.untangle_grades, alike=a.alike,
                                    alike_keep=a.alike_keep, strong=a.strong_chords,
-                                   lane_guidance=a.lane_guidance, **style)
+                                   lane_guidance=a.lane_guidance,
+                                   select=select, select_k=a.select_k if select else 1,
+                                   **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
+        if selector is not None:
+            n_sel = STATS["select_windows"] - sel0
+            cost["select_windows"] = n_sel
+            cost["select_gain"] = round((STATS["select_gain"] - gain0) / n_sel, 4) \
+                if n_sel else float("nan")
         if a.copy_bias is not None:
             cost["copied_bars"] = STATS["copied_bars"] - copies0
         if a.refine_holds or share is not None:
@@ -857,8 +887,9 @@ def main(argv: list[str] | None = None) -> int:
         if shard is not None:
             row["_index"] = i                     # merge_shards.py puts the rows back in order
         results.append(row)
+        gain = f"  select gain {cost['select_gain']:.3f}" if "select_gain" in cost else ""
         print(f"[{i + 1}/{len(rows)}] f1@50 {row['f1@50']:.3f}  sr {row['sr_gen']:.2f} "
-              f"(target {sr:.2f})  {cost['seconds']:.0f} s  {r['path']}", flush=True)
+              f"(target {sr:.2f})  {cost['seconds']:.0f} s{gain}  {r['path']}", flush=True)
 
     np.savez_compressed(out_dir / "charts.npz", **charts)
     with open(out_dir / "per_song.csv", "w", newline="", encoding="utf-8") as f:
@@ -870,6 +901,8 @@ def main(argv: list[str] | None = None) -> int:
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
                "steps": a.steps, "schedule": a.schedule, "spread": a.spread,
+               "select_judge": str(a.select_judge) if a.select_judge else None,
+               "select_k": a.select_k if a.select_judge else None,
                "lanes": a.lanes, "refine": a.refine,
                "hold_bias": a.hold_bias, "empty_bias": a.empty_bias, "jack_bias": a.jack_bias,
                "copy_bias": a.copy_bias, "copy_min_lag": a.copy_min_lag,

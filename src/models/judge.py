@@ -17,10 +17,13 @@ request, and a judge given the request could tell "too hard for what was asked" 
 
 from __future__ import annotations
 
+import zlib
+
+import numpy as np
 import torch
 from torch import nn
 
-from src.data.tokenizer import PAD
+from src.data.tokenizer import EMPTY, HOLD_BODY, HOLD_END, HOLD_START, PAD, TAP, K
 from src.models.diffusion import Denoiser
 
 
@@ -44,3 +47,32 @@ class Judge(nn.Module):
         r = self.rows(x, mel, s, b).float()
         keep = ~(x == PAD).all(dim=-1)
         return (r * keep).sum(dim=1) / keep.sum(dim=1).clamp_min(1)
+
+
+def view_tokens(tokens: np.ndarray, view: str, seed=(0,)) -> np.ndarray:
+    """A chart [rows, K] as --view shows it; the same for every chart of a song, so a judge can
+    only use what is kept.
+
+        full    the chart
+        taps    long notes as taps at their heads (bodies and tails empty): nothing of which
+                notes are held, nor for how long
+        rhythm  taps, and each onset row's notes on lanes drawn at random (as many as it had,
+                seed: the song and the chart): which rows have notes and how many, nothing of
+                the lanes
+    """
+    if view == "full":
+        return tokens
+    x = np.array(tokens, copy=True)
+    x[x == HOLD_START] = TAP
+    x[(x == HOLD_BODY) | (x == HOLD_END)] = EMPTY
+    if view == "rhythm":
+        n = (x == TAP).sum(axis=1)
+        rows = np.flatnonzero(n)
+        perm = np.argsort(np.random.default_rng(list(seed)).random((len(rows), K)), axis=1)
+        x[rows] = EMPTY
+        x[np.repeat(rows, n[rows]), perm[np.arange(K)[None, :] < n[rows][:, None]]] = TAP
+    return x
+
+
+def stable_hash(s: str) -> int:
+    return zlib.crc32(s.encode("utf-8"))

@@ -59,7 +59,6 @@ import json
 import math
 import sys
 import time
-import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -72,9 +71,6 @@ from src.data.mel import open_mel
 from src.data.tokenizer import (
     BAR,
     BEATS_PER_CHUNK,
-    EMPTY,
-    HOLD_BODY,
-    HOLD_END,
     HOLD_START,
     PAD,
     TAP,
@@ -84,7 +80,7 @@ from src.data.tokenizer import (
 )
 from src.evaluation.playability import grade_of
 from src.models.diffusion import load_denoiser, pick_device
-from src.models.judge import Judge
+from src.models.judge import Judge, stable_hash, view_tokens
 
 TRAIN_STRIDE = 4 * BAR                 # training windows every 4 bars (half overlapping)
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")
@@ -134,36 +130,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "nothing: the songs of these folds are reported)")
     ap.add_argument("--eval-epochs", action="store_true",
                     help="score the held-out songs after every epoch too (summary by_epoch)")
+    ap.add_argument("--save-models", action="store_true",
+                    help="keep each fold's judge (fold<k>.pt, float16) and models.json (the "
+                         "fold of every song, the view, SR and audio): src/models/select.py "
+                         "scores a song with the judge that did not see it")
     return ap.parse_args(argv)
-
-
-def view_tokens(tokens: np.ndarray, view: str, seed=(0,)) -> np.ndarray:
-    """A chart [rows, K] as --view shows it; the same for every chart of a song, so a judge can
-    only use what is kept.
-
-        full    the chart
-        taps    long notes as taps at their heads (bodies and tails empty): nothing of which
-                notes are held, nor for how long
-        rhythm  taps, and each onset row's notes on lanes drawn at random (as many as it had,
-                seed: the song and the chart): which rows have notes and how many, nothing of
-                the lanes
-    """
-    if view == "full":
-        return tokens
-    x = np.array(tokens, copy=True)
-    x[x == HOLD_START] = TAP
-    x[(x == HOLD_BODY) | (x == HOLD_END)] = EMPTY
-    if view == "rhythm":
-        n = (x == TAP).sum(axis=1)
-        rows = np.flatnonzero(n)
-        perm = np.argsort(np.random.default_rng(list(seed)).random((len(rows), K)), axis=1)
-        x[rows] = EMPTY
-        x[np.repeat(rows, n[rows]), perm[np.arange(K)[None, :] < n[rows][:, None]]] = TAP
-    return x
-
-
-def stable_hash(s: str) -> int:
-    return zlib.crc32(s.encode("utf-8"))
 
 
 def shown_sr(tokens: np.ndarray, timing_points, cell_offset: int) -> float:
@@ -542,6 +513,11 @@ def main(argv=None) -> int:
                            at_epoch if a.eval_epochs else None)
         scores.update(score_fold(judge, data, test, device))
         fold_by_key.update({s["key"]: fold for s in test})
+        if a.save_models:
+            torch.save({"fold": fold, "state": {k: (v.detach().to("cpu", torch.float16)
+                                                    if v.is_floating_point() else v.cpu())
+                                                for k, v in judge.state_dict().items()}},
+                       run_dir / f"fold{fold}.pt")
         del judge
         keys = [s["key"] for s in songs if (s["key"], "human") in scores]
         so_far, lo, hi = auc_ci(scores, keys)
@@ -601,6 +577,13 @@ def main(argv=None) -> int:
                                              if label_of(p, a.ai) in data.labels}}
     summary["seconds"] = round(time.time() - t0, 1)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=1))
+    if a.save_models:
+        (run_dir / "models.json").write_text(json.dumps({
+            "ckpt": str(a.ckpt), "view": a.view, "sr": a.sr, "audio": not a.no_audio,
+            "seed": a.seed, "folds": n_folds,
+            "saved": sorted({fold_by_key[s["key"]] for s in scored}),
+            "fold_of": {s["key"]: fold_by_key[s["key"]] for s in scored},
+            "gap": summary["ai"]["mean_logit"] - summary["ai"]["human_mean_logit"]}, indent=1))
     print("\n".join(lines))
     return 0
 
