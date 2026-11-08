@@ -3610,6 +3610,67 @@ How it could fail: the gain under a tenth stops it, and the tell is the model's 
 the draw's (retraining is the lever); a large gain and no step under the fresh judges, and the
 choice learned the choosing judge's own quirks.
 
+### 2026-11-08 (6) · run_1111 and run_1112: alike bars at 6 nats; windows chosen by a judge; 8 draws on all songs (predictions)
+
+`run_1111.sh` (about 20:05 to 20:41). align_alike at 6 nats instead of 2, F's passes on the cosine
+draw; its own judge as srv_full (the same 96 songs):
+
+| | cosine (2 nats) | 6 nats | difference (95%) | human | prediction |
+|---|---|---|---|---|---|
+| own judge auc | 0.909 | 0.922 | +0.013 [+0.005, +0.022] | | -0.015 to +0.005: miss, the other way |
+| alike_rhythm (bars alike in sound anywhere) | 0.532 | 0.582 | +0.050 [+0.038, +0.062] | 0.622 | 0.56-0.60: hit |
+| bars alike in sound inside 8 bars, the same rhythm | 0.354 | 0.352 | -0.002 [-0.005, +0.001] | 0.419 | 0.38-0.42: miss |
+| of those, one or two rows apart | 0.321 | 0.324 | +0.003 | 0.277 | 0.28-0.30: miss |
+| bars aligned, a song | 5.0 | 6.5 | +1.5 | | |
+| new_onsets, density, SR error | | | +0.0002, +0.24%, +0.002 | | within ±0.005: hit |
+
+The pass aligns bars alike in sound wherever they are (audio cosine 0.8+), so the near-copies
+inside 8 bars stay; and the 1.5 bars a song more it aligns (a rhythm taken over, its lanes
+chosen again) make the charts easier to tell, not harder. Not taken; whether align_alike at
+2 nats costs the judge too is a pass-family question for later (`--alike` off, ~35 min).
+
+`run_1112.sh` (20:41 to ~23:40). The choosing judge (the rhythm view of the cosine draw before
+F's passes, the human SR, 5 folds kept): auc 0.877 [0.864, 0.889], its gap between the run's
+windows and the human ones 5.58 logits (prediction 1, 0.78-0.88: hit). The 120 songs drawn
+with 4 draws a window (21:06 to 22:33): the chosen draw lay 2.45 logits under the mean of its
+window's 4 on average, 45% of the gap (the watch read 2.53 after 30 songs and let it go on;
+prediction 2, 0.3-1.0 and 10-35%: miss, the draws of a window differ far more than
+expected), and a song took x1.06 the plain draw's time a process (prediction 5, 1.5-2.5:
+miss: the 4 draws go through the denoiser in one pass, and the GPU at one window a pass had
+the room). Fresh judges (seed 1, all 5 folds of the 120 songs, trained on 96 songs a fold):
+
+| on the same 120 songs | cosine | chosen | difference (95%) | prediction |
+|---|---|---|---|---|
+| full view auc | 0.858 | 0.818 | -0.040 [-0.079, -0.001] | -0.01 to -0.04: hit, at the edge |
+| songs (each song's windows averaged) | 0.967 | 0.900 | | |
+| density | | | -2.2% [-3.6, -0.7] | ±3%: hit |
+| new_onsets (human 0.051) | 0.115 | 0.100 | -0.015 [-0.040, +0.004] | 0 to -0.015: at the edge |
+| sr_error | 0.185 | 0.204 | +0.019 [-0.016, +0.056] | 0 to -0.05: miss, inside 0 |
+| move_jack (human 0.051) | 0.034 | 0.043 | +0.009 [-0.000, +0.022] | |
+| motion_pred (human 0.128) | 0.130 | 0.139 | +0.009 [+0.002, +0.016] | |
+| rhythm_rep1 (human 0.269) | 0.266 | 0.288 | +0.022 [+0.001, +0.043] | |
+
+The first step any setting has made under a judge that did not choose: a window's draws differ
+in how they read, and a judge that never saw the song can tell which reads human. By grade
+(small numbers): Easy 0.795 → 0.720, Hard 0.878 → 0.798, Expert 0.883 → 0.771; Normal and
+Insane level. The jacks come up toward the human rate, the lane motion and the one-bar repeats
+go a little past it. Judges trained on 96 songs a fold are weaker than the standard ones (the
+cosine run: 0.858 here, 0.901 under the standard judge on 96 songs), so the playtest gate (a
+system's own standard judge at songs 0.90 or under, or auc 0.85 or under) is not read off
+these. The rhythm view's fresh judges come with the next entry.
+
+**Predictions for `run_1113.sh`** (written before it ran): 8 draws a window, all 240 songs,
+the same choosing judge; fresh standard judges (seed 1, --sr view, 2 epochs, 2 folds) on the
+chosen run and the cosine run, the same 96 songs.
+1. The gain: 3.0-3.6 logits a window (the lowest of 8 against the lowest of 4).
+2. A song at x1.1-1.4 the plain draw's time a process.
+3. The chosen run minus the cosine run under the standard judge: -0.03 to -0.07; the chosen
+   run's songs 0.90-0.96.
+4. Density -1% to -4%; new_onsets -0.01 to -0.03.
+The playtest gate is read off 3: at songs 0.90 or under, or auc 0.85 or under, a quick pairs
+check becomes worth the blind songs. How it could fail: no larger step than 4 draws made puts
+the limit in what the choosing judge sees (the rhythm alone), not in the number of draws.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
