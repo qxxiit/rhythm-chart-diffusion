@@ -90,9 +90,11 @@ only if taking it out makes the judge or a diagnostic worse, or breaks a guideli
   metrics the same way and has no human correlation either.
 - **What a judge reads** (`judge.py --view`, 11-08): a judge trained on every chart with part of
   it taken away alike (taps: long notes as taps; rhythm: taps on lanes drawn at random), each
-  shown with the human chart's SR (`--sr human`), next to the full view with that SR; read as
-  nested, each view removing one more thing. Its rows (rows.npz) cannot say this: they repeat
-  the window's verdict on every row (11-08).
+  chart shown with rosu's SR of the chart as shown (`--sr view`), next to the full view the
+  same way; read as nested, each view removing one more thing (`judge_table.py`: the steps on
+  the songs they share). Not the human chart's SR for all: it is the SR the run was asked for,
+  and the judge reads the miss (+0.043 auc on the same songs, 11-08). Its rows (rows.npz) cannot
+  say this: they repeat the window's verdict on every row (11-08).
 
 ## Rules
 

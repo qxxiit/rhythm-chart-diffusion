@@ -100,5 +100,8 @@ def test_the_judge_table_compares_on_the_songs_all_judges_have(tmp_path) -> None
     assert got["shared_songs"] == 4 and [r["folds"] for r in got["judges"]] == ["5/5", "2/5"]
     full, taps = got["judges"]
     assert full["shared_auc"] > 0.8 and abs(taps["shared_auc"] - 0.5) < 0.2
+    assert full["step"] is None
+    d, lo, hi = taps["step"]                                     # what one more removal costs
+    assert lo <= d <= hi < 0 and abs(d - (taps["shared_auc"] - full["shared_auc"])) < 1e-9
     assert "auc on the 4 shared songs" in out.read_text()
     assert judge_table.main([str(tmp_path / "none")]) == 2

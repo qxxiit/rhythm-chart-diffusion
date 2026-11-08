@@ -19,7 +19,7 @@ from src.data.chart_parser import Chart, Note, parse_osu  # noqa: E402
 from src.data.chart_writer import write_osu  # noqa: E402
 from src.data.dataset import ChunkDataset  # noqa: E402
 from src.data.mel import MelStore, on_grid  # noqa: E402
-from src.data.tokenizer import HOLD_START, PAD, TAP, L  # noqa: E402
+from src.data.tokenizer import HOLD_START, PAD, TAP, K, L  # noqa: E402
 from tests.synth_audio import can_write_mp3, clicks, write_mp3  # noqa: E402
 
 requires_mp3 = pytest.mark.skipif(not can_write_mp3(), reason="PyAV without libmp3lame")
@@ -1105,11 +1105,20 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert [e["epoch"] for e in e1["by_epoch"]] == [1, 2]
     assert e1["by_epoch"][-1]["auc"] == e1["ai"]["auc"] and len(e1["ai"]["auc_ci"]) == 2
     assert e1["folds_run"] == 2 and e1["stopped"] is None
-    assert judge.main([*args, "--name", "v", "--view", "rhythm", "--sr", "human",
+    assert judge.main([*args, "--name", "v", "--view", "rhythm", "--sr", "view",
                        "--stop-bounds", "2", "--min-folds", "1"]) == 0
     v = json.loads((tmp_path / "judge" / "v" / "summary.json").read_text())
     assert v["stopped"]["after_folds"] == 1 and v["folds_run"] == 1 and v["ai"]["songs"] < 3
-    assert v["args"]["view"] == "rhythm" and v["args"]["sr"] == "human"
+    assert v["args"]["view"] == "rhythm" and v["args"]["sr"] == "view"
+    # --sr view: the SR of the chart as shown, as evaluate.py has it for the full chart
+    with open(run / "per_song.csv", newline="") as f:
+        first = next(csv.DictReader(f))
+    z = np.load(data / "cache" / "tokens" / f"{first['key']}.npz")
+    tps = [(float(t), float(b)) for t, b in z["timing_points"]]
+    drawn = np.load(run / "charts.npz")[first["key"]].reshape(-1, K)
+    assert abs(judge.shown_sr(drawn, tps, int(z["cell_offset"])) - float(first["sr_gen"])) < 1e-3
+    taps = judge.view_tokens(drawn, "taps")
+    assert np.isfinite(judge.shown_sr(taps, tps, int(z["cell_offset"])))
     seen = {(r["key"], r["start"], r["chart"]): r["onset_rows"] for r in windows("a")}
     kept = windows("v")
     assert {r["fold"] for r in kept} == {"0"} and kept

@@ -35,10 +35,13 @@ fold's judge ranks by an arbitrary direction, so one fold may stray; 0.7+ is a b
 three doses: the score should rise with the dose for the corruptions the judge can see).
 scripts/judge_vs_diag.py relates the judged run's per-song scores to its diagnostics.
 
-What the judge is shown (EXPERIMENTS 2026-11-08 (2)): --view taps or rhythm shows every chart
-(the human one, the run's, the scored runs') with part of it taken away alike, so a judge
-trained on that can only use what is left (view_tokens); --sr human gives every chart the human
-chart's SR, which a view needs (the SR of the whole chart would tell some of what it hides).
+What the judge is shown (EXPERIMENTS 2026-11-08 (2), (3)): --view taps or rhythm shows every
+chart (the human one, the run's, the scored runs') with part of it taken away alike, so a judge
+trained on that can only use what is left (view_tokens). A view needs --sr view: every chart
+with rosu's SR of the chart as shown (shown_sr; what a player would see of it). The SR of the
+whole chart (own) tells some of what the view hides, and the human chart's SR for all (human)
+is the SR the run was asked for: the judge then tells "not as hard as it says" (run_1109, the
+full view on the same 96 songs: own 0.901, human 0.944).
 
 Time (EXPERIMENTS 2026-11-08 (2)): --stop-bounds ends the run after a fold (from --min-folds
 on) once the auc so far and its 95% interval over songs lie between the same two bounds (the
@@ -118,9 +121,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--view", choices=VIEWS, default="full",
                     help="what of every chart the judge sees (view_tokens): full; taps (long "
                          "notes as taps); rhythm (taps on lanes drawn at random)")
-    ap.add_argument("--sr", choices=("own", "human"), default="own",
-                    help="the SR each chart is shown with: its own (rosu) or the human chart's "
-                         "for all, which --view taps and rhythm need")
+    ap.add_argument("--sr", choices=("own", "view", "human"), default="own",
+                    help="the SR each chart is shown with: its own (rosu, of the whole chart); "
+                         "rosu's of the chart as --view shows it, which a view needs; or the "
+                         "human chart's for all (the SR the run was asked for: a tell)")
     ap.add_argument("--stop-bounds", default=None, metavar="B[,B...]",
                     help="stop after a fold once the auc so far and its 95%% interval over "
                          "songs lie between the same two of these, e.g. 0.65,0.86")
@@ -157,6 +161,17 @@ def view_tokens(tokens: np.ndarray, view: str, seed=(0,)) -> np.ndarray:
 
 def stable_hash(s: str) -> int:
     return zlib.crc32(s.encode("utf-8"))
+
+
+def shown_sr(tokens: np.ndarray, timing_points, cell_offset: int) -> float:
+    """rosu's SR of a chart [rows, K] as it is shown (--sr view), decoded on the song's grid as
+    evaluate.py decodes a run's chart for sr_gen."""
+    from src.data.tokenizer import decode, make_metas
+    from src.evaluation.sr import star_rating  # rosu, only when asked for
+
+    x = np.asarray(tokens).reshape(-1, L, K)
+    return float(star_rating(decode(x, make_metas(timing_points, cell_offset, len(x),
+                                                  math.nan))))
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -283,8 +298,15 @@ class Songs:
             view = getattr(a, "view", "full")
             song["charts"] = {c: view_tokens(t, view, (a.seed, stable_hash(k), stable_hash(c)))
                               for c, t in song["charts"].items()}   # onset rows stay
-            if getattr(a, "sr", "own") == "human":
+            mode = getattr(a, "sr", "own")
+            if mode == "human":
                 song["sr"] = {c: song["sr"]["human"] for c in song["sr"]}
+            elif mode == "view":
+                for c, t in song["charts"].items():
+                    try:
+                        song["sr"][c] = shown_sr(t, tps, song["offset"])
+                    except ValueError as e:                  # not decodable: its own SR stays
+                        print(f"{k} {c}: no SR as shown ({e}); its own", file=sys.stderr)
             song["train"] = self.starts(song, TRAIN_STRIDE)
             song["test"] = self.starts(song, L)
             self.songs.append(song)
@@ -477,7 +499,11 @@ def main(argv=None) -> int:
             return 2
     if a.view != "full" and a.sr == "own":
         print(f"--view {a.view} with each chart's own SR: the SR of the whole chart tells the "
-              "judge some of what the view hides (--sr human)", file=sys.stderr)
+              "judge some of what the view hides (--sr view)", file=sys.stderr)
+    if a.sr == "human":
+        print("--sr human: the run's charts are shown with the SR they were asked for, so the "
+              "judge can tell 'not as hard as it says' (a tell a player does not have)",
+              file=sys.stderr)
     torch.manual_seed(a.seed)
     device = pick_device(a.device)
     data = Songs(a)

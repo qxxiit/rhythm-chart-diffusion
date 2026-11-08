@@ -3472,6 +3472,47 @@ there:
 - Draws next: an interim reading at a third and two thirds of the songs against the prediction
   (the rows as they are written), when the next draw is planned.
 
+### 2026-11-08 (3) · run_1109: the views, and the SR they were shown with; again with the SR as shown (predictions)
+
+`run_1109.sh` (11-08, 16:27 to 17:23). Every judge stopped after 2 of its 5 folds (14 min each,
+four in ~58 min against ~2.3 h with all folds). On the 96 songs of those folds, each row's step
+against the row above with its 95% interval over songs (`judge_table.py`):
+
+| judge | shown | auc | step |
+|---|---|---|---|
+| cosine (11-08 (2), own SR, all folds) | everything | 0.901 | |
+| view_full | everything, the human chart's SR | 0.944 | +0.043 [+0.025, +0.063] |
+| view_taps | long notes as taps, human SR | 0.911 | -0.033 [-0.046, -0.020] |
+| view_rhythm | taps on lanes drawn at random, human SR | 0.838 | -0.073 [-0.088, -0.057] |
+| view_deaf | rhythm without audio, human SR | 0.785 | -0.053 [-0.075, -0.033] |
+
+Prediction 1 missed upward (0.875-0.900), and it shows a flaw in the design (11-08 (2)): the
+human chart's SR is the SR the run was asked for, so every AI chart was shown with a target it
+misses by 0.25 on average (sr_error), and the judge read the mismatch, as src/models/judge.py
+warns ("a judge given the request could tell 'too hard for what was asked'"). Every view had
+that tell, so their levels are not the chart's: predictions 2-4 (taps 0.80-0.88 at 0.911,
+rhythm 0.72-0.85 at 0.838, deaf 0.62-0.78 at 0.785) cannot be read. The steps are measured
+under the same tell and all clear 0: the holds 0.033, the lanes 0.073, the audio 0.053.
+
+The mismatch is a tell in its own right: a judge that knows the request finds the AI's
+difficulty off, +0.043 on the same songs. A playtest that names the grade may let a player find
+it as well; sr_error counts where the request is in view.
+
+Epochs (prediction 5, missed): the full view's first epoch 0.918 against its third's 0.944. The
+second is within 0.002 of the third in three judges (0.945 / 0.944, 0.913 / 0.911, 0.836 /
+0.838) and 0.008 under in the fourth (0.777 / 0.785), with the learning rate still at a quarter
+of its peak there (cosine decay): judges train 2 epochs from run_1110 (DECISIONS 2026-11-08).
+
+**Predictions for `run_1110.sh`** (the same views, each chart with rosu's SR of the chart as
+shown, `--sr view`; 2 epochs; written before it ran). On the same 96 songs:
+1. full: 0.885-0.910 (the cosine run's own judge 0.901 there).
+2. taps 0.86-0.90; 3. rhythm 0.78-0.86; 4. deaf 0.72-0.80.
+5. The steps as under the human SR, which every view had: the holds -0.01 to -0.04, the lanes
+   -0.04 to -0.09, the audio -0.03 to -0.07.
+Readings as in 11-08 (2). How it could fail: full outside 0.88-0.92 would make the source of the
+SR matter (own: the human SR from the .osu file, the run's from its tokens; view: both from
+tokens).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
