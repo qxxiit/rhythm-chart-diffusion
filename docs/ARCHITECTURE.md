@@ -174,7 +174,7 @@ python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results t
 python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
                                        #    sharing the GPU, the songs shared by length; the charts
                                        #    are the one-process run's)
-python scripts/judge.py --ckpt C --ai R [--view taps|rhythm --sr view] [--stop-bounds B,B]
+python scripts/judge.py --ckpt C --ai R [--view taps|rhythm|holds --sr view] [--stop-bounds B,B]
                                        # ✅ the judge (8-bar windows, 5 folds by audio); --view: what
                                        #    of the charts it sees; --stop-bounds: stop once decided;
                                        #    --max-folds K; --eval-epochs: the auc after every epoch

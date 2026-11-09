@@ -1170,14 +1170,17 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert abs(judge.shown_sr(drawn, tps, int(z["cell_offset"])) - float(first["sr_gen"])) < 1e-3
     taps = judge.view_tokens(drawn, "taps")
     assert np.isfinite(judge.shown_sr(taps, tps, int(z["cell_offset"])))
+    held = judge.view_tokens(drawn, "holds", (0, 1, 2))           # the holds view decodes too
+    assert np.isfinite(judge.shown_sr(held, tps, int(z["cell_offset"])))
     seen = {(r["key"], r["start"], r["chart"]): r["onset_rows"] for r in windows("a")}
     kept = windows("v")
     assert {r["fold"] for r in kept} == {"0"} and kept
     assert all(seen[(r["key"], r["start"], r["chart"])] == r["onset_rows"] for r in kept)
     assert judge.main([*args, "--name", "x", "--stop-bounds", "a,b"]) == 2
-    assert judge.main([*args, "--name", "m", "--max-folds", "1"]) == 0
+    assert judge.main([*args, "--name", "m", "--max-folds", "1", "--view", "holds", "--sr",
+                       "view"]) == 0
     m = json.loads((tmp_path / "judge" / "m" / "summary.json").read_text())
-    assert m["folds_run"] == 1 and m["stopped"]["max_folds"] == 1
+    assert m["folds_run"] == 1 and m["stopped"]["max_folds"] == 1 and m["args"]["view"] == "holds"
     # the fold judges kept, scoring as they did; a drawing that chooses by them
     from src.data.beat_grid import from_timing_points
     from src.data.mel import open_mel

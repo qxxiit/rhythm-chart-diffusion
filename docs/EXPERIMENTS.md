@@ -3765,18 +3765,22 @@ the same fresh judge settings):
 | density, new_onsets, sr_error | | | +0.14%, +0.0002, -0.003 [-0.013, +0.007] | | ±0.5%, ±0.005: hit; 0 to -0.03: at 0 |
 | a song's time, a process | | 87 s (median 66) | | | 60-100 s: hit |
 
-The diagnostics judge: logistic 0.831 → 0.811, trees 0.939 → 0.917. The seams are not what the
-fresh judge reads: its row scores in the bands drawn again (192 ± 24 rows into a window), against
-the window's other rows and net of its own human rows, moved +0.08 [-0.05, +0.21] logits from
-run_1112's (under 4% of its row gap between the run and the human charts, 5.8). Nor did the
-choice carry over: that row gap went 5.72 → 5.89 (+0.17 [-0.45, +0.83]), where the choosing
-judge's 13% carried over whole would have taken it down about 0.77. The failure reading written
+The diagnostics judge: logistic 0.831 → 0.811, trees 0.939 → 0.917. The fresh judge's row gap
+between the run and the human charts went 5.72 → 5.89 (+0.17 [-0.45, +0.83]), where the choosing
+judge's 13% carried over whole would have taken it down about 0.77. Whether the seams took back
+what the choice gained, the rows cannot say (corrected 11-09 evening): their scores in the bands
+drawn again (192 ± 24 rows into a window), against the window's other rows and net of the
+judge's human rows, moved +0.08 [-0.05, +0.21] logits from run_1112's, but a judge's rows repeat
+its window's verdict (11-07), so a seam that gave a window away would raise every row of it
+alike; first read here as "the seams are not read", which the rows cannot show. The failure reading written
 before it ran, a gain and no step: F's passes rewrite about 33 bars a song (carry 17, sections
 12, aligned 4, of about 130), too few to undo it all; the lane statistics moved toward the human
 charts, so the lanes changed, but what a judge that did not choose reads in the lanes did not.
 The rhythm's choice carried over (the rhythm view 0.664 → 0.535) because the draws of a window
-differ in what every judge reads; the versions of the lanes differ in detail that one judge
-reads one way and another another. Not taken (DECISIONS 2026-11-09).
+differ in what every judge reads; the versions of the lanes may differ in detail that one judge
+reads one way and another another, or the seams may cost what they gain (one with the seams at
+the windows' edges and a judge on windows half a window off would tell). Not taken (DECISIONS
+2026-11-09).
 
 What is left of run_1112's tell, view by view (fresh judges, seed 1, the same 120 songs, each
 view the one above with one part more; `s1_sel_taps` 08:58 to 09:11):
@@ -3912,6 +3916,61 @@ The run becomes the system if its full view is under run_1112's at 95%. How it c
 the long notes' step does not shrink, and their tell is not how many or how long but where
 the model puts them (a view that shows them to the choosing judge, or training, is the
 lever); the taps view rises, and the bias moved the rhythm (onsets turned into long notes).
+
+### 2026-11-09 (6) · run_1116: the hold bias at 0.5 overshoots; at the human share (predictions)
+
+`run_1116.sh` (17:30 to 19:41; the drawing about 1 h 30 min). Fresh judges on the same 120 songs:
+
+| view (fresh judges) | run_1112 | lanes at 1 | + hold bias 0.5 | minus the lanes-at-1 run (95%) | prediction |
+|---|---|---|---|---|---|
+| full | 0.818 | 0.807 | 0.805 (songs 0.847) | -0.002 [-0.050, +0.043] | -0.02 to -0.06: miss |
+| taps | 0.701 | 0.607 | 0.766 (songs 0.794) | +0.159 [+0.101, +0.223] | within ±0.03: miss |
+| the long notes' step (full minus taps) | +0.117 | +0.200 | +0.039 | | |
+
+| per song | human | run_1112 | lanes at 1 | + bias 0.5 | minus lanes at 1 (95%) | prediction |
+|---|---|---|---|---|---|---|
+| long-note share before F's passes | | 0.126 | 0.126 | 0.374 | | 0.17-0.22: miss |
+| long-note share | 0.225 | 0.215 | 0.217 | 0.369 | +0.153 [+0.128, +0.176] | 0.215-0.225: miss |
+| top-up (long notes a song) | | 181 | 181 | 17 | -164 | 40-110: miss |
+| hold_beats | 0.936 | 0.758 | 0.749 | 0.811 | +0.062 [+0.029, +0.094] | 0.80-0.90: hit |
+| release_on_onset | 0.784 | 0.728 | 0.728 | 0.706 | -0.023 [-0.053, +0.007] | 0.73-0.77: miss |
+| ln_short | 0.157 | 0.118 | 0.115 | 0.192 | +0.078 [+0.054, +0.106] | |
+| density (against the human) | | 0.987 | 0.989 | 1.009 | +2.0% [+0.3, +3.7] | ±3%: hit |
+| new_onsets | 0.051 | 0.100 | 0.100 | 0.126 | +0.025 [+0.011, +0.050] | ±0.01: miss |
+| motion_pred | 0.128 | 0.139 | 0.097 | 0.075 | -0.022 [-0.028, -0.015] | |
+| rhythm_rep1 | 0.269 | 0.288 | 0.289 | 0.251 | -0.038 [-0.060, -0.019] | |
+| sr_error | | 0.204 | 0.191 | 0.284 | +0.094 [+0.046, +0.147] | ±0.03: miss |
+
+The diagnostics judge (logistic / trees): run_1112 0.831 / 0.939, lanes at 1 0.850 / 0.932, the
+bias 0.869 / 0.927 (leaning on motion_pred, new_onsets, move_stair). Not the system (its full
+view is not under run_1112's).
+
+Reading. The bias works on every step of the drawing, not once: 0.5 tripled the long notes
+(0.126 → 0.374, past the human 0.225), so prediction 1 was off by far. What it showed: the long
+notes the model draws itself, even too many, give the chart away much less than the topped-up
+ones (their own step +0.200 → +0.039, with the lanes alike), but so many long notes move the
+rest, the rhythm and the lanes around them (the taps view +0.159, more new onsets, the SR
+error up), so the full view stays. The failure reading written before it ran (the taps view
+rises, the bias moved the rhythm), with the overshoot as the cause.
+
+**At the human share** (`run_1118.sh`). The share's log-odds rose 2.84 a unit of bias (-1.93 to
+-0.52), so 0.2 puts the model's own long notes at about 0.21 of the onsets and the top-up fills
+the little left; otherwise run_1116 again (the windows chosen among 4 by sel_rhythm, the same
+seeds, the lanes at temperature 1, F's passes, fresh full- and taps-view judges).
+
+Predictions (written before it ran):
+1. The long-note share before F's passes 0.18-0.25, after them 0.22-0.26; the top-up 20-90 a
+   song.
+2. hold_beats 0.78-0.85, ln_short 0.12-0.17.
+3. The taps view, minus the lanes-at-1 run (0.607): -0.02 to +0.06.
+4. The full view, minus the lanes-at-1 run (0.807): -0.02 to -0.08; songs under 0.80.
+5. new_onsets within +0.015 of it, density within ±2%, sr_error within ±0.04.
+The run becomes the system if its full view is under run_1112's (0.818) at 95%. How it could
+fail: the taps view rises again, and any bias moves the rhythm and lanes with the long notes
+(they are drawn together); the full view stays with the long notes' step small, and the tell
+moved rather than shrank; then the choosing judge sees the long notes (`run_1117.sh`, ready:
+the holds view, `judge.view_tokens` "holds", the rhythm view's random lanes with every long
+note kept whole in its lane).
 
 ## Phase 3 Ablation A: Diffusion Design
 

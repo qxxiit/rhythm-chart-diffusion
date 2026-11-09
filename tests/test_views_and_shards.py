@@ -40,6 +40,31 @@ def test_each_view_keeps_what_it_says() -> None:
     assert (x == chart()).all()                                    # the chart itself untouched
 
 
+def test_the_holds_view_keeps_the_long_notes_whole() -> None:
+    from scripts.judge import view_tokens
+    from src.data.tokenizer import grammar_violations
+    x = chart()
+    onsets = np.isin(x, (TAP, HOLD_START)).sum(axis=1)
+    heads = (x == HOLD_START).sum(axis=1)
+    for seed in range(8):
+        h = view_tokens(x, "holds", (seed, 1, 2))
+        assert (np.isin(h, (TAP, HOLD_START)).sum(axis=1) == onsets).all()
+        assert ((h == HOLD_START).sum(axis=1) == heads).all()
+        assert len(grammar_violations(h[:10])) == 0 and (h[10:] == PAD).all()
+        lane = int(np.flatnonzero(h[2] == HOLD_START)[0])          # the long note, whole
+        assert (h[3:5, lane] == HOLD_BODY).all() and h[5, lane] == HOLD_END
+        assert (h[4] == TAP).sum() == 1 and h[4, lane] == HOLD_BODY   # the tap beside it
+    lanes = {int(np.flatnonzero(view_tokens(x, "holds", (s, 1, 2))[2] == HOLD_START)[0])
+             for s in range(40)}
+    assert len(lanes) == K                                         # the long note goes anywhere
+    tail = view_tokens(x[3:], "holds", (0, 1, 2))                  # a window inside it
+    assert ((tail == HOLD_BODY).sum(), (tail == HOLD_END).sum()) == (2, 1)
+    lane = int(np.flatnonzero(tail[0] == HOLD_BODY)[0])
+    assert tail[1, lane] == HOLD_BODY and tail[2, lane] == HOLD_END
+    assert (view_tokens(x, "holds", (3,)) == view_tokens(x, "holds", (3,))).all()
+    assert (x == chart()).all()                                    # the chart itself untouched
+
+
 def test_stopping_needs_the_interval_clear_of_every_bound() -> None:
     from scripts.judge import auc_ci, decided
     assert decided(0.70, 0.80, [0.65, 0.86]) and decided(0.87, 0.95, [0.65, 0.86])

@@ -84,7 +84,7 @@ from src.models.judge import Judge, stable_hash, view_tokens
 
 TRAIN_STRIDE = 4 * BAR                 # training windows every 4 bars (half overlapping)
 GRADES = ("Easy", "Normal", "Hard", "Insane", "Expert", "Expert+")
-VIEWS = ("full", "taps", "rhythm")
+VIEWS = ("full", "taps", "rhythm", "holds")
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -116,7 +116,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--view", choices=VIEWS, default="full",
                     help="what of every chart the judge sees (view_tokens): full; taps (long "
-                         "notes as taps); rhythm (taps on lanes drawn at random)")
+                         "notes as taps); rhythm (taps on lanes drawn at random); holds (the "
+                         "rhythm's random lanes with the long notes kept whole)")
     ap.add_argument("--sr", choices=("own", "view", "human"), default="own",
                     help="the SR each chart is shown with: its own (rosu, of the whole chart); "
                          "rosu's of the chart as --view shows it, which a view needs; or the "

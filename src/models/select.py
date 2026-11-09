@@ -47,13 +47,14 @@ class WindowJudge:
     def scorer(self, key: str, s: float, draws: int = 2, seed: int = 0):
         """score(cands, mel, b): the judge's logit for each of the windows cands ([L, K] each,
         no MASK), mel [L * 4, n_mels] on the device, b the window's beat length; in the rhythm
-        view the mean over draws of the random lanes. Higher looks more generated."""
+        and holds views the mean over draws of the random lanes. Higher looks more
+        generated."""
         fold = self.fold_of.get(key)
         if fold is None:
             return None
         judge = self._model(fold)
         h, calls = stable_hash(key), [0]
-        n_draws = max(1, draws) if self.view == "rhythm" else 1
+        n_draws = max(1, draws) if self.view in ("rhythm", "holds") else 1
 
         @torch.no_grad()
         def score(cands: list[np.ndarray], mel: torch.Tensor, b: float) -> np.ndarray:
