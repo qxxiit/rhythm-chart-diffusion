@@ -3829,6 +3829,50 @@ How it could fail: none taken, and the lanes' and the long notes' tell is not in
 draw them but in the model (training towards them is the lever); the deaf judge as high as the
 taps view, and the music is not where the lanes give the chart away.
 
+### 2026-11-09 (4) · run_1115: the lanes' and the long notes' settings, none taken
+
+`run_1115.sh` (09:35 to 12:01). Fresh judges on the same 120 songs, against run_1112's chosen run
+(full view 0.818, taps 0.701):
+
+| | auc (95%) | songs | minus run_1112 (95%) | prediction | taken |
+|---|---|---|---|---|---|
+| taps view, deaf | 0.665 [0.603, 0.722] | 0.713 | the music adds +0.036 [+0.017, +0.055] | 0.62-0.69, +0.01 to +0.08: hit | |
+| rt1: the releases at temperature 1 | 0.826 [0.790, 0.863] | 0.865 | +0.008 [-0.010, +0.026] | -0.03 to +0.01: hit | no |
+| lg0: the lanes without guidance | 0.837 [0.803, 0.870] | 0.862 | +0.019 [-0.011, +0.055] | -0.02 to +0.03: hit | no |
+| lt1: the lanes at temperature 1 | 0.807 [0.770, 0.842] | 0.824 | -0.011 [-0.052, +0.026] | -0.03 to +0.03: hit | no |
+
+| per song (run_1112 → the setting; 95%) | run_1112 | human | rt1 | lg0 | lt1 |
+|---|---|---|---|---|---|
+| hold_beats | 0.758 | 0.936 | 0.772 (+0.014 [+0.007, +0.023]) | 0.761 | 0.759 |
+| release_on_onset | 0.728 | 0.784 | 0.720 (-0.008 [-0.012, -0.004]) | 0.724 | 0.725 |
+| motion_pred | 0.139 | 0.128 | 0.139 | 0.143 | 0.097 (-0.042 [-0.049, -0.037]) |
+| move_jack | 0.043 | 0.051 | 0.043 | 0.017 (-0.026 [-0.047, -0.011]) | 0.047 |
+| move_trill | 0.173 | 0.152 | 0.172 | 0.156 | 0.178 |
+| lane_rep1 | 0.082 | 0.063 | 0.076 | 0.082 | 0.032 (-0.050 [-0.072, -0.031]) |
+| copy_near | 0.039 | 0.033 | 0.038 | 0.044 | 0.018 (-0.021 [-0.028, -0.014]) |
+| sr_error | 0.204 | | 0.202 | 0.195 | 0.191 |
+| a song's time, a process | 15 s (F's passes) | | 14 s | 44 s | 74 s |
+
+The diagnostics judge (logistic / trees; run_1112 0.831 / 0.939): rt1 0.827 / 0.932, lg0
+0.890 / 0.943 (leaning on move_jack), lt1 0.850 / 0.932. Predictions 2-4 on the metrics: rt1's
+hold_beats 0.80-0.88 and release_on_onset 0.73-0.76 missed (0.772, 0.720: further off); lg0's
+jacks off the chart stats hit (0.017 against the human 0.051), its motion_pred hit; lt1's
+motion_pred 0.10-0.12 at the edge (0.097). Times: lg0 42 min for 75 (the lanes drawn again
+once take 44 s a song, run_1114's 4 versions and seams 87).
+
+Reading. The lanes' tell is mostly in the patterns themselves (0.665 without the music); the
+lanes against the melody add +0.036. The guidance towards the chart stats is what keeps the
+jacks at the human rate: without it they nearly go, and the judges see it. Temperature 1 is
+the one setting the judges lean towards (the songs 0.855 → 0.824), not past the rule, and it
+overshoots: motion, one-bar lane repeats and near copies all fall under the human charts; the
+human values sit between 0.5 and 1 (motion_pred at about 0.63, lane_rep1 0.69, copy_near
+0.64). The releases' temperature hardly moves the long notes' length: the long notes added
+by F's top-up (181 a song) are shorter than the model's own (0.52 against 0.63 beats over all
+long notes), yet as many of either end 3 cells before the next note in the lane (21%; within
+6 cells 58% and 53%), so what keeps them short is where the model puts the ends there, not
+the lanes in the way. None taken: the lane guidance stays 2, the lane temperature 0.5, the
+releases' 0.5 (DECISIONS 2026-11-09).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

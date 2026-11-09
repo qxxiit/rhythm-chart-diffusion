@@ -7,6 +7,7 @@
     python scripts/playtest_pack.py --keys <key> <key> ...          # these charts' songs
     python scripts/playtest_pack.py --pairs --songs 16 --settings \
         random:128:continue:fwd+ref2 random:128:continue:fwd+ref2+cp4
+    python scripts/playtest_pack.py --single --from-run R --songs 20 --versions 2
     python scripts/playtest_pack.py --score outputs/full-v1/playtest/answers.csv ratings_*.csv
 
 Songs come from --split (val by default: not seen in training), one chart per
@@ -34,6 +35,18 @@ across the whole range). With one human and two AI charts, players found the hum
 one by elimination when the two AI charts looked alike (2026-10-03); a pair asks
 only "which one is human" (forced choice) and "which one was more fun". Use more
 songs (16 or so): each song gives one answer per player.
+
+--single: the primary endpoint's format (docs/EVALUATION.md): one chart per song, as a
+chart is met in the game, the human one or an AI chart of a saved evaluate.py run
+(--from-run, its charts.npz; several runs take turns over the songs), half and half (the
+players are not told the share), the human ones one of each two songs next in SR (so both
+halves span the range), numbered in a random order. The player answers per chart "human or
+AI", how sure (1-5), how much fun (1-5) and whether they knew the map. --versions 2 makes a
+second pack with each song's other chart (pack_v1/, pack_v2/: one per player, half the
+players each), so every song is heard as human and as AI. --score then gives the accuracy
+with a 90% interval from a bootstrap over players and songs (indistinguishable: the whole
+interval inside 40-60%), how often each source was taken for human, and an auc of the
+answers weighted by sureness (comparable with a judge's), without and with the maps known.
 
 Writes to --out (default <ckpt dir>/playtest/):
     pack/             what the players get: the .osz files, ratings.csv, README.txt
@@ -70,6 +83,7 @@ from src.models.sampler import GATE_TAPER, ORDERS, steps_name
 CREATOR = "playtest"
 RATING_FIELDS = ["song", "title", "label", "rank", "human?", "comment"]
 PAIR_FIELDS = ["song", "title", "human", "better", "comment"]
+SINGLE_FIELDS = ["song", "title", "version", "human", "sure", "fun", "knew", "comment"]
 
 README = """블라인드 플레이 테스트 (rhythm-chart-diffusion)
 
@@ -102,6 +116,27 @@ README_PAIRS = """블라인드 플레이 테스트, 짝 비교 (rhythm-chart-dif
    human    사람이 만든 채보 같은 쪽: A 또는 B (헷갈려도 꼭 하나를 고르세요)
    better   더 재밌었던 쪽: A 또는 B, 비슷하면 =
    comment  왜 그렇게 골랐는지 자유롭게
+4. 파일 이름 끝에 본인 이름을 붙여 돌려주세요 (예: ratings_홍길동.csv).
+
+사람 채보도 AI 와 같은 격자(1/12 비트)로 옮기고 히트사운드 · 배속 변화 · 배경을
+지웠습니다. 겉모양으로는 구별되지 않게 하려는 것이니, 채보 내용으로만 판단해 주세요.
+"""
+
+
+README_SINGLE = """블라인드 플레이 테스트, 한 곡에 채보 하나 (rhythm-chart-diffusion)
+
+곡마다 채보가 하나씩 있습니다. 사람이 만든 채보일 수도, AI 채보일 수도 있습니다.
+
+1. .osz 파일을 osu!(lazer) 창에 끌어다 놓거나 더블클릭해서 가져옵니다.
+   osu! stable: Songs 폴더에 넣고 곡 선택 화면에서 F5.
+2. 곡마다 채보를 한 번 이상 플레이합니다 (모드 · 배속 변경 없이, 순서는 상관없음).
+3. ratings.csv 를 채웁니다 (곡마다 한 줄).
+   human    사람이 만든 채보 같으면 y, AI 같으면 n (헷갈려도 꼭 하나를 고르세요)
+   sure     얼마나 확신하는지: 1 (찍음) ~ 5 (확실)
+   fun      얼마나 재밌었는지: 1 (별로) ~ 5 (아주 재밌음)
+   knew     이 곡의 원래 채보를 알고 있었으면 y
+   comment  왜 그렇게 판단했는지 자유롭게 (어디서 티가 났는지)
+   version  칸은 그대로 두세요.
 4. 파일 이름 끝에 본인 이름을 붙여 돌려주세요 (예: ratings_홍길동.csv).
 
 사람 채보도 AI 와 같은 격자(1/12 비트)로 옮기고 히트사운드 · 배속 변화 · 배경을
@@ -492,10 +527,131 @@ def build(a) -> int:
     return 0
 
 
-def zip_pack(out: Path) -> None:
-    with zipfile.ZipFile(out / "playtest_pack.zip", "w", zipfile.ZIP_DEFLATED) as zf:
-        for p in sorted((out / "pack").iterdir()):
+def zip_pack(out: Path, pack: str = "pack", name: str = "playtest_pack.zip") -> None:
+    with zipfile.ZipFile(out / name, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted((out / pack).iterdir()):
             zf.write(p, f"playtest/{p.name}")
+
+
+def single_humans(n: int, seed: int) -> np.ndarray:
+    """--single: which of n songs (in SR order) get the human chart in the first version:
+    one of each two songs next in SR, at random (an odd one out by a coin)."""
+    rng = np.random.default_rng([seed, 7])
+    human = np.zeros(n, dtype=bool)
+    for j in range(0, n, 2):
+        if j + 1 < n:
+            human[j + int(rng.integers(2))] = True
+        else:
+            human[j] = bool(rng.integers(2))
+    return human
+
+
+def build_single(a) -> int:
+    """--single: one chart per song, the human one or a saved run's AI chart (--from-run),
+    about half each; --versions 2 a second pack with each song's other chart."""
+    if not a.from_run:
+        print("--single takes its AI charts from saved evaluate.py runs: give --from-run",
+              file=sys.stderr)
+        return 2
+    if a.versions not in (1, 2):
+        print("--versions is 1 or 2", file=sys.stderr)
+        return 2
+    runs = []
+    for path in a.from_run:
+        if not (path / "charts.npz").exists():
+            print(f"no {path / 'charts.npz'} (an evaluate.py run)", file=sys.stderr)
+            return 2
+        z = np.load(path / "charts.npz")
+        runs.append((f"ai {path.name}", {k: z[k] for k in z.files}))
+    rows = [r for r in read_manifest(a.manifest) if r["sr"] and r.get("drop", "") == ""
+            and (a.cache / "tokens" / f"{r['key']}.npz").exists()
+            and all(r["key"] in charts for _, charts in runs)]
+    if a.keys:
+        wanted = set(a.keys)
+        songs = sorted((r for r in rows if r["key"] in wanted), key=lambda r: float(r["sr"]))
+        if len(songs) != len(wanted):
+            print(f"not in every run (or no SR or tokens): "
+                  f"{sorted(wanted - {r['key'] for r in songs})}", file=sys.stderr)
+            return 2
+    else:
+        seen = set()
+        for path in a.exclude or []:
+            keys = {r["key"] for r in read_csv(path)}
+            seen |= {r["audio_key"] for r in rows if r["key"] in keys}
+        pool = [r for r in rows if r["split"] == a.split and r["audio_key"] not in seen]
+        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds)
+    if not songs:
+        print("no songs to pack (the runs' songs, within --sr-range and --max-seconds)",
+              file=sys.stderr)
+        return 2
+    try:
+        from src.evaluation.sr import star_rating
+    except ImportError:                                   # rosu-pp-py missing: no SR column
+        star_rating = None
+    out = a.out or a.ckpt.parent / "playtest"
+    packs = ["pack"] if a.versions == 1 else ["pack_v1", "pack_v2"]
+    for pack in packs:
+        (out / pack).mkdir(parents=True, exist_ok=True)
+    tag = a.tag or time.strftime("%m%d")
+    human = single_humans(len(songs), a.seed)
+    number = np.random.default_rng([a.seed, 8]).permutation(len(songs)) + 1   # play order
+    answers, sheets = [], [[] for _ in packs]
+    for i, row in sorted(enumerate(songs, 1), key=lambda ir: number[ir[0] - 1]):
+        song = f"{tag}-S{number[i - 1]:02d}"
+        text = (a.root / row["path"]).read_text(encoding="utf-8-sig", errors="replace")
+        sec = _split_sections(text)
+        meta, diff = _kv(sec.get("Metadata", [])), _kv(sec.get("Difficulty", []))
+        od = float(diff.get("OverallDifficulty", 8) or 8)
+        hp = float(diff.get("HPDrainRate", 8) or 8)
+        title, artist = f"{song} {meta.get('Title', '')}".strip(), meta.get("Artist", "")
+        rel = find_audio((row, a.root))[1]
+        if rel is None:
+            print(f"{song}: no audio file for {row['path']}, skipped", file=sys.stderr)
+            continue
+        audio = Path(rel).name
+        z = np.load(a.cache / "tokens" / f"{row['key']}.npz")
+        tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
+        offset, sr = int(z["cell_offset"]), float(row["sr"])
+        source_ai, charts_ai = runs[(i - 1) % len(runs)]
+        ai = charts_ai[row["key"]]
+        charts = {"human": decode(z["tokens"], make_metas(tps, offset, len(z["tokens"]), sr)),
+                  source_ai: decode(ai, make_metas(tps, offset, len(ai), sr))}
+        for v, pack in enumerate(packs, 1):
+            source = "human" if bool(human[i - 1]) != (v == 2) else source_ai
+            chart = charts[source]
+            chart.audio_filename = audio
+            osz = out / pack / f"{song} {safe(artist)} - {safe(meta.get('Title', ''))}.osz"
+            tmp = out / ".tmp.osu"
+            write_osu(tmp, chart, title=title, artist=artist, version="chart",
+                      creator=CREATOR, od=od, hp=hp)
+            with zipfile.ZipFile(osz, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(a.root / rel, audio)
+                zf.write(tmp, f"{safe(artist)} - {safe(title)} ({CREATOR}) [chart].osu")
+            tmp.unlink()
+            answers.append({"song": song, "version": v, "title": meta.get("Title", ""),
+                            "artist": artist, "key": row["key"], "path": row["path"],
+                            "sr_target": sr, "source": source, "notes": len(chart.notes),
+                            "sr": round(star_rating(chart), 2) if star_rating else ""})
+            sheets[v - 1].append({"song": song, "title": meta.get("Title", ""), "version": v,
+                                  "human": "", "sure": "", "fun": "", "knew": "",
+                                  "comment": ""})
+        print(f"{song}  s={sr:.2f}  {row['path']}")
+    for v, pack in enumerate(packs, 1):
+        with open(out / pack / "ratings.csv", "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=SINGLE_FIELDS)
+            w.writeheader()
+            w.writerows(sheets[v - 1])
+        (out / pack / "README.txt").write_text(README_SINGLE, encoding="utf-8")
+        zip_pack(out, pack, "playtest_pack.zip" if len(packs) == 1 else f"playtest_{pack}.zip")
+    with open(out / "answers.csv", "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=list(answers[0]))
+        w.writeheader()
+        w.writerows(answers)
+    zips = ", ".join(str(out / ("playtest_pack.zip" if len(packs) == 1 else f"playtest_{p}.zip"))
+                     for p in packs)
+    print(f"{len(songs)} songs, one chart each, {len(packs)} version(s) -> {zips} (one per "
+          f"player); answers in {out / 'answers.csv'} (keep it)")
+    return 0
 
 
 def retag(out: Path, tag: str) -> int:
@@ -589,9 +745,94 @@ def score_pairs(answers: list[dict], paths: list[Path]) -> int:
     return 0
 
 
+def answer_auc(scores_human: list[float], scores_ai: list[float]) -> float:
+    """P(a human chart's answer scores above an AI chart's), ties half: 0.5 = the players
+    could not tell them apart, 1 = always right (a judge's auc with the classes so)."""
+    h, x = np.asarray(scores_human, float), np.asarray(scores_ai, float)
+    if not len(h) or not len(x):
+        return float("nan")
+    return float(((h[:, None] > x[None, :]).sum() + 0.5 * (h[:, None] == x[None, :]).sum())
+                 / (len(h) * len(x)))
+
+
+def cluster_accuracy(rated: list[tuple], n: int = 2000, seed: int = 0) -> tuple[float, float]:
+    """90% interval of the accuracy from a bootstrap over players and songs together (each
+    draw takes players and songs with replacement; an answer counts as often as both)."""
+    players = sorted({r[0] for r in rated})
+    songs = sorted({r[6] for r in rated})
+    pi = np.array([players.index(r[0]) for r in rated])
+    si = np.array([songs.index(r[6]) for r in rated])
+    right = np.array([r[2] == (r[1] == "human") for r in rated], float)
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        wp = np.bincount(rng.integers(0, len(players), len(players)), minlength=len(players))
+        ws = np.bincount(rng.integers(0, len(songs), len(songs)), minlength=len(songs))
+        w = wp[pi] * ws[si]
+        if w.sum():
+            out.append(float((w * right).sum() / w.sum()))
+    return float(np.percentile(out, 5)), float(np.percentile(out, 95))
+
+
+def score_single(answers: list[dict], paths: list[Path], seed: int = 0) -> int:
+    """--single packs: the players' accuracy with a 90% interval over players and songs (the
+    primary endpoint), per source how often its charts were taken for human, the auc of the
+    answers (y +sure, n -sure: the human charts above the AI ones); all charts, then without
+    the maps the players knew."""
+    truth = {(r["song"], str(r.get("version", "1"))): r["source"] for r in answers}
+    rated = []                                     # (player, source, human?, sure, fun, knew)
+    for path in paths:
+        for r in read_csv(path):
+            source = truth.get((r.get("song", ""), r.get("version", "").strip() or "1"))
+            vote = r.get("human", "").strip().lower()
+            if source is None or vote not in ("y", "n"):
+                continue
+            sure = r.get("sure", "").strip()
+            fun = r.get("fun", "").strip()
+            rated.append((path.stem, source, vote == "y", int(sure) if sure.isdigit() else 3,
+                          float(fun) if fun.replace(".", "", 1).isdigit() else float("nan"),
+                          r.get("knew", "").strip().lower() == "y", r["song"]))
+    if not rated:
+        print("no answered charts", file=sys.stderr)
+        return 2
+    print(f"{'source':48s} {'charts':>6s} {'taken for human [95% CI]':>26s} {'fun':>5s}")
+    for source in sorted({r[1] for r in rated}):
+        t = [r[2] for r in rated if r[1] == source]
+        f = [r[4] for r in rated if r[1] == source and np.isfinite(r[4])]
+        lo, hi = wilson(sum(t), len(t))
+        share = f"{np.mean(t):.0%} [{lo:.0%}, {hi:.0%}]"
+        print(f"{source:48s} {len(t):6d} {share:>26s} {(np.mean(f) if f else float('nan')):5.2f}")
+    rng = np.random.default_rng(seed)
+    for name, part in (("all charts", rated), ("maps not known", [r for r in rated if not r[5]])):
+        right = [r[2] == (r[1] == "human") for r in part]
+        if not right:
+            continue
+        lo, hi = cluster_accuracy(part, seed=seed)
+        sc = np.array([(1 if r[2] else -1) * r[3] for r in part], float)
+        is_h = np.array([r[1] == "human" for r in part])
+        auc = answer_auc(sc[is_h].tolist(), sc[~is_h].tolist())
+        boots = []
+        for _ in range(1000):
+            b = rng.integers(0, len(part), len(part))
+            boots.append(answer_auc(sc[b][is_h[b]].tolist(), sc[b][~is_h[b]].tolist()))
+        boots = [x for x in boots if np.isfinite(x)]
+        ci = f"[{np.percentile(boots, 2.5):.3f}, {np.percentile(boots, 97.5):.3f}]" \
+            if boots else ""
+        verdict = "indistinguishable" if lo >= 0.4 and hi <= 0.6 else "not shown"
+        print(f"{name}: right {sum(right)}/{len(right)} = {np.mean(right):.0%}, 90% over "
+              f"players and songs [{lo:.0%}, {hi:.0%}] ({verdict}: the whole interval in "
+              f"40-60%); auc of the answers {auc:.3f} {ci} (0.5 = could not tell)")
+    for who in sorted({r[0] for r in rated}):
+        mine = [r[2] == (r[1] == "human") for r in rated if r[0] == who]
+        print(f"{who}: right in {sum(mine)}/{len(mine)} charts")
+    return 0
+
+
 def score(paths: list[Path]) -> int:
     """answers.csv first, then one filled ratings.csv per player."""
     answers = read_csv(paths[0])
+    if paths[1:] and "knew" in (read_csv(paths[1])[:1] or [{}])[0]:
+        return score_single(answers, paths[1:])
     if paths[1:] and "human" in (read_csv(paths[1])[:1] or [{}])[0]:
         return score_pairs(answers, paths[1:])
     truth = {(r["song"], r["label"]): r["source"] for r in answers}
@@ -637,6 +878,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pairs", action="store_true",
                     help="two charts per song: the human one and one AI chart, the --settings "
                          "taking turns over the songs")
+    ap.add_argument("--single", action="store_true",
+                    help="one chart per song, the human one or an AI chart of --from-run, about "
+                         "half each (build_single)")
+    ap.add_argument("--from-run", type=Path, nargs="+", default=None,
+                    help="--single: evaluate.py runs whose charts.npz give the AI charts (several "
+                         "take turns over the songs)")
+    ap.add_argument("--versions", type=int, default=1,
+                    help="--single: 2 also makes a pack with each song's other chart (one pack "
+                         "per player)")
     ap.add_argument("--split", default="val")
     ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"),
                     help="stsample: the charts to draw chart stats from (build_chart_stats.py)")
@@ -674,6 +924,8 @@ def main(argv: list[str] | None = None) -> int:
         if len(a.score) < 2:
             ap.error("--score answers.csv ratings.csv [ratings.csv ...]")
         return score(a.score)
+    if a.single:
+        return build_single(a)
     return build(a)
 
 

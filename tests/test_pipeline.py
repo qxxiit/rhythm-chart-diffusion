@@ -673,6 +673,57 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
         with open(run / "answers.csv", encoding="utf-8-sig") as f:
             folders.append({r["path"].split("/")[0] for r in csv.DictReader(f)})
     assert folders[1] and not folders[0] & folders[1]
+    # one chart per song, the human one or a saved run's, and the other in the second version
+    fake = tmp_path / "run_ai"                         # a saved run: the human charts mirrored
+    fake.mkdir()
+    with open(data / "manifest.csv", newline="") as f:
+        train_keys = [r["key"] for r in csv.DictReader(f) if r["split"] == "train"]
+    saved = {}
+    for key in train_keys:
+        tok_file = data / "cache" / "tokens" / f"{key}.npz"
+        if tok_file.exists():
+            saved[key] = np.load(tok_file)["tokens"][..., ::-1].copy()
+    np.savez_compressed(fake / "charts.npz", **saved)
+    ps = tmp_path / "single"
+    single = ["--split", "train", "--songs", "2", "--sr-range", "0", "10",
+              "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
+              "--cache", str(data / "cache"), "--out", str(ps)]
+    assert playtest_pack.main(["--single", *single]) == 2                  # no --from-run
+    assert playtest_pack.main(["--single", "--from-run", str(fake), "--versions", "2",
+                               *single]) == 0
+    with open(ps / "answers.csv", encoding="utf-8-sig") as f:
+        answers = list(csv.DictReader(f))
+    assert len(answers) == 4
+    per_song = {}
+    for r in answers:
+        per_song.setdefault(r["song"], {})[r["version"]] = r["source"]
+    assert all(sorted(v.values()) == ["ai run_ai", "human"] for v in per_song.values())
+    assert sorted(r["source"] for r in answers if r["version"] == "1") == ["ai run_ai", "human"]
+    assert playtest_pack.single_humans(5, 0).sum() in (2, 3)   # one of each two, a coin left
+    rated = [("p", "human", True, 5, 4.0, False, "S01"), ("p", "ai x", False, 5, 4.0, False, "S02")]
+    assert playtest_pack.cluster_accuracy(rated, n=50) == (1.0, 1.0)
+    for v in ("1", "2"):
+        packs = sorted((ps / f"pack_v{v}").glob("*.osz"))
+        assert len(packs) == 2 and (ps / f"playtest_pack_v{v}.zip").exists()
+        for osz in packs:
+            with zipfile.ZipFile(osz) as zf:
+                charts = [n for n in zf.namelist() if n.endswith(".osu")]
+                text = zf.read(charts[0]).decode()
+            assert len(charts) == 1 and "Version:chart" in text and "Creator:playtest" in text
+        with open(ps / f"pack_v{v}" / "ratings.csv", encoding="utf-8-sig") as f:
+            sheet = list(csv.DictReader(f))
+        assert list(sheet[0]) == playtest_pack.SINGLE_FIELDS and {r["version"] for r in sheet} == {v}
+    filled = tmp_path / "ratings_single.csv"           # one player, right every time, sure
+    with open(filled, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=playtest_pack.SINGLE_FIELDS)
+        w.writeheader()
+        for r in answers:
+            if r["version"] == "1":
+                w.writerow({"song": r["song"], "version": "1", "sure": "5", "fun": "4",
+                            "human": "y" if r["source"] == "human" else "n", "knew": "n"})
+    assert playtest_pack.main(["--score", str(ps / "answers.csv"), str(filled)]) == 0
+    assert playtest_pack.answer_auc([3, 1], [-3, 1]) == 0.875
+    assert playtest_pack.answer_auc([2], [2]) == 0.5
 
     from scripts import audio_ablation
     assert audio_ablation.main(["--ckpt", str(tmp_path / "r" / "best.pt"), "--split", "train",

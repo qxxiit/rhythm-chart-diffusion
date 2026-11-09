@@ -136,6 +136,8 @@ python scripts/generate.py --audio X.mp3 --sr 3.5   # ✅ any audio file -> .osz
                                        #    --timing X.osu, or a constant tempo estimated from the audio)
 python scripts/playtest_pack.py --ckpt ...      # ✅ blind packs: human (tokenized) and AI charts as A/B/C;
                                        #    --pairs: human + one AI chart per song (forced choice);
+                                       #    --single --from-run R --versions 2: one chart per song
+                                       #    (the primary endpoint), a saved run's or the human one
                                        #    --score answers.csv ratings_*.csv summarizes the ratings
 python scripts/evaluate.py --ckpt ...  # ✅ F1, violations, SR error, rho, pattern clarity, cost
                                        #    --per-song: one chart per song; ci95_* bootstrap intervals

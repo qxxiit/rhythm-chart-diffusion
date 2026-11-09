@@ -23,6 +23,12 @@ decides a default.
    accuracy has to fall within about 44-56%; clustering by player and song narrows that.
    Fixed now, so that a miss still says something: the accuracy itself, and its difference
    from the control run on the same songs (an outside model such as Mapperatorinator, or M0).
+   Packs: `scripts/playtest_pack.py --single --from-run R --songs 20 --versions 2` (one
+   chart per song from the frozen system's saved run or the human one, each song human in one
+   version and AI in the other; `--score` gives the accuracy with that interval, the share
+   taken for human per source and an auc of the answers weighted by sureness). A pilot with
+   2-3 players before the freeze tries the protocol and gives a first player-against-judge
+   reading; it decides nothing.
    Pairs ("which of the two is human") stay as a format for quick checks: the share of AI
    charts taken for human with a Wilson interval, per player and per system, never pooled
    across players or systems (the 0/33 of 10-04..10-12 is one player and three systems).
