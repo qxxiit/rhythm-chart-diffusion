@@ -3873,6 +3873,46 @@ long notes), yet as many of either end 3 cells before the next note in the lane 
 the lanes in the way. None taken: the lane guidance stays 2, the lane temperature 0.5, the
 releases' 0.5 (DECISIONS 2026-11-09).
 
+### 2026-11-09 (5) · The lanes at temperature 1 in the taps view; the long notes drawn by the model (predictions)
+
+A taps-view fresh judge on run_1115's lt1 run (seed 1, 5 folds, the same 120 songs; after the
+entry above, so not in its rule):
+
+| view (fresh judges) | run_1112 | lanes at temperature 1 | difference (95%) |
+|---|---|---|---|
+| taps | 0.701 (songs 0.742) | 0.607 (songs 0.632) | -0.095 [-0.165, -0.031] |
+| full | 0.818 (songs 0.855) | 0.807 (songs 0.824) | -0.011 [-0.052, +0.026] |
+| the lanes' step (taps minus rhythm) | +0.167 [+0.083, +0.252] | +0.072 [-0.019, +0.158] | |
+| the long notes' step (full minus taps) | +0.117 [+0.055, +0.176] | +0.200 [+0.125, +0.277] | |
+
+At temperature 1 the lanes give the charts away far less, in spite of their statistics now
+past the human charts' (motion_pred 0.097 against 0.128); the full view hardly moves because
+the long notes alone are enough to tell (the views overlap: the judge needs one tell). The
+lanes at 1 go into the next run (DECISIONS 2026-11-09), to be kept or dropped by its full view.
+
+The long notes. F's top-up adds 181 a song, shorter than the model's own (0.52 against 0.63
+beats over all long notes; the songs' mean 0.848 before the passes, 0.758 after, the human
+0.936), and the releases' temperature does not lengthen them (11-09 (4)). So the model draws
+more of them itself: `--hold-bias 0.5` (about 1.6 times as many start; the chosen draw had
+0.126 of the onsets as long notes, the human charts 0.225) and the top-up fills only what is
+left. `run_1116.sh`: run_1112's draw again (the windows chosen among 4 by sel_rhythm, the same
+seeds) with the hold bias and the lanes at temperature 1, F's passes (their lanes at 1 too),
+fresh full-view and taps-view judges as s1_sel's, so the steps run_1112 → the lanes at 1 →
+the long notes drawn are read on the same 120 songs in both views.
+
+Predictions (written before it ran):
+1. The long-note share before the passes 0.126 → 0.17-0.22, after them 0.215-0.225; the top-up
+   181 → 40-110 a song.
+2. hold_beats 0.759 → 0.80-0.90 (human 0.936); release_on_onset 0.725 → 0.73-0.77 (0.784).
+3. The full view minus the lanes-at-1 run -0.02 to -0.06 (the long notes' step +0.200
+   shrinks); the taps view within ±0.03 of it (the same lane setting; the rhythm drawn again).
+4. Density within ±3%, new_onsets within ±0.01, sr_error within ±0.03 of run_1112's.
+5. The drawing as run_1112's (1 h 27 min), the run about 2 h 10 min.
+The run becomes the system if its full view is under run_1112's at 95%. How it could fail:
+the long notes' step does not shrink, and their tell is not how many or how long but where
+the model puts them (a view that shows them to the choosing judge, or training, is the
+lever); the taps view rises, and the bias moved the rhythm (onsets turned into long notes).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
