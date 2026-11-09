@@ -3995,6 +3995,65 @@ How it could fail: the step is no larger than noise, and what is left in the lon
 in the draws' differences but in the model's habits (as for the lanes, 11-09 (2)); the taps view
 rises, and choosing by the long notes chose against the rhythm.
 
+### 2026-11-10 (1) · run_1118 and run_1117: the long notes at the human share, chosen with them; the system on 240 songs (predictions)
+
+`run_1118.sh` (21:26 to 01:37, with about an hour where the computer slept) and `run_1117.sh`
+(01:37 to 04:52) on the same 120 songs, fresh judges as s1_sel:
+
+| view (fresh judges) | run_1112 | lanes at 1 | + hold bias 0.2 (run_1118) | + windows chosen by the holds view (run_1117) | prediction |
+|---|---|---|---|---|---|
+| full | 0.818 | 0.807 | 0.773 (songs 0.796) | 0.743 (songs 0.768) | 1118: -0.02 to -0.08 hit, songs under 0.80 hit; 1117: -0.02 to -0.06 hit |
+| minus the column before (95%) | | -0.011 [-0.052, +0.026] | -0.034 [-0.079, +0.010] | -0.030 [-0.093, +0.026] | |
+| minus run_1112 (95%) | | | -0.045 [-0.101, +0.011] | -0.075 [-0.137, -0.019] | |
+| taps | 0.701 | 0.607 | 0.614 | 0.699 | 1118: -0.02 to +0.06 hit; 1117: -0.03 to +0.02 miss (+0.085 [+0.039, +0.132]) |
+| the long notes' step (full minus taps) | +0.117 | +0.200 | +0.159 | +0.044 | |
+
+| per song | human | run_1112 | lanes at 1 | + bias 0.2 | + holds view | prediction |
+|---|---|---|---|---|---|---|
+| long-note share before F's passes | | 0.126 | 0.126 | 0.205 | 0.259 | 1118: 0.18-0.25 hit |
+| long-note share | 0.225 | 0.215 | 0.217 | 0.239 | 0.271 | 1118: 0.22-0.26 hit; 1117: ±0.02 of 1118 miss (+0.032) |
+| top-up (a song) | | 181 | 181 | 78 | 34 | 1118: 20-90 hit |
+| hold_beats | 0.936 | 0.758 | 0.759 | 0.786 | 0.805 | 1118: 0.78-0.85 hit; 1117: +0.01 to +0.05 hit (+0.020, n.s.) |
+| ln_short | 0.157 | 0.118 | 0.113 | 0.144 | 0.161 | 1118: 0.12-0.17 hit |
+| release_on_onset | 0.784 | 0.728 | 0.725 | 0.718 | 0.713 | 1117: +0.01 to +0.05 miss |
+| new_onsets | 0.051 | 0.100 | 0.100 | 0.114 | 0.120 | 1118: within +0.015 hit |
+| density (against the human) | | 0.987 | 0.989 | 0.990 | 1.008 | 1118: ±2% hit |
+| rhythm_rep1 | 0.269 | 0.288 | 0.289 | 0.296 | 0.275 | |
+| sr_error | | 0.204 | 0.191 | 0.202 | 0.226 | 1118: ±0.04 hit |
+
+sel_holds (the holds view of the cosine draw before F's passes, human SR, 240 songs): auc 0.929
+(songs 0.938), gap 8.83 (predictions 0.88-0.93, 6-9: hit); its select gain 3.11 logits, 35% of
+the gap (2.5-3.5 hit; 40-50% miss). The diagnostics judge (logistic / trees): run_1112 0.831 /
+0.939, lanes at 1 0.850 / 0.932, bias 0.2 0.863 / 0.942, holds view 0.854 / 0.939.
+
+Reading. The bias at 0.2 puts the model's own long notes near the human share and leaves the
+rhythm and lanes as they were (the taps view as the lanes-at-1 run's); the long notes' step
+falls a little (+0.200 → +0.159). Choosing the windows by the holds view takes it down to
++0.044, the long notes now read nearly human, but the taps view rises back to run_1112's
+(+0.085 against run_1118): the choice of a window weighs its long notes with its rhythm and
+gives some of the rhythm away (the failure reading written for it), and it leans to more long
+notes than the human charts (0.271). On the full view the three steps add up: 0.818 → 0.743,
+-0.075 [-0.137, -0.019] against run_1112, under 0 at 95% (the rule of 11-09 (5)): the system
+from now on (DECISIONS 2026-11-10), to be read on the standard judges.
+
+**The system on 240 songs** (`run_1119.sh`). The playtest gate is read on the standard judges
+(240 songs, seed 1, --sr view, 2 epochs, 2 folds: the cosine run 0.911, run_1113's 8 draws
+0.878 on the same 96 songs), so the other 120 songs are drawn and passed as run_1117's
+(`evaluate.py --reuse R`, new: the songs R has keep R's charts, the others drawn with the
+seeds a 240-song run gives them).
+
+Predictions (written before it ran):
+1. The standard judge: auc 0.78-0.84 (the 120-song fresh judges read 0.04-0.06 under the
+   standard ones: the cosine run 0.858 against 0.911), songs 0.84-0.92.
+2. Minus the cosine run on the songs they share: -0.07 to -0.13; minus run_1113's 8 draws:
+   -0.04 to -0.10.
+3. The gate (the standard judge's songs 0.90 or under, or its auc 0.85 or under): passed, by
+   the auc.
+4. The other 120 songs as run_1117's: the long-note share 0.25-0.29, hold_beats 0.78-0.83.
+5. About 2 h 30 min (the 120 songs drawn 2 h, F's passes 12 min, the judge 20 min).
+How it could fail: the standard judge reads the system as run_1113's (0.86 or over), and the
+120-song judges' step was in their own noise.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

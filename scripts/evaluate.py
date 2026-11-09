@@ -122,6 +122,12 @@ saved charts must be a run's before its later passes; tag _lsel<k><name>); with 
 draw them again once, at --lane-temp / --forward-temp / --lane-guidance (tag _rl...), to try
 lane settings without drawing the songs again. The first line names the run's directory
 ("run DIR", without _shardKofN: what scripts/merge_shards.py takes).
+
+--reuse R: a run grown to more songs (--n) without drawing the ones it has again. R must have
+this run's settings (its directory this run's name); its songs take R's charts and cost columns
+as they are (neither drawn nor passed), the others are drawn as a run of all of them would
+draw them (the seeds go by the song's place in the list), and the shards balance only the
+songs drawn.
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
 are those of the passes run here. Writes to
@@ -211,14 +217,15 @@ def weak_onsets(tokens: np.ndarray, strength: np.ndarray, n_cells: int) -> float
     return float(np.mean(strength[:n_cells][rows] < np.median(strength[:n_cells])))
 
 
-def shard_of(rows: list[dict], cache: Path, n: int, sr_min: float | None = None) -> list[int]:
+def shard_of(rows: list[dict], cache: Path, n: int, sr_min: float | None = None,
+             skip: frozenset = frozenset()) -> list[int]:
     """Each song's shard for --shard K/N: the longest song first, each to the shard with the
     fewest rows so far (a song's time goes with its length; 11-08, shards by index ended 15
-    minutes apart), ties by index; a song --sr-min leaves out weighs nothing. Every process
-    finds the same from the cache, and the seeds stay the full run's."""
+    minutes apart), ties by index; a song --sr-min leaves out, or one in `skip` (--reuse), weighs
+    nothing. Every process finds the same from the cache, and the seeds stay the full run's."""
     sizes = []
     for r in rows:
-        if sr_min is not None and float(r["sr"]) < sr_min:
+        if (sr_min is not None and float(r["sr"]) < sr_min) or r["key"] in skip:
             sizes.append(0)
             continue
         with np.load(cache / "tokens" / f"{r['key']}.npz") as z:
@@ -519,6 +526,10 @@ def main(argv: list[str] | None = None) -> int:
                          "on the saved charts' rhythm and holds")
     ap.add_argument("--lane-select-k", type=int, default=4,
                     help="versions of the lanes (--lane-select-judge)")
+    ap.add_argument("--reuse", type=Path, default=None,
+                    help="a run of these settings (its directory this run's name) whose songs keep "
+                         "its charts as they are: a run grown to more songs without drawing those "
+                         "again")
     ap.add_argument("--relane", action="store_true",
                     help="--from-charts: the lane passes (--lanes forward, --refine) draw the "
                          "saved charts' lanes again at --lane-temp, --forward-temp and "
@@ -743,6 +754,19 @@ def main(argv: list[str] | None = None) -> int:
             and a.lane_guidance is not None else "")          # the carried bars' lanes
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
     print(f"run {out_dir}", flush=True)
+    reused, reused_rows = {}, {}
+    if a.reuse is not None:
+        if a.reuse.resolve().name != out_dir.name:
+            print(f"--reuse {a.reuse}: not this run's settings (this run is {out_dir.name})",
+                  file=sys.stderr)
+            return 2
+        with np.load(a.reuse / "charts.npz") as z:
+            reused = {k: z[k] for k in z.files}
+        with open(a.reuse / "per_song.csv", newline="", encoding="utf-8") as f:
+            reused_rows = {r["key"]: r for r in csv.DictReader(f)}
+        reused = {k: v for k, v in reused.items() if k in reused_rows}
+        print(f"reused {sum(r['key'] in reused for r in rows)} of {len(rows)} songs from "
+              f"{a.reuse}", flush=True)
     shard = None
     if a.shard is not None:
         try:
@@ -752,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"--shard {a.shard}: K/N with 0 <= K < N", file=sys.stderr)
             return 2
         out_dir = out_dir.with_name(out_dir.name + f"_shard{shard[0]}of{shard[1]}")
-        assigned = shard_of(rows, a.cache, shard[1], a.sr_min)
+        assigned = shard_of(rows, a.cache, shard[1], a.sr_min, frozenset(reused))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results, charts = [], {}
@@ -776,7 +800,7 @@ def main(argv: list[str] | None = None) -> int:
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
         sel0, gain0 = STATS["select_windows"], STATS["select_gain"]
         select = None
-        if selector is not None:              # the SR the selection judge was trained with
+        if selector is not None and r["key"] not in reused:   # the SR its judge was trained with
             ref_sr = star_rating_file(a.root / r["path"]) if selector.meta["sr"] == "human" \
                 else sr
             select = selector.scorer(r["key"], ref_sr, draws=a.select_draws,
@@ -784,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
         lsel0, lgain0, seams0 = (STATS["lane_select_windows"], STATS["lane_select_gain"],
                                  STATS["lane_seams"])
         lane_select = None
-        if lane_selector is not None:
+        if lane_selector is not None and r["key"] not in reused:
             ref_sr = star_rating_file(a.root / r["path"]) \
                 if lane_selector.meta["sr"] == "human" else sr
             lane_select = lane_selector.scorer(r["key"], ref_sr, draws=1, seed=sample_seed + i)
@@ -810,7 +834,9 @@ def main(argv: list[str] | None = None) -> int:
         elif fixed_stats is not None:
             wanted = fixed_stats
         buckets = chartstats.encode(spec, wanted) if a.stats != "none" else None
-        if saved is not None:
+        if r["key"] in reused:
+            tokens = reused[r["key"]]
+        elif saved is not None:
             tokens = saved[r["key"]]
             if lane_selector is not None or a.relane:
                 tokens = relane_song(model, tokens, mel, sr, tps, offset, n_cells,
@@ -930,6 +956,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["recheck_in"] = STATS["recheck_in"] - in0
         if a.ln_tidy is not None:
             cost["tidied_holds"] = STATS["tidied_holds"] - tidied0
+        if r["key"] in reused:                       # its cost as the reused run had it
+            old = reused_rows[r["key"]]
+            cost = {k: float(old[k]) if old.get(k, "") not in ("", "nan") else float("nan")
+                    for k in cost}
         charts[r["key"]] = tokens
         metas = make_metas(tps, offset, len(tokens), sr)
         gen = decode(tokens, metas)

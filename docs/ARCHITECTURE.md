@@ -189,6 +189,8 @@ python scripts/evaluate.py ... --lanes forward --refine 2 --lane-select-judge J
                                        #    judge finds most human, the seams drawn again
                                        #    (sampler.choose_lanes); with --from-charts on a
                                        #    run's saved charts (sampler.relane_song)
+python scripts/evaluate.py ... --n 240 --reuse R
+                                       # ✅ run R grown to more songs, its own kept as they are
 python scripts/evaluate.py ... --from-charts R --relane --lane-temp T [--lane-guidance G]
                                        # ✅ a saved run's lanes drawn again at other settings,
                                        #    then the passes given (sampler.relane_song)

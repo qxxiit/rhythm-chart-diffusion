@@ -844,6 +844,25 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
     assert copied["songs"] == 2 and copied["mean_violation_rate"] == 0
     assert "mean_copied_bars" in copied and copied["copy_bias"] == 0
     assert evaluate.main([*common, "--n", "3", "--from-charts", str(run_dir)]) == 2   # not saved
+    # a run grown to more songs: the two it has kept as they are, the third drawn
+    grow = ["--steps", "4", "--order", "block", "--spread", "--lanes", "forward",
+            "--forward-temp", "1", "--refine", "1", "--empty-bias", "0.5"]
+    kept = {k: saved[k].copy() for k in saved.files}
+    with open(run_dir / "per_song.csv", newline="") as f:
+        before = {r["key"]: r for r in csv.DictReader(f)}
+    assert evaluate.main([*common, "--n", "3", "--steps", "4", "--reuse", str(run_dir)]) == 2
+    assert evaluate.main([*common, "--n", "3", *grow, "--reuse", str(run_dir)]) == 0
+    with np.load(run_dir / "charts.npz") as grown:
+        assert len(grown.files) == 3 and all(np.array_equal(grown[k], kept[k]) for k in kept)
+    with open(run_dir / "per_song.csv", newline="") as f:
+        after = {r["key"]: r for r in csv.DictReader(f)}
+    assert all(after[k]["seconds"] == before[k]["seconds"] and after[k]["f1@50"] == before[k]["f1@50"]
+               for k in before)
+    from scripts.evaluate import shard_of
+    with open(data / "manifest.csv", newline="") as f:
+        some = [r for r in csv.DictReader(f) if (data / "cache" / "tokens" / f"{r['key']}.npz").exists()][:4]
+    split = shard_of(some, data / "cache", 2, skip=frozenset(r["key"] for r in some[:3]))
+    assert split == [1, 1, 1, 0]          # the one drawn alone on a shard, the kept weigh nothing
     assert evaluate.main([*common, "--n", "2", "--refine-holds", "--copy-bias", "0",
                           "--from-charts", str(run_dir)]) == 0
     both = json.loads((run_dir.parent / (run_dir.name + "_hr_cp0") / "summary.json").read_text())
