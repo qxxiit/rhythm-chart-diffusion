@@ -187,6 +187,9 @@ python scripts/evaluate.py ... --lanes forward --refine 2 --lane-select-judge J
                                        #    judge finds most human, the seams drawn again
                                        #    (sampler.choose_lanes); with --from-charts on a
                                        #    run's saved charts (sampler.relane_song)
+python scripts/evaluate.py ... --from-charts R --relane --lane-temp T [--lane-guidance G]
+                                       # ✅ a saved run's lanes drawn again at other settings,
+                                       #    then the passes given (sampler.relane_song)
 python scripts/select_watch.py --logs L --judge J --pids P [--field lane]
                                        # ✅ stops such a drawing after 30 songs when the
                                        #    choice moves little

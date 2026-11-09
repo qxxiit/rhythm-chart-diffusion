@@ -2307,7 +2307,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               mapper: int | None = None, stats=None, rest: float | None = None,
               holes: float | None = None, carry: float | None = None,
               ln_tidy: float | None = None, lane_guidance: float | None = None,
-              lane_temperature: float = 0.5, copy_min_lag: int = 1, carry_keep: bool = False,
+              lane_temperature: float = 0.5, release_temperature: float = 0.5,
+              copy_min_lag: int = 1, carry_keep: bool = False,
               carry_holds: float | None = None, carry_rows: bool = False,
               sections: float | None = None, section_keep: bool = False,
               section_back: bool = False, section_lanes: bool = False,
@@ -2320,7 +2321,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               recheck_add: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
-    order: refine_holds (holds=True or a hold_share; hold_up: its only_more), carry_rhythm
+    order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
+    at release_temperature), carry_rhythm
     (carry: the bias; its lanes with lane_guidance at lane_temperature; carry_keep,
     carry_rows, carry_holds: its keep_notes, keep_rows and bias for bars with long notes),
     strong_chords (strong: the z difference), copy_sections (sections: the bias;
@@ -2354,7 +2356,7 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if holds or hold_share is not None:
         refine_holds(model, song, frames, s, beat_len, n_cells, min_hold=min_hold,
                      release_gap=release_gap, hold_share=hold_share, only_more=hold_up,
-                     rng=rng)
+                     release_temperature=release_temperature, rng=rng)
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,
@@ -2454,7 +2456,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
                   untangle_insane: bool = False, recheck: float | None = None,
                   recheck_add: float | None = None, schedule: str = "linear",
                   select=None, select_k: int = 1, lane_select=None,
-                  lane_select_k: int = 1) -> np.ndarray:
+                  lane_select_k: int = 1, release_temperature: float = 0.5) -> np.ndarray:
     """Chart tokens for a whole song: [n_chunks, L, K] int8, rows >= n_cells are PAD.
 
     mel           [n_frames, n_mels] frames of the whole song on the token grid
@@ -2475,7 +2477,8 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     holds         refine_holds after the lane passes: tap or long note, and the release,
                   decided again with the whole chart in view; hold_share (implies holds):
                   that share of the onsets become long notes, where the model expects them;
-                  hold_up: only taps become long notes, up to that share (only_more)
+                  hold_up: only taps become long notes, up to that share (only_more);
+                  release_temperature: refine_holds' for the releases (0: the likeliest)
     copy_bias     copy_bars after that with this bias in nats per bar (None: no copies);
                   the audio similarity of bars comes from mel; sources at least
                   copy_min_lag bars back
@@ -2637,7 +2640,7 @@ def generate_song(model, mel: np.ndarray, s: float, timing_points, cell_offset: 
     if holds or hold_share is not None:
         refine_holds(model, song, frames, s, beat_len, n_cells, min_hold=min_hold,
                      release_gap=release_gap, hold_share=hold_share, only_more=hold_up,
-                     rng=rng)
+                     release_temperature=release_temperature, rng=rng)
     if carry is not None:
         carry_rhythm(model, song, frames, s, beat_len, n_cells, s_audio, bias=carry,
                      lane_model=lane_model, temperature=lane_temperature, rng=rng,

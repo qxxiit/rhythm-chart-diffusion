@@ -3745,6 +3745,90 @@ copy_sections and align_alike choose the lanes of the bars they rewrite again) o
 learned the choosing judge's quirks; a step with the lane motion past the human, and the
 choice overshoots as 8 draws did.
 
+### 2026-11-09 (2) · run_1114: the lanes chosen by a judge; what is left of the chosen run's tell
+
+`run_1114.sh` (06:08 to 07:47; the choosing judge 26 min, the lanes and F's passes on 120 songs
+59 min, the fresh judge 12 min). Against run_1112's chosen run (the same 120 songs and rhythm,
+the same fresh judge settings):
+
+| | windows chosen (run_1112) | lanes chosen too | difference (95%) | human | prediction |
+|---|---|---|---|---|---|
+| the choosing judge sel_lanes (240 songs) | | auc 0.956, songs 0.962 | | | 0.92-0.96: hit |
+| its gap | | 10.85 logits | | | 7-10: miss, a little over |
+| the lane gain (30 songs / 120) | | 1.53 (14.1%) / 1.44 (13.3%) | | | 0.5-1.5, 7-20%: hit |
+| fresh full-view judge auc | 0.818 | 0.835 | +0.017 [-0.017, +0.052] | | -0.01 to -0.04: miss |
+| songs | 0.855 | 0.872 | | | under 0.90: hit |
+| motion_pred | 0.139 | 0.129 | -0.010 [-0.014, -0.006] | 0.128 | 0.125-0.137: hit |
+| move_jack | 0.043 | 0.046 | +0.003 [-0.012, +0.016] | 0.051 | 0.044-0.051: hit |
+| lane_rep1 | 0.082 | 0.072 | -0.010 [-0.027, +0.009] | 0.063 | |
+| copy_near | 0.039 | 0.035 | -0.004 [-0.011, +0.002] | 0.033 | |
+| density, new_onsets, sr_error | | | +0.14%, +0.0002, -0.003 [-0.013, +0.007] | | ±0.5%, ±0.005: hit; 0 to -0.03: at 0 |
+| a song's time, a process | | 87 s (median 66) | | | 60-100 s: hit |
+
+The diagnostics judge: logistic 0.831 → 0.811, trees 0.939 → 0.917. The seams are not what the
+fresh judge reads: its row scores in the bands drawn again (192 ± 24 rows into a window), against
+the window's other rows and net of its own human rows, moved +0.08 [-0.05, +0.21] logits from
+run_1112's (under 4% of its row gap between the run and the human charts, 5.8). Nor did the
+choice carry over: that row gap went 5.72 → 5.89 (+0.17 [-0.45, +0.83]), where the choosing
+judge's 13% carried over whole would have taken it down about 0.77. The failure reading written
+before it ran, a gain and no step: F's passes rewrite about 33 bars a song (carry 17, sections
+12, aligned 4, of about 130), too few to undo it all; the lane statistics moved toward the human
+charts, so the lanes changed, but what a judge that did not choose reads in the lanes did not.
+The rhythm's choice carried over (the rhythm view 0.664 → 0.535) because the draws of a window
+differ in what every judge reads; the versions of the lanes differ in detail that one judge
+reads one way and another another. Not taken (DECISIONS 2026-11-09).
+
+What is left of run_1112's tell, view by view (fresh judges, seed 1, the same 120 songs, each
+view the one above with one part more; `s1_sel_taps` 08:58 to 09:11):
+
+| view | auc (95%) | songs | minus the row above (95%) | adds |
+|---|---|---|---|---|
+| rhythm (lanes at random, long notes as taps) | 0.535 [0.458, 0.605] | 0.520 | | the rhythm, against the music |
+| taps (long notes as taps) | 0.701 [0.646, 0.753] | 0.742 | +0.167 [+0.083, +0.252] | the lanes |
+| full | 0.818 [0.775, 0.857] | 0.855 | +0.117 [+0.055, +0.176] | the long notes |
+
+Both steps are larger than in the cosine run under the srv judges (96 songs: rhythm 0.742, taps
+0.840, full 0.909; the lanes +0.098, the long notes +0.069): with the rhythm's tell gone, what it
+covered shows (the views overlap). The lanes carry more of what is left, the long notes much of
+the rest; choosing does not reach the lanes, and the long notes are not yet touched.
+
+### 2026-11-09 (3) · The lanes' and the long notes' settings on the chosen draw (predictions)
+
+What is left of the chosen run's tell is in the lanes and the long notes (11-09 (2)), and a
+choice among versions of the lanes does not carry over, so the lever is how the passes draw
+them. The settings are tried on run_1112's chosen draw as saved: `evaluate.py --relane` draws
+its lanes again once at the settings given (`sampler.relane_song` without a judge; as for
+run_1114, the lanes come out as a new drawing's would), or only F's passes run again; each run
+is read by its own fresh judge (seed 1, --sr view, 2 epochs, all 5 folds of the 120 songs),
+paired with run_1112's s1_sel. `run_1115.sh`:
+- deaf: a taps-view fresh judge on run_1112's chosen run that hears silence: the taps view's
+  0.701 minus it is what the lanes against the music (and the rhythm against it, 0.035 in the
+  rhythm view) tell.
+- rt1: F's passes with the releases of the long notes they add at temperature 1 instead of 0.5
+  (`--release-temp 1`, new; refine_holds' release_temperature was fixed at 0.5): the chosen
+  run's long notes last 0.76 beats, the human ones 0.94, and the releases are drawn near the
+  likeliest.
+- lg0: the lanes drawn again without the guidance towards the chart stats (`--lane-guidance 0`
+  instead of 2; F's passes' lanes too).
+- lt1: the lanes drawn again at temperature 1 instead of 0.5 (F's passes' lanes too).
+- nohu (not in the chain): F's passes without the long notes topped up to the human share
+  (the chosen draw has 0.126 before them, the human charts 0.225).
+
+Predictions (written before it ran):
+1. The deaf taps judge 0.62-0.69: the music adds +0.01 to +0.08 to the taps view (part of the
+   lanes' tell is the lanes against the melody, most the lane patterns themselves).
+2. rt1: hold_beats 0.76 → 0.80-0.88 (human 0.94), release_on_onset 0.728 → 0.73-0.76 (0.784),
+   the long-note share within ±0.005; the fresh judge minus s1_sel -0.03 to +0.01.
+3. lg0: the jack and trill rates off the chart stats' (move_jack, move_trill further from the
+   human rates), motion_pred 0.12-0.15; the fresh judge -0.02 to +0.03.
+4. lt1: motion_pred 0.139 → 0.10-0.12 (human 0.128; the 11-07 sweep: -0.034 at temperature 1);
+   the fresh judge -0.03 to +0.03.
+5. Times: deaf 13 min, rt1 about 25, lg0 and lt1 about 75 each (the lanes drawn again: 60).
+A setting is taken when its step's 95% interval lies under 0; the ones taken go together next.
+How it could fail: none taken, and the lanes' and the long notes' tell is not in how the passes
+draw them but in the model (training towards them is the lever); the deaf judge as high as the
+taps view, and the music is not where the lanes give the chart away.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

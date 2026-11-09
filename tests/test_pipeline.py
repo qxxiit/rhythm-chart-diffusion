@@ -1182,6 +1182,26 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
         assert np.array_equal(a == HOLD_START, b == HOLD_START)
         assert np.array_equal((a == TAP).sum(-1), (b == TAP).sum(-1))
     assert evaluate.main([*common, "--lane-select-judge", str(keep)]) == 2   # no lane passes
+    # the lanes drawn again once at other settings, no judge (a lane setting without a draw)
+    relane = ["--from-charts", str(run), "--relane", "--lanes", "forward", "--refine", "1",
+              "--lane-temp", "1"]
+    assert evaluate.main([*common, *relane]) == 0
+    other = run.parent / (run.name + "_rlfr1t1")
+    new = np.load(other / "charts.npz")
+    changed = 0
+    for r in relaned:
+        a, b = old[r["key"]], new[r["key"]]
+        assert np.array_equal(np.isin(a, (TAP, HOLD_START)).any(-1),
+                              np.isin(b, (TAP, HOLD_START)).any(-1))
+        assert np.array_equal(a == HOLD_START, b == HOLD_START)
+        changed += int(not np.array_equal(a, b))
+    assert changed >= 1                              # the lanes are drawn again
+    assert evaluate.main([*common, "--relane", "--refine", "1"]) == 2       # no saved charts
+    # the releases of the long notes added at another temperature (tag rt<x>)
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3", "--hold-up",
+                          "--release-temp", "1"]) == 0
+    assert (run.parent / (run.name + "_hu-0.3rt1") / "charts.npz").exists()
+    assert evaluate.main([*common, "--from-charts", str(run), "--release-temp", "1"]) == 2
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

@@ -118,7 +118,10 @@ sampling, after the passes asked for (sampler.post_song: --refine-holds, --carry
 --untangle, --chord-cap, in that order): minutes instead of hours. With
 --lane-select-judge the lane passes (--lanes forward, --refine) first draw the lanes of the
 saved charts again, --lane-select-k versions chosen by the judge (sampler.relane_song; the
-saved charts must be a run's before its later passes; tag _lsel<k><name>).
+saved charts must be a run's before its later passes; tag _lsel<k><name>); with --relane they
+draw them again once, at --lane-temp / --forward-temp / --lane-guidance (tag _rl...), to try
+lane settings without drawing the songs again. The first line names the run's directory
+("run DIR", without _shardKofN: what scripts/merge_shards.py takes).
 Use the same --per-song / --n / --seed as that run; the sampler options are ignored
 (--lane-guidance and --lane-temp choose the carried bars' lanes), and passes / seconds
 are those of the passes run here. Writes to
@@ -392,6 +395,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-hold", type=int, default=None,
                     help="long notes shorter than this many cells (1/12 beat) become taps; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
+    ap.add_argument("--release-temp", type=float, default=None,
+                    help="--refine-holds / --hold-share: temperature of the releases' choice "
+                         "(default 0.5, as before; 0: the likeliest); tag rt<x> after the "
+                         "long notes' tag")
     ap.add_argument("--release-gap", type=int, default=None,
                     help="empty cells required between a release and the next onset in its lane; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
@@ -512,6 +519,11 @@ def main(argv: list[str] | None = None) -> int:
                          "on the saved charts' rhythm and holds")
     ap.add_argument("--lane-select-k", type=int, default=4,
                     help="versions of the lanes (--lane-select-judge)")
+    ap.add_argument("--relane", action="store_true",
+                    help="--from-charts: the lane passes (--lanes forward, --refine) draw the "
+                         "saved charts' lanes again at --lane-temp, --forward-temp and "
+                         "--lane-guidance before the other passes (sampler.relane_song; tag "
+                         "_rl...)")
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))
     ap.add_argument("--root", type=Path, default=Path("data/raw"))
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
@@ -563,11 +575,14 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         selector = WindowJudge(a.select_judge, next(model.parameters()).device)
     lane_selector = None
+    if a.relane and a.from_charts is None:
+        print("--relane draws a saved run's lanes again: give --from-charts", file=sys.stderr)
+        return 2
+    if (a.lane_select_judge is not None or a.relane) and a.lanes != "forward" and not a.refine:
+        print("--lane-select-judge and --relane run the lane passes: give --lanes forward "
+              "and / or --refine", file=sys.stderr)
+        return 2
     if a.lane_select_judge is not None:
-        if a.lanes != "forward" and not a.refine:
-            print("--lane-select-judge chooses among the lane passes' draws: give --lanes "
-                  "forward and / or --refine", file=sys.stderr)
-            return 2
         lane_selector = WindowJudge(a.lane_select_judge, next(model.parameters()).device)
     labels = read_style(a.style_csv) if a.style_csv.exists() else {}
     vocab = getattr(model, "style", None)
@@ -635,6 +650,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     hold_tag = "" if not (a.refine_holds or a.hold_share is not None) else (
         "_hu" if a.hold_up else "_hr") + (f"-{a.hold_share}" if a.hold_share is not None else "")
+    if a.release_temp is not None:
+        if not hold_tag:
+            print("--release-temp is refine_holds': give --refine-holds or --hold-share",
+                  file=sys.stderr)
+            return 2
+        hold_tag += f"rt{a.release_temp:g}"
     tag += hold_tag
     carry_tag = "" if a.carry_rhythm is None else f"_rc{a.carry_rhythm:g}" + (
         "k" if a.carry_keep else "") + ("r" if a.carry_rows else "") + (
@@ -687,7 +708,13 @@ def main(argv: list[str] | None = None) -> int:
     lane_tag = f"_lsel{a.lane_select_k}{a.lane_select_judge.name}" \
         if a.lane_select_judge is not None else ""
     tag += lane_tag
+    relane_tag = "_rl" + ("f" if a.lanes == "forward" else "") + (
+        f"r{a.refine}" if a.refine else "") + f"t{a.lane_temp:g}" + (
+        f"ft{a.forward_temp:g}" if a.forward_temp is not None else "") + (
+        f"g{a.lane_guidance:g}" if a.lane_guidance is not None else "") \
+        if a.relane and a.lane_select_judge is None else ""
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
+    release_temp = 0.5 if a.release_temp is None else a.release_temp
     if a.sample_seed is not None:
         tag += f"_s{a.sample_seed}"
     if a.sr_min is not None:
@@ -705,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{a.from_charts}: no saved chart for {len(missing)} of the {len(rows)} charts "
                   "(use that run's --per-song / --n / --seed)", file=sys.stderr)
             return 2
-        suffix = lane_tag + hold_tag + carry_tag + strong_tag + section_tag + (
+        suffix = lane_tag + relane_tag + hold_tag + carry_tag + strong_tag + section_tag + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
             if a.copy_bias is not None else "") + alike_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
@@ -715,6 +742,7 @@ def main(argv: list[str] | None = None) -> int:
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
+    print(f"run {out_dir}", flush=True)
     shard = None
     if a.shard is not None:
         try:
@@ -784,7 +812,7 @@ def main(argv: list[str] | None = None) -> int:
         buckets = chartstats.encode(spec, wanted) if a.stats != "none" else None
         if saved is not None:
             tokens = saved[r["key"]]
-            if lane_selector is not None:
+            if lane_selector is not None or a.relane:
                 tokens = relane_song(model, tokens, mel, sr, tps, offset, n_cells,
                                      lanes=a.lanes, refine=a.refine,
                                      lane_temperature=a.lane_temp,
@@ -817,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
                                    untangle_grades=a.untangle_grades, alike=a.alike,
                                    alike_keep=a.alike_keep, strong=a.strong_chords,
                                    lane_guidance=a.lane_guidance, lane_temperature=a.lane_temp,
+                                   release_temperature=release_temp,
                                    **{k: v for k, v in style.items() if k != "style_guidance"})
         else:
             tokens = generate_song(model, mel, sr + a.sr_offset, tps, offset, n_cells,
@@ -831,6 +860,7 @@ def main(argv: list[str] | None = None) -> int:
                                    jack_bias=a.jack_bias, copy_bias=a.copy_bias,
                                    copy_min_lag=a.copy_min_lag,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
+                                   release_temperature=release_temp,
                                    light=a.light, light_alike=a.light_alike,
                                    recheck=a.recheck, recheck_add=a.recheck_add,
                                    untangle_wide=a.untangle_wide,
