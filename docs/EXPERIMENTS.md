@@ -3972,6 +3972,29 @@ moved rather than shrank; then the choosing judge sees the long notes (`run_1117
 the holds view, `judge.view_tokens` "holds", the rhythm view's random lanes with every long
 note kept whole in its lane).
 
+### 2026-11-09 (7) · The windows chosen by a judge that sees the long notes (predictions)
+
+`run_1117.sh`, queued after run_1118 (its results not yet in). run_1112's choosing judge saw the
+rhythm view, and its choice carried over to that view (0.664 → 0.535) and no further. Here the
+choosing judge sees the holds view (`judge.view_tokens` "holds": the rhythm view's random lanes,
+every long note kept whole in its lane): sel_holds, trained as sel_rhythm (the cosine draw
+before F's passes, the human chart's SR, 2 epochs, all 5 folds kept), and a window's 4 draws are
+chosen by their rhythm and long notes together; the rest as run_1118 (the hold bias 0.2, the
+lanes at temperature 1, F's passes, fresh full- and taps-view judges), so the step against
+run_1118 on the same 120 songs is the choice's.
+
+Predictions (written before it ran):
+1. sel_holds: auc 0.88-0.93 (sel_rhythm's 0.877 with the long notes on top); its gap 6-9 logits.
+2. The select gain 2.5-3.5 logits (40-50% of its gap): the run goes on.
+3. The fresh full view minus run_1118's: -0.02 to -0.06; the taps view minus run_1118's: -0.03
+   to +0.02 (the rhythm is still chosen; the long notes as taps add little to it).
+4. hold_beats and release_on_onset toward the human charts' (+0.01 to +0.05 each); the long-note
+   share within ±0.02 of run_1118's.
+5. About 2 h 30 min (the choosing judge 25 min, the drawing as run_1118's).
+How it could fail: the step is no larger than noise, and what is left in the long notes is not
+in the draws' differences but in the model's habits (as for the lanes, 11-09 (2)); the taps view
+rises, and choosing by the long notes chose against the rhythm.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
