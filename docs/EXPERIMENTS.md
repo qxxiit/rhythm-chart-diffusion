@@ -4054,6 +4054,33 @@ Predictions (written before it ran):
 How it could fail: the standard judge reads the system as run_1113's (0.86 or over), and the
 120-song judges' step was in their own noise.
 
+### 2026-11-11 (1) · Where the system's tell is left; its lanes at 0.7 and its hold bias at 0.1 (predictions)
+
+`run_1120.sh`, queued after run_1119 (whose standard-judge reading is not in yet). On the
+system's first 120 songs (run_1117), fresh judges as s1_sh's (seed 1, --sr view, 2 epochs,
+5 folds):
+- views: the system in the rhythm view and the holds view, run_1112's in the holds view: how
+  much of what the holds-view choice gave up is the rhythm (the taps view rose 0.614 → 0.699
+  against run_1118), and how human the rhythm with the long notes now reads.
+- lt07: the system's draw with its lanes drawn again at temperature 0.7 (`--relane`; at 1 the
+  lane motion, the one-bar lane repeats and the near copies fell under the human charts', whose
+  values lie between 0.5 and 1, at about 0.63-0.69), then F's passes (their lanes at 0.7).
+- hb1: the system drawn with the hold bias 0.1 (the holds-view choice took the long notes to
+  0.271 of the onsets, over the human 0.225), then F's passes.
+
+Predictions (written before it ran):
+1. The rhythm view of the system 0.56-0.66 (run_1112's 0.535); the holds view of the system
+   0.60-0.70, of run_1112 0.68-0.78.
+2. lt07: motion_pred 0.085 → 0.10-0.12 (human 0.128), lane_rep1 0.044 → 0.05-0.07 (0.063); the
+   taps view minus the system's -0.04 to +0.04, the full view -0.03 to +0.03.
+3. hb1: the long-note share before F's passes 0.19-0.23 (0.259 at 0.2), after 0.23-0.26 (0.225);
+   hold_beats 0.78-0.82; the full view minus the system's -0.02 to +0.03, the taps view -0.03 to
+   +0.03.
+4. Times: views 40 min, lt07 about 65, hb1 about 2 h 45 min.
+A setting replaces the system's when its full view is under the system's at 95%. How it could
+fail: the rhythm view of the system near run_1112's, and the taps view's rise was its lanes,
+not its rhythm; neither setting moves the full view, and the system's settings stay.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
