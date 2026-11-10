@@ -33,10 +33,12 @@ BASE="--lanes forward --refine 2 --loud-bias 0.1 --onset-bias 1 --onset-taper 2.
 E="python scripts/evaluate.py --ckpt $P --per-song --lane-guidance 2 --lane-temp 1 --n 240 \
 --stats oracle"
 
+# merged NAME: the shards merged over the 120-song run they grow (--force: its directory is
+# already there; its first 120 songs come back as they were)
 merged() {
     run=$(sed -n 's/^run //p' $D/${1}_shard0.log | head -n 1)
     [ -n "$run" ] || { echo "no run line in $D/${1}_shard0.log"; exit 2; }
-    python scripts/merge_shards.py "$run"
+    python scripts/merge_shards.py "$run" --force
     echo "$run" > $D/$1.path
 }
 
