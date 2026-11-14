@@ -202,6 +202,11 @@ python scripts/select_watch.py --logs L --judge J --pids P [--field lane]
 python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
                                        #    from the human ones by all the diagnostics at once
                                        #    (auc, paired, what it leans on); seconds, aggregate only
+python scripts/stems.py [--shard K/N] [--limit N]
+                                       # ✅ htdemucs's 4 stems of every cached audio file as a
+                                       #    16-band log-Mel each on the mel cache's frames
+                                       #    (data/cache/stems/, val and test first, resumable;
+                                       #    demucs from outputs/patches_1108/start_stems_speed.sh)
 ```
 
 ## Known issues

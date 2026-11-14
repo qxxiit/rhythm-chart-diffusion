@@ -4139,6 +4139,63 @@ It becomes the system if its full view's step lies under 0 at 95%. How it could 
 rhythm view does not fall, and the rhythm given away was the hold bias's, not the choice's (the
 holds view already carries the rhythm, so the two judges add little to one).
 
+(Not run on 11/14: the pilot's findings below came first; run_1121 waits.)
+
+### 2026-11-14 (2) · The pilot's tells: empty stretches, mirrored answers; the rhythm drawn beat by beat (predictions)
+
+The pilot (the user, pack v2, the system's charts): no sheet filled, two tells reported. (a)
+Stretches with nothing at all, not short, mid-song: "a buggy AI". (b) A human chart answers a
+pattern with a left-right mirrored one, the AI too seldom. Measured afterwards (aggregates;
+`fatal.py` in the device VM, numpy only; the 240 val songs, the human chart's span from its
+first to its last note):
+
+| | human | system draw | after F's passes |
+|---|---|---|---|
+| longest empty stretch a song, 90th percentile (beats) | 7.9 | 8.8 | 14.0 |
+| songs with an empty stretch of 8+ beats | 8% | 11% | 18% |
+| songs with a fatal one (8+ beats, the human chart 1+ onset a beat there) | 0% | 3% | 5% |
+| 1 beat: the next beat has the same rhythm (busy beat pairs) | 25.0% | 12.2% | 14.6% |
+| of those (alternations aside), mirrored | 10.7% | 8.0% | 7.2% |
+| of those, the same | 3.4% | 5.7% | 5.0% |
+| 2 beats: the next 2 have the same rhythm | 16.9% | 7.9% | 9.2% |
+| of those, mirrored | 7.0% | 5.0% | 3.3% |
+
+- The fatal stretches (10 in the draw, 18 after the passes) all lie in the quieter part of
+  their song (below its 40th loudness percentile), where the human chart goes on following
+  something. 13 of the 18 were all but empty in the draw already; the rest pass joins and
+  lengthens them (songs with one: 3.2 bars cleared by it, the others 0.7).
+- Human charts (3,000 train charts) answer a beat of the same rhythm with its mirror 11.7% of
+  the time against 6.1% for the same rhythm anywhere else in the song, an exact repeat 4.9%:
+  the mirror is the answer they choose, at 2 beats and a bar too, in every grade.
+- The model knows it (`mirror_probe.py`, 40 val charts, forward_lanes' past+rhythm view,
+  temperature 1): at the first row where a human chart mirrors, its top lane set is the
+  mirror 77% of the time (2 beats: 89%; where the human chart does something else 26-33%,
+  chance 20%), and it goes on with a mirror once begun (85%). The AI mirrors at about 40% of
+  the human rate mostly because its rhythm repeats beat to beat half as often.
+- The rhythm is drawn in random order, ~9 cells a step anywhere in the window: neighbouring
+  beats are drawn without each other (the parallel-decoding failure CoDiLA, ICML 2026, fixes
+  with a local autoregressive decoder). `--order block` already draws beat by beat, left to
+  right, each beat with the ones before it complete (block diffusion with a beat a block).
+
+`run_1122.sh`: the first 120 val songs drawn twice with the system's settings but one draw a
+window (sample_windows does not batch the 4 draws for block order yet), in random order and
+in block order, the same seeds; F's passes; fresh 120-song judges on both, full and rhythm
+view (paired); then `scripts/stems.py` for every audio file (the val and test audio first).
+
+Predictions (written before it ran):
+1. Busy beat pairs whose next beat has the same rhythm, random order: 11-14% in the draw,
+   13-16% after the passes; block order: 16-22% in the draw, 17-24% after.
+2. Of those, mirrored (after the passes): random 6-9%, block 7-11%.
+3. Empty stretches after the passes, songs with 8+ beats: random 15-21%, block 15-28% (left
+   to right can hand an empty beat on as context, as the confidence order did on 10-03).
+4. Fresh judges, block minus random: full view -0.05 to +0.02, rhythm view -0.08 to 0.00.
+5. Time a song within ±15% of the random order's.
+If block order's rhythm view lies under 0 at 95% and its fatal stretches are not more, the
+4 draws get batched for it and it goes into the system run (the windows chosen among 4); if
+its full view lies under 0 at 95%, at once. How it could fail: the beat-to-beat repeats do
+not rise (the model itself does not repeat a beat it has just seen), or they rise as exact
+copies, not as the human charts' answers.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
