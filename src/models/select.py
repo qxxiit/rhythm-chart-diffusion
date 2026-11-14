@@ -11,6 +11,8 @@ trained on the chosen run with another seed.
     WindowJudge(dir, device)          the fold judges of a judge.py --save-models run
     .scorer(key, s, draws, seed)      score(cands, mel, b) -> logits [k] for the song key, or
                                       None when no fold judge held it out
+    combined_scorer(scorers, gaps)    several judges' scorers as one (evaluate.py
+                                      --select-judge J1 J2 ...)
 """
 
 from __future__ import annotations
@@ -69,3 +71,18 @@ class WindowJudge:
             return logits.float().view(len(cands), n_draws).mean(dim=1).cpu().numpy()
 
         return score
+
+
+def combined_scorer(scorers: list, gaps: list[float]):
+    """Several judges' scorers as one: each judge's window scores divided by its gap (models.json
+    "gap": how far its run's windows sat over the human ones), then summed, so each judge's own
+    gap counts one. A window kept is then the one the judges together find most human, every
+    judge as loud as its own reach; one scorer is returned as it is (its logits)."""
+    if len(scorers) == 1:
+        return scorers[0]
+
+    def score(cands, mel, b) -> np.ndarray:
+        return sum(np.asarray(sc(cands, mel, b), dtype=np.float64) / float(g)
+                   for sc, g in zip(scorers, gaps, strict=True))
+
+    return score

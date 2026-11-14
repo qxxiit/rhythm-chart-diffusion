@@ -1233,6 +1233,9 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert len(picked) == 3 and all(float(r["select_windows"]) >= 1 for r in picked)
     assert all(float(r["select_gain"]) >= 0 for r in picked)
     assert json.loads((chosen / "summary.json").read_text())["select_k"] == 2
+    assert evaluate.main([*common, "--select-judge", str(pick), str(pick), "--select-k", "2"]) == 0
+    two = next((tmp_path / "j").glob(f"eval_*_sel2{pick.name}+{pick.name}*"))
+    assert len(json.loads((two / "summary.json").read_text())["select_judge"]) == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--select-judge", str(pick)]) == 2
     # the lanes chosen by a full-view judge: while drawing, and again on the saved charts
     lanes = ["--lanes", "forward", "--refine", "1", "--lane-select-judge", str(keep),

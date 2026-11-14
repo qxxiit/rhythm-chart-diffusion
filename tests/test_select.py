@@ -222,6 +222,15 @@ def test_a_song_drawn_with_its_lanes_chosen() -> None:
     assert lane0(few) < lane0(many) and len(grammar_violations(few)) == 0
 
 
+def test_several_judges_choose_together() -> None:
+    from src.models.select import combined_scorer
+    up = lambda cands, mel, b: [1.0, 2.0, 3.0]                      # noqa: E731
+    down = lambda cands, mel, b: [3.0, 2.0, 1.0]                    # noqa: E731
+    both = combined_scorer([up, down], [1.0, 2.0])                  # each over its own gap
+    assert np.allclose(both(None, None, 0.0), [2.5, 3.0, 3.5])
+    assert combined_scorer([up], [5.0]) is up                       # one judge: its logits
+
+
 def log_lines(n: int, gain: float, field: str = "select") -> str:
     return "".join(f"[{i}/120] f1@50 0.400  sr 3.50 (target 3.40)  100 s  {field} gain "
                    f"{gain:.3f}  1/a.osu\n" for i in range(1, n + 1))

@@ -198,7 +198,7 @@ from src.models.sampler import (
     relane_song,
     steps_name,
 )
-from src.models.select import WindowJudge
+from src.models.select import WindowJudge, combined_scorer
 
 GRADES = [("Easy", 0.0, 2.0), ("Normal", 2.0, 2.7), ("Hard", 2.7, 4.0),
           ("Insane", 4.0, 5.3), ("Expert", 5.3, 6.5), ("Expert+", 6.5, float("inf"))]
@@ -511,10 +511,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sample-seed", type=int, default=None,
                     help="sampler seed only (default: --seed); the charts stay those of --seed")
-    ap.add_argument("--select-judge", type=Path, default=None,
-                    help="a judge.py --save-models run: every window is drawn --select-k "
-                         "times and the draw the song's held-out fold judge finds most human "
-                         "is kept (src/models/select.py; tag _sel<k><name>)")
+    ap.add_argument("--select-judge", type=Path, nargs="+", default=None,
+                    help="judge.py --save-models runs: every window is drawn --select-k times "
+                         "and the draw the song's held-out fold judge finds most human is kept "
+                         "(src/models/select.py; tag _sel<k><name>); with several, their scores "
+                         "each over its gap, summed (combined_scorer; tag _sel<k><a>+<b>)")
     ap.add_argument("--select-k", type=int, default=4, help="draws a window (--select-judge)")
     ap.add_argument("--select-draws", type=int, default=2,
                     help="random lane draws the rhythm view's judge averages over")
@@ -579,12 +580,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no {a.split} songs with SR, tokens and mel", file=sys.stderr)
         return 2
     model = load_denoiser(a.ckpt, pick_device(a.device))
-    selector = None
+    selectors = []
     if a.select_judge is not None:
         if a.from_charts is not None:
             print("--select-judge chooses while drawing: not with --from-charts", file=sys.stderr)
             return 2
-        selector = WindowJudge(a.select_judge, next(model.parameters()).device)
+        selectors = [WindowJudge(p, next(model.parameters()).device) for p in a.select_judge]
     lane_selector = None
     if a.relane and a.from_charts is None:
         print("--relane draws a saved run's lanes again: give --from-charts", file=sys.stderr)
@@ -715,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_mh{a.min_hold if a.min_hold is not None else 'a'}" \
                f"rg{a.release_gap if a.release_gap is not None else 'a'}"
     if a.select_judge is not None:
-        tag += f"_sel{a.select_k}{a.select_judge.name}"
+        tag += f"_sel{a.select_k}" + "+".join(p.name for p in a.select_judge)
     lane_tag = f"_lsel{a.lane_select_k}{a.lane_select_judge.name}" \
         if a.lane_select_judge is not None else ""
     tag += lane_tag
@@ -800,11 +801,13 @@ def main(argv: list[str] | None = None) -> int:
         passes0, copies0, t0 = STATS["passes"], STATS["copied_bars"], time.perf_counter()
         sel0, gain0 = STATS["select_windows"], STATS["select_gain"]
         select = None
-        if selector is not None and r["key"] not in reused:   # the SR its judge was trained with
-            ref_sr = star_rating_file(a.root / r["path"]) if selector.meta["sr"] == "human" \
-                else sr
-            select = selector.scorer(r["key"], ref_sr, draws=a.select_draws,
-                                     seed=sample_seed + i)
+        if selectors and r["key"] not in reused:          # the SR each judge was trained with
+            human_sr = star_rating_file(a.root / r["path"]) \
+                if any(j.meta["sr"] == "human" for j in selectors) else None
+            scorers = [j.scorer(r["key"], human_sr if j.meta["sr"] == "human" else sr,
+                                draws=a.select_draws, seed=sample_seed + i) for j in selectors]
+            if all(sc is not None for sc in scorers):
+                select = combined_scorer(scorers, [float(j.meta["gap"]) for j in selectors])
         lsel0, lgain0, seams0 = (STATS["lane_select_windows"], STATS["lane_select_gain"],
                                  STATS["lane_seams"])
         lane_select = None
@@ -909,7 +912,7 @@ def main(argv: list[str] | None = None) -> int:
                                    **style)
         cost = {"passes": STATS["passes"] - passes0,
                 "seconds": round(time.perf_counter() - t0, 2)}
-        if selector is not None:
+        if selectors:
             n_sel = STATS["select_windows"] - sel0
             cost["select_windows"] = n_sel
             cost["select_gain"] = round((STATS["select_gain"] - gain0) / n_sel, 4) \
@@ -1009,7 +1012,9 @@ def main(argv: list[str] | None = None) -> int:
                "per_song": a.per_song, "split": a.split, "mode": a.mode, "order": a.order,
                "temperature": a.temperature if a.order == "noisy" else None,
                "steps": a.steps, "schedule": a.schedule, "spread": a.spread,
-               "select_judge": str(a.select_judge) if a.select_judge else None,
+               "select_judge": (str(a.select_judge[0]) if len(a.select_judge) == 1
+                                else [str(p) for p in a.select_judge])
+               if a.select_judge else None,
                "select_k": a.select_k if a.select_judge else None,
                "lane_select_judge": str(a.lane_select_judge) if a.lane_select_judge else None,
                "lane_select_k": a.lane_select_k if a.lane_select_judge else None,

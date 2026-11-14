@@ -4081,6 +4081,64 @@ A setting replaces the system's when its full view is under the system's at 95%.
 fail: the rhythm view of the system near run_1112's, and the taps view's rise was its lanes,
 not its rhythm; neither setting moves the full view, and the system's settings stay.
 
+### 2026-11-11 (2) · run_1119: the system on 240 songs, the playtest gate passed; run_1120 results
+
+`run_1119.sh` (02:35 to 11:21 on 11-11, its merge stopped once: merge_shards.py would not write
+over run_1117's directory without `--force`, fixed in the script and run after run_1120). The
+standard judges (seed 1, --sr view, 2 epochs, 2 folds), the same 96 songs:
+
+| | auc (95%) | songs | minus the row above (95%) | prediction |
+|---|---|---|---|---|
+| the cosine run | 0.911 [0.887, 0.934] | 0.923 | | |
+| run_1113's 8 draws | 0.878 [0.845, 0.909] | 0.881 | -0.033 [-0.068, +0.002] | |
+| the system | 0.816 [0.779, 0.850] | 0.837 | -0.062 [-0.105, -0.019] | 0.78-0.84 hit; songs 0.84-0.92: under it |
+| the system minus the cosine run | | | -0.095 [-0.131, -0.061] | -0.07 to -0.13: hit |
+
+The playtest gate (the standard judge's songs 0.90 or under, or its auc 0.85 or under) is
+passed on both counts; the auc's interval reaches 0.850. The 120 songs drawn now: the long-note
+share 0.250 (their human charts 0.212; prediction 0.25-0.29 hit), hold_beats 0.868 (0.78-0.83:
+over), sr_error 0.276 (the first 120 songs 0.226).
+
+`run_1120.sh` (05:15 to 10:46), fresh judges on the system's first 120 songs:
+
+| | the system | the setting | minus the system (95%) | prediction | taken |
+|---|---|---|---|---|---|
+| the rhythm view (run_1112's 0.535) | 0.603 | | +0.068 [-0.016, +0.147] against run_1112 | 0.56-0.66: hit | |
+| the holds view (run_1112's 0.712) | 0.733 | | +0.021 [-0.043, +0.082] against run_1112 | 0.60-0.70: miss | |
+| the lanes at temperature 0.7, full | 0.743 | 0.771 | +0.028 [+0.003, +0.057] | -0.03 to +0.03: hit, at the edge | no |
+| the lanes at 0.7, taps | 0.699 | 0.693 | -0.006 [-0.043, +0.029] | -0.04 to +0.04: hit | |
+| the hold bias 0.1, full | 0.743 | 0.793 | +0.050 [+0.008, +0.092] | -0.02 to +0.03: miss | no |
+| the hold bias 0.1, taps | 0.699 | 0.681 | -0.019 [-0.063, +0.026] | -0.03 to +0.03: hit | |
+
+At 0.7 the lanes' statistics come nearer the human charts' (motion_pred 0.085 → 0.101, human
+0.128; lane_rep1 0.043 → 0.050, 0.063: both predictions hit) and the judges read them as less
+human: they prefer lanes less predictable than the statistics. At the hold bias 0.1 the long
+notes come nearer the human share (0.271 → 0.243; before F's passes 0.259 → 0.214, both
+predictions hit) but the top-up adds 61 a song instead of 34, and the full view worsens: the
+topped-up long notes are the tell (11-09 (6)), so fewer of them is worth more than the share.
+In the rhythm and long notes alone (the holds view) the system is no more human than run_1112;
+its gain is in the lanes (with the long notes there, the lanes add +0.010 over the holds view
+against run_1112's +0.106). The system's settings stay (DECISIONS 2026-11-10).
+
+### 2026-11-14 (1) · The windows chosen by the rhythm judge and the holds judge together (predictions)
+
+The system's choice by the holds view gave some of the rhythm away (above). `run_1121.sh`: each
+window's 4 draws are scored by sel_rhythm and sel_holds, each over its own gap, summed
+(`evaluate.py --select-judge J1 J2`, `select.combined_scorer`); the rest as the system. On all
+240 val songs, against the system's 240 by fresh 5-fold judges (paired on all 240), the full
+and the rhythm view.
+
+Predictions (written before it ran):
+1. The select gain (the two judges' gains over their gaps, summed): 0.5-0.8 (alone: sel_rhythm
+   0.42, sel_holds 0.35 of their gaps).
+2. The system in 5-fold judges on 240 songs: full 0.78-0.82, rhythm 0.58-0.64.
+3. The two judges' run minus the system: full -0.01 to -0.04, rhythm -0.03 to -0.08.
+4. The long-note share 0.24-0.27, hold_beats within ±0.03 of the system's.
+5. The drawing about 4 h, F's passes 25 min, the four judges 2 h.
+It becomes the system if its full view's step lies under 0 at 95%. How it could fail: the
+rhythm view does not fall, and the rhythm given away was the hold bias's, not the choice's (the
+holds view already carries the rhythm, so the two judges add little to one).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
