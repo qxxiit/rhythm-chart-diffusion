@@ -4287,6 +4287,66 @@ How it could fail: the model scores the rhythm before as worse almost everywhere
 answers: the draw's beats are what the model likes), or answers too often with exact copies
 (repeats over the human 3.4-4.9%), which a judge sees as a pattern copied.
 
+Results of 2026-11-15 (1), run_1123 (11/15 20:00 - 11/16 00:15; the first 120 val songs):
+
+| | human | system | stems-v1 | prediction |
+|---|---|---|---|---|
+| val_ce (full-v4 0.07396; ft-v1, 20k more steps without the stems, 0.07260) | | | 0.07209 | 0.0715-0.0738 ✓, under ft-v1 ✓ (by 0.0005) |
+| val_ce@0.9 (full-v4 0.17335, ft-v1 0.17144) | | | 0.17124 | 0.160-0.172 ✓, falls the most ✗ |
+| fresh judge, full view | | 0.743 | 0.734, -0.008 [-0.068, +0.049] | -0.06 to +0.01 ✓ |
+| fresh judge, rhythm view | | 0.603 | 0.680, +0.077 [+0.008, +0.152] | -0.06 to +0.02 ✗ |
+| songs with a fatal empty stretch, after the passes | 0% | 6% | 8% | 0-4% ✗ |
+| songs with an 8+ beat empty stretch, after | 8% | 18% | 21% | 10-17% ✗ |
+| the next beat of the same rhythm, after | 26.6% | 14.6% | 14.4% | 13-18% ✓ |
+
+Reading: not taken. ft-v1 shows most of the val_ce gain was the 20k steps more (full-v4 was
+not done learning); the stems added 0.0005, so 20k steps from zero weights did not teach the
+model to use them. Whether the rhythm view's step is the stems' or the retraining's (the row
+biases and the choosing judge were set on full-v4's draws) is not known: ft-v1 was not drawn.
+
+Results of 2026-11-15 (2), run_1124 (11/16 00:20 - 02:37; F's passes on the system's draw of
+the 240 val songs; judges on the first 120 against s1_sh / s1_sh_rhythm):
+
+| | human | system | rest guard | answers | both | prediction |
+|---|---|---|---|---|---|---|
+| songs with an 8+ beat empty stretch | 8% | 18% | 12% | 18% | 12% | guard 11-15% ✓ |
+| songs with a fatal one | 0% | 5% | 3% | 5% | 3% | guard 2-4% ✓ |
+| longest empty stretch, 90th pct (beats) | 7.9 | 14.0 | 10.0 | 14.0 | 10.0 | |
+| rest bars cleared a song (kept by the guard) | | 0.8 | 0.47 (0.28) | | 0.47 (0.28) | 0.5-0.7 ✗ (just under) |
+| the next beat of the same rhythm | 25.0% | 14.6% | 14.6% | 26.6% | 26.6% | answers 18-26% ✗ (just over) |
+| of those mirrored / the same | 10.7 / 3.4% | 7.2 / 5.0% | | 11.8 / 6.8% | 11.8 / 6.8% | 7-12 ✓ / 4-8 ✓ |
+| beats answered a song; notes | | | | 16.2; +0.2% | 16.2 | 15-60 ✓; ±3% ✓ |
+| fresh judge, full view | | 0.743 | +0.001 [-0.003, +0.004] | +0.024 [-0.003, +0.055] | +0.023 [-0.003, +0.053] | guard ±0.02 ✓; answers -0.04 to +0.01 ✗ |
+| fresh judge, rhythm view | | 0.603 | +0.013 [-0.003, +0.028] | +0.044 [+0.001, +0.090] | +0.034 [-0.013, +0.080] | guard ±0.02 ✓; answers -0.06 to +0.01 ✗ |
+
+The diagnostics judge (logistic / trees): 0.889 / 0.950 for all four. Reading: the rest guard
+takes out what the pass added to the empty stretches at no cost to the judges (the 3% left
+were empty in the draw): a candidate for the system (the rule: the fatal stretches fall, the
+full view not worse). The answers bring the beat-to-beat rhythm and the mirror to the human
+rates, but the rhythm judge likes them less: answering wherever the model does not object
+(bias 0) copies beats the music does not ask for, and the exact repeats run at twice the
+human rate. Not taken at bias 0.
+
+### 2026-11-16 (1) · The stems learned from the start; the answers made stricter (predictions)
+
+(1) stems-v2: `train.py --stems` from the start on full-v4's recipe exactly (60k steps, lr
+3e-4, warmup 1000, batch 16, row-mask 0.5, the chart stats, seed 0), so full-v4 is its
+control; the system's draw with it on the first 120 val songs, F's passes, the fresh judges
+against s1_sh / s1_sh_rhythm. (2) `--answer -1` and `-2` with `--rest-max-run 8` on the
+system's draw of the 240 (full-v4), against the rest guard alone (s1_rgf 0.743, s1_rgf_rhythm
+0.616). `run_1125.sh`.
+
+Predictions (written before it ran):
+1. stems-v2's val_ce 0.0720-0.0738 (full-v4 0.07396), val_ce@0.9 0.166-0.173 (0.17335);
+   training 3.2-3.8 h.
+2. Its songs with a fatal empty stretch after F's passes: 2-6% (the system 6% on these 120).
+3. Its fresh judges against the system: full view -0.06 to +0.02, rhythm view -0.04 to +0.06.
+4. Answers at -1 / -2: 6-12 / 3-8 beats a song; the next beat of the same rhythm 18-24% /
+   16-21%; exact repeats among them 5-7%; against the guard alone, full view -0.02 to +0.02,
+   rhythm view -0.02 to +0.03.
+Either is taken if its full view lies under 0 at 95%; stems-v2 also stays if its val_ce is
+under full-v4's by 1%+ and its judges are not worse (then a GPU sweep of its training).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
