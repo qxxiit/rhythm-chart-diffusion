@@ -4254,6 +4254,39 @@ How it could fail: 20k steps are too few for the new channels to matter (val_ce 
 or the stems help the likelihood but the passes and the choice decide the empty stretches
 (the rest pass joins them whatever the draw).
 
+### 2026-11-15 (2) · The pilot's tells in the passes: no long empty stretch from the rest pass, a beat answered (predictions)
+
+Two passes on the system's draw, from what 2026-11-14 (2) measured:
+- `--rest-max-run 8` (sampler.rest_bars max_run): the rest pass leaves a bar when clearing
+  it would leave 8 beats or more with nothing at all around it (longest_empty_run), and puts
+  the bar back as it was. The fatal stretches began in the draw (13 of 18) and the pass
+  joined and lengthened them (songs with one: 3.2 bars cleared, the others 0.7); a single
+  emptied bar between notes stays allowed (human charts leave 0.85% of their bars empty).
+- `--answer 0` (sampler.answer_beats, after align_alike): every beat is offered the rhythm of
+  the beat before it (3+ onset rows, no long note across either's edges, the onset count
+  within 15% or 1, not already the same rhythm); one forward pass with the beat MASK scores
+  both rhythms row by row (onset_count_logp, as copy_bars), and the earlier one comes in
+  when it scores at least as well (bias 0 nats). Its lanes are drawn again by the model
+  (refine_rows at the lane temperature 1, the lane guidance): the model, which knows the
+  mirror, decides between the mirror, the repeat and the rest.
+
+`run_1124.sh` (after run_1123): F's passes with each, and with both, on the system's draw
+of the 240 val songs (full-v4); the 120-song fresh judges (full and rhythm view) on the first
+120 against the system's s1_sh / s1_sh_rhythm; fatal.py on all 240 (the device VM).
+
+Predictions (written before it ran), against the system after F's passes on the 240:
+1. Rest guard: songs with an 8+ beat empty stretch 18% -> 11-15%, with a fatal one 5% ->
+   2-4%; rest bars cleared a song 0.8 -> 0.5-0.7; the judges within ±0.02 (n.s.).
+2. Answers: the next beat of the same rhythm 14.6% -> 18-26%; of those mirrored 7.2% -> 7-12%,
+   the same 5.0% -> 4-8%; notes within ±3%; 15-60 beats answered a song; full view -0.04 to
+   +0.01, rhythm view -0.06 to +0.01.
+3. Both: the two above together, neither undoing the other.
+Each is taken if its full view's step lies under 0 at 95%; if not, it stays a candidate when
+its rhythm view's does, or when the fatal stretches fall and the full view is not worse.
+How it could fail: the model scores the rhythm before as worse almost everywhere (few
+answers: the draw's beats are what the model likes), or answers too often with exact copies
+(repeats over the human 3.4-4.9%), which a judge sees as a pattern copied.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

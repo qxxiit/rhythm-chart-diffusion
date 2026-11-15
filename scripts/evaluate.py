@@ -488,6 +488,18 @@ def main(argv: list[str] | None = None) -> int:
                     help="rest_bars last: leave empty the bars where the model, with the bar "
                          "masked, expects fewer note starts than this (EXPERIMENTS 2026-10-07 "
                          "night); also on --from-charts")
+    ap.add_argument("--rest-max-run", type=float, default=None,
+                    help="--rest never leaves a stretch with nothing at all of this many beats "
+                         "or more around a bar it clears (sampler.rest_bars max_run); "
+                         "--from-charts only")
+    ap.add_argument("--answer", type=float, default=None,
+                    help="answer_beats after align_alike: every beat offered the rhythm of the "
+                         "one before it, taken when its score + this bias (nats a beat) "
+                         "reaches its own; --from-charts only")
+    ap.add_argument("--answer-unit", type=int, default=1, help="--answer: beats a unit")
+    ap.add_argument("--answer-lanes", choices=("draw", "copy"), default="draw",
+                    help="--answer: the lanes drawn again by the model (refine_rows at "
+                         "--lane-temp) or copied as they were or mirrored")
     ap.add_argument("--light", type=float, default=None,
                     help="after rest_bars, in charts under SR 2.7 a bar the model, with the bar "
                          "masked, expects to hold one or two onset rows with more than this "
@@ -695,6 +707,15 @@ def main(argv: list[str] | None = None) -> int:
     if a.rest is not None:
         tag += f"_rb{a.rest:g}"
     light_tag = "" if a.light is None else f"_li{a.light:g}" + ("a" if a.light_alike else "")
+    answer_tag = "" if a.answer is None else \
+        f"_ab{a.answer:g}u{a.answer_unit}{a.answer_lanes[0]}"
+    if (a.answer is not None or a.rest_max_run is not None) and a.from_charts is None:
+        print("--answer and --rest-max-run are passes on saved charts: give --from-charts",
+              file=sys.stderr)
+        return 2
+    if a.rest_max_run is not None and a.rest is None:
+        print("--rest-max-run needs --rest", file=sys.stderr)
+        return 2
     tag += light_tag
     if a.recheck_add is not None and a.recheck is None:
         print("--recheck-add needs --recheck", file=sys.stderr)
@@ -746,10 +767,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         suffix = lane_tag + relane_tag + hold_tag + carry_tag + strong_tag + section_tag + (
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
-            if a.copy_bias is not None else "") + alike_tag + (
+            if a.copy_bias is not None else "") + alike_tag + answer_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
-            f"_rb{a.rest:g}" if a.rest is not None else "") + light_tag + recheck_tag + (
+            f"_rb{a.rest:g}" + (f"m{a.rest_max_run:g}" if a.rest_max_run is not None else "")
+            if a.rest is not None else "") + light_tag + recheck_tag + (
             end_tag) + stats_tag + (
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
@@ -816,6 +838,7 @@ def main(argv: list[str] | None = None) -> int:
                 if lane_selector.meta["sr"] == "human" else sr
             lane_select = lane_selector.scorer(r["key"], ref_sr, draws=1, seed=sample_seed + i)
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
+        rests_kept0, answers0 = STATS["rest_bars_kept"], STATS["answered_beats"]
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
         capped0, untangled0 = STATS["capped_rows"], STATS["untangled"]
@@ -855,8 +878,11 @@ def main(argv: list[str] | None = None) -> int:
                     or a.carry_rhythm is not None or a.ln_tidy is not None \
                     or a.copy_sections is not None or a.chord_cap is not None \
                     or a.untangle or a.alike is not None or a.strong_chords is not None \
-                    or a.light is not None or a.recheck is not None:
+                    or a.light is not None or a.recheck is not None \
+                    or a.answer is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
+                                   rest_max_run=a.rest_max_run, answer=a.answer,
+                                   answer_unit=a.answer_unit, answer_lanes=a.answer_lanes,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
                                    recheck=a.recheck, recheck_add=a.recheck_add,
@@ -929,6 +955,10 @@ def main(argv: list[str] | None = None) -> int:
             cost["changed_holds"] = STATS["changed_holds"] - holds0
         if a.rest is not None:
             cost["rest_bars_cleared"] = STATS["rest_bars"] - rests0
+            if a.rest_max_run is not None:
+                cost["rest_bars_kept"] = STATS["rest_bars_kept"] - rests_kept0
+        if a.answer is not None:
+            cost["answered_beats"] = STATS["answered_beats"] - answers0
         if a.fill_holes is not None:
             cost["holes_filled"] = STATS["filled_holes"] - fills0
         if a.carry_rhythm is not None:
@@ -1025,6 +1055,9 @@ def main(argv: list[str] | None = None) -> int:
                "refine_holds": a.refine_holds, "hold_share": a.hold_share, "hold_up": a.hold_up,
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
+               "rest_max_run": a.rest_max_run, "answer": a.answer,
+               "answer_unit": a.answer_unit if a.answer is not None else None,
+               "answer_lanes": a.answer_lanes if a.answer is not None else None,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,
                "carry_rhythm": a.carry_rhythm, "carry_keep": a.carry_keep,
                "carry_rows": a.carry_rows, "carry_holds": a.carry_holds, "ln_tidy": a.ln_tidy,

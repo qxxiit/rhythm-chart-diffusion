@@ -597,6 +597,86 @@ def test_rest_bars_leaves_empty_the_bars_the_model_expects_empty() -> None:
     assert np.array_equal(out[BAR - 2:BAR + 7, 2], held[BAR - 2:BAR + 7, 2])   # ... not bar 0's hold
 
 
+
+def test_rest_bars_does_not_join_emptied_bars_into_a_long_stretch() -> None:
+    """With max_run (beats) a bar is left when clearing it would leave nothing at all for
+    max_run beats or more around it; the bar comes back as it was."""
+    from src.data.tokenizer import BAR, D
+    from src.models.sampler import STATS, longest_empty_run, rest_bars
+    song = _bars_song([[(0, 0), (12, 1)], [(0, 2), (24, 3)], [(0, 1), (30, 0)],
+                       [(0, 3), (12, 2)]])
+    frames = torch.zeros(len(song) * 4, 80)
+    quiet = torch.zeros(1, L, K, N_CLASSES)
+    quiet[..., EMPTY] = 12.0                            # every bar expected (almost) empty
+    every = song.copy()
+    assert rest_bars(Fixed(quiet), every, frames, 3.0, lambda row0: 400.0, 4 * BAR,
+                     threshold=1.0) == 4
+    assert longest_empty_run(every, 0, 4 * BAR) == 4 * BAR
+    kept0 = STATS["rest_bars_kept"]
+    out = song.copy()
+    assert rest_bars(Fixed(quiet), out, frames, 3.0, lambda row0: 400.0, 4 * BAR,
+                     threshold=1.0, max_run=8) == 2
+    assert STATS["rest_bars_kept"] == kept0 + 2         # bars 1 and 3 would join bar 0 / 2
+    assert (out[:BAR] == EMPTY).all() and (out[2 * BAR:3 * BAR] == EMPTY).all()
+    assert np.array_equal(out[BAR:2 * BAR], song[BAR:2 * BAR])
+    assert np.array_equal(out[3 * BAR:4 * BAR], song[3 * BAR:4 * BAR])
+    assert longest_empty_run(out, 0, 4 * BAR) < 8 * D
+
+
+def _answer_song() -> np.ndarray:
+    """Beat 0: taps on its rows 0, 4, 8 in lanes 0, 1, 2; beat 1: three taps elsewhere."""
+    song = np.full((2 * L, K), PAD, dtype=np.int64)
+    song[:4 * 12] = EMPTY
+    for row, lane in ((0, 0), (4, 1), (8, 2), (12, 3), (18, 2), (21, 1)):
+        song[row, lane] = TAP
+    return song
+
+
+def _answer_logits(lanes) -> torch.Tensor:
+    """The model expects a note on rows 12, 16 and 20 (beat 0's rhythm), in these lanes."""
+    logits = torch.zeros(1, L, K, N_CLASSES)
+    logits[..., EMPTY] = 4.0
+    for row, lane in zip((12, 16, 20), lanes, strict=True):
+        logits[0, row, :, EMPTY] = 0.0
+        logits[0, row, lane, TAP] = 6.0
+    return logits
+
+
+def test_answer_beats_takes_the_rhythm_before_with_the_lanes_the_model_wants() -> None:
+    from src.models.sampler import STATS, answer_beats
+    song = _answer_song()
+    frames = torch.zeros(len(song) * 4, 80)
+    mirror = Fixed(_answer_logits((3, 2, 1)))           # beat 0's lanes 0, 1, 2 mirrored
+    for lanes in ("copy", "draw"):
+        before = STATS["answered_beats"]
+        out = song.copy()
+        assert answer_beats(mirror, out, frames, 3.0, lambda row0: 400.0, 4 * 12, bias=0.0,
+                            lanes=lanes, temperature=0.0,
+                            rng=np.random.default_rng(0)) == 1
+        assert STATS["answered_beats"] == before + 1
+        assert np.array_equal(out[:12], song[:12])      # the beat answered stays
+        taps = sorted((int(r), int(k)) for r, k in zip(*np.nonzero(out[12:24] == TAP),
+                                                         strict=True))
+        assert taps == [(0, 3), (4, 2), (8, 1)]         # its rhythm, mirrored
+    same = Fixed(_answer_logits((0, 1, 2)))
+    out = song.copy()
+    assert answer_beats(same, out, frames, 3.0, lambda row0: 400.0, 4 * 12, bias=0.0,
+                        lanes="copy") == 1
+    assert np.array_equal(out[12:24], song[:12])        # as it was, when that fits better
+    out = song.copy()                                   # the rhythm fits, the bias says no
+    assert answer_beats(mirror, out, frames, 3.0, lambda row0: 400.0, 4 * 12,
+                        bias=-1000.0) == 0 and np.array_equal(out, song)
+    out = song.copy()                                   # the next beat already has the rhythm
+    out[12:24] = EMPTY
+    out[[12, 16, 20], [1, 3, 0]] = TAP
+    kept = out.copy()
+    assert answer_beats(mirror, out, frames, 3.0, lambda row0: 400.0, 4 * 12,
+                        bias=0.0, lanes="copy") == 0 and np.array_equal(out, kept)
+    with pytest.raises(ValueError):
+        answer_beats(mirror, song.copy(), frames, 3.0, lambda row0: 400.0, 4 * 12, bias=0.0,
+                     lanes="other")
+
+
 def test_thin_bars_keeps_the_rows_the_model_likes_in_a_light_bar() -> None:
     """A bar the model, with the bar masked, expects to hold one or two onset rows keeps that
     many of its rows, the likeliest; the notes starting on the others go (long notes to

@@ -108,7 +108,7 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "untangled": 0, "untangle_moved": 0, "aligned_bars": 0, "strong_moved": 0,
          "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0,
          "select_windows": 0, "select_gain": 0.0, "lane_select_windows": 0,
-         "lane_select_gain": 0.0, "lane_seams": 0}
+         "lane_select_gain": 0.0, "lane_seams": 0, "rest_bars_kept": 0, "answered_beats": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -1259,8 +1259,26 @@ def bar_probs(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
 # so ask the model about the whole bar, with the rest of the chart in view.
 
 
+def longest_empty_run(song: np.ndarray, lo: int, hi: int) -> int:
+    """Rows in the longest run of rows with nothing at all (every cell EMPTY) that overlaps
+    rows lo..hi-1; PAD ends a run."""
+    empty = (song == EMPTY).all(axis=1)
+    best, r = 0, lo
+    while r < hi:
+        if not empty[r]:
+            r += 1
+            continue
+        a, b = r, r
+        while a > 0 and empty[a - 1]:
+            a -= 1
+        while b < len(song) and empty[b]:
+            b += 1
+        best, r = max(best, b - a), b
+    return best
+
+
 def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
-              n_cells: int, *, threshold: float) -> int:
+              n_cells: int, *, threshold: float, max_run: float | None = None) -> int:
     """Leave empty the bars where the model expects almost no notes; returns how many.
 
     For every whole bar with a note start, in time order, bar_probs with the bar MASK
@@ -1268,6 +1286,10 @@ def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
     its cells; below threshold the bar's taps and the long notes that start in it (to
     their ends) are taken out. Long notes that started before the bar are kept. Taking
     notes out keeps the grammar and the release gaps, so no clean_holds is needed.
+    max_run (beats): a bar is not cleared when that would leave a stretch with nothing at
+    all of max_run beats or more around it (longest_empty_run): emptied bars do not join
+    into the long empty stretches the pilot found (13 of 18 fatal ones began in the draw,
+    the pass lengthened them; EXPERIMENTS 2026-11-14 (2)).
     """
     cleared = 0
     for b in range(n_cells // BAR):
@@ -1278,6 +1300,7 @@ def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
         p = bar_probs(model, song, frames, s, beat_len, r0)
         if float((p[..., TAP] + p[..., HOLD_START]).sum()) >= threshold:
             continue
+        taken = []
         for row, k in zip(*np.nonzero(starts), strict=True):
             r = r0 + int(row)
             e = r + 1
@@ -1286,10 +1309,92 @@ def rest_bars(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
                     e += 1
                 if e < len(song) and song[e, k] == HOLD_END:
                     e += 1
+            taken.append((r, e, int(k), song[r:e, k].copy()))
             song[r:e, k] = EMPTY
+        if max_run is not None and longest_empty_run(song, r0, r0 + BAR) >= max_run * D:
+            for r, e, k, old in taken:                  # the bar goes back as it was
+                song[r:e, k] = old
+            STATS["rest_bars_kept"] += 1
+            continue
         cleared += 1
     STATS["rest_bars"] += cleared
     return cleared
+
+
+# Beat answers. Human charts take the rhythm of a beat again in the next one 25-28% of the
+# time (busy beat pairs: 3,000 train charts and the 240 val charts, 2026-11-14), and of those
+# (alternations aside) answer with the mirror 10.7-11.7%, an exact repeat 3.4-4.9% (the same
+# rhythm anywhere else in the song: 6.1% mirrored); the system's charts take the rhythm
+# again half as often (12-15%), though the model knows the mirror (mirror_probe: top-1 77%
+# at the first row where a human chart mirrors). The random order draws neighbouring beats
+# without each other, and a beat's rhythm is a joint choice of 48 cells; drawing them in
+# order did worse (block order, run_1122).
+ANSWER_MIN_ONSETS = 3           # the beat answered has at least this many onset rows
+
+
+def _closed_rows(song: np.ndarray, r0: int, n: int) -> bool:
+    """True if no long note crosses either edge of rows r0..r0+n-1."""
+    return not (np.isin(song[r0], (HOLD_BODY, HOLD_END)).any()
+                or np.isin(song[r0 + n - 1], (HOLD_START, HOLD_BODY)).any())
+
+
+def answer_beats(model, song: np.ndarray, frames: torch.Tensor, s: float, beat_len,
+                 n_cells: int, *, bias: float, unit: int = D, lanes: str = "draw",
+                 lane_model=None, temperature: float = 1.0,
+                 rng: np.random.Generator | None = None, release_gap: int = 0) -> int:
+    """Offer every unit (unit rows: D a beat) the rhythm of the unit just before it; returns
+    how many took it.
+
+    Units in time order from the second. The one before needs ANSWER_MIN_ONSETS onset rows,
+    and no long note may cross the edges of either; a unit whose rhythm is already the one
+    before's (the same onset count on every row) is left, and so is one whose onset count
+    is more than COPY_DENSITY (or 1) off it. One forward pass with the unit MASK and the
+    chart around it (a window centred on it) scores both rhythms row by row, log P(that many
+    onsets in the row) (onset_count_logp, as copy_bars); the earlier unit's comes in when
+    its score + bias reaches the unit's own (bias in nats a unit), long notes inside it too.
+    Its lanes: lanes "copy" as they were or mirrored (lane k <-> 3 - k), the one sum log p
+    over the cells picks; "draw" chosen again by refine_rows at temperature with the chart
+    around in view, lane_model's (the model decides between the mirror, the repeat and the
+    rest). Run clean_holds afterwards for the release gap.
+    """
+    if lanes not in ("copy", "draw"):
+        raise ValueError(f"unknown lanes {lanes!r}")
+    rng = rng or np.random.default_rng()
+    fpc = model.config.frames_per_cell
+    rows, lane_idx = np.arange(unit), np.arange(K)
+    answered = 0
+
+    def counts(version: np.ndarray) -> np.ndarray:
+        return np.isin(version, (TAP, HOLD_START)).sum(axis=1)
+
+    for u in range(1, n_cells // unit):
+        r0, p0 = u * unit, (u - 1) * unit
+        prev, cur = song[p0:r0], song[r0:r0 + unit]
+        c_prev, c_cur = counts(prev), counts(cur)
+        if (c_prev > 0).sum() < ANSWER_MIN_ONSETS or np.array_equal(c_prev, c_cur):
+            continue
+        n_now = int(c_cur.sum())
+        if abs(int(c_prev.sum()) - n_now) > max(1, COPY_DENSITY * n_now) \
+                or not (_closed_rows(song, p0, unit) and _closed_rows(song, r0, unit)):
+            continue
+        w0 = int(np.clip(r0 - (L - unit) // 2, 0, len(song) - L))
+        x = song[w0:w0 + L].astype(np.int64).copy()
+        x[r0 - w0:r0 - w0 + unit] = MASK
+        probs = denoiser_probs(model, x, frames[w0 * fpc:(w0 + L) * fpc], s, beat_len(w0))
+        part = probs[r0 - w0:r0 - w0 + unit]
+        logp = onset_count_logp(part[..., TAP] + part[..., HOLD_START])
+        if float(logp[rows, c_prev].sum()) + bias < float(logp[rows, c_cur].sum()):
+            continue
+        versions = [prev.copy(), prev[:, ::-1].copy()]
+        cell_logp = np.log(part + 1e-12)
+        fit = [float(cell_logp[rows[:, None], lane_idx[None, :], v].sum()) for v in versions]
+        song[r0:r0 + unit] = versions[int(np.argmax(fit))]
+        if lanes == "draw":
+            refine_rows(lane_model or model, song, frames, s, beat_len, r0, r0 + unit,
+                        temperature=temperature, rng=rng, release_gap=release_gap)
+        answered += 1
+    STATS["answered_beats"] += answered
+    return answered
 
 
 # Bars with one or two notes. Human charts in Easy leave 13% of the bars inside a song with one
@@ -2318,7 +2423,9 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               strong: float | None = None, light: float | None = None,
               light_alike: bool = False, untangle_wide: bool = False,
               untangle_insane: bool = False, recheck: float | None = None,
-              recheck_add: float | None = None) -> np.ndarray:
+              recheck_add: float | None = None, rest_max_run: float | None = None,
+              answer: float | None = None, answer_unit: int = 1,
+              answer_lanes: str = "draw") -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
@@ -2329,9 +2436,11 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     section_keep, section_back, section_lanes: its keep_notes, back and new_lanes),
     copy_bars (copy_bias, sources at least copy_min_lag bars back), clean_holds,
     align_alike (alike: the bias; alike_keep: its keep_notes in charts at that SR or more,
-    True in all; its lanes as the carry's), tidy_holds (ln_tidy: the longest long note in
-    beats it turns into a tap), fill_holes (holes: the threshold), rest_bars (rest: the
-    threshold), thin_bars (light: the threshold; light_alike: its look-alikes thinned
+    True in all; its lanes as the carry's), answer_beats (answer: the bias; answer_unit
+    beats a unit; answer_lanes its lanes, drawn at lane_temperature with lane_guidance),
+    tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), fill_holes
+    (holes: the threshold), rest_bars (rest: the threshold; rest_max_run: its max_run),
+    thin_bars (light: the threshold; light_alike: its look-alikes thinned
     alike), recheck_notes (recheck: the threshold below which a row's taps go;
     recheck_add: the one above which an empty row gets a tap), untangle_jacks (untangle;
     untangle_move: its move; untangle_grades: the window
@@ -2377,13 +2486,21 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
         align_alike(model, song, frames, s, beat_len, n_cells, s_audio, bias=alike,
                     lane_model=lane_model, temperature=lane_temperature, rng=rng,
                     release_gap=release_gap, keep_notes=_from_sr(alike_keep, s))
+    if answer is not None and answer_beats(model, song, frames, s, beat_len, n_cells,
+                                           bias=answer, unit=answer_unit * D,
+                                           lanes=answer_lanes, lane_model=lane_model,
+                                           temperature=lane_temperature, rng=rng,
+                                           release_gap=release_gap) \
+            and (min_hold > 0 or release_gap > 0):
+        clean_holds(song, min_hold=min_hold, release_gap=release_gap)
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if holes is not None:
         fill_holes(model, song, frames, s, beat_len, n_cells, threshold=holes,
                    release_gap=release_gap)
     if rest is not None:
-        rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest)
+        rest_bars(model, song, frames, s, beat_len, n_cells, threshold=rest,
+                  max_run=rest_max_run)
     if light is not None:
         thin_bars(model, song, frames, s, beat_len, n_cells, threshold=light,
                   s_audio=s_audio if light_alike else None)

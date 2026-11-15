@@ -313,6 +313,17 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
                           "--from-charts", str(oracle_run), "--rest", "1000"]) == 0
     rested = oracle_run.parent / (oracle_run.name + "_rb1000_st-oracle")
+    assert evaluate.main([*common, "--split", "train", "--n", "2", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--rest", "1000",
+                          "--rest-max-run", "8", "--answer", "0"]) == 0
+    guarded = oracle_run.parent / (oracle_run.name + "_ab0u1d_rb1000m8_st-oracle")
+    with open(guarded / "per_song.csv", newline="") as f:
+        g_rows = list(csv.DictReader(f))
+    assert all("answered_beats" in r and "rest_bars_kept" in r for r in g_rows)
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--answer", "0"]) == 2                  # passes on saved charts only
+    assert evaluate.main([*common, "--split", "train", "--n", "1", "--stats", "oracle",
+                          "--from-charts", str(oracle_run), "--rest-max-run", "8"]) == 2
     with open(rested / "per_song.csv", newline="") as f:          # every whole bar emptied
         rows = list(csv.DictReader(f))
     with open(oracle_run / "per_song.csv", newline="") as f:

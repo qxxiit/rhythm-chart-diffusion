@@ -202,6 +202,10 @@ python scripts/select_watch.py --logs L --judge J --pids P [--field lane]
 python scripts/diag_judge.py RUN ...   # ✅ the diagnostics as a judge: a run's charts told
                                        #    from the human ones by all the diagnostics at once
                                        #    (auc, paired, what it leans on); seconds, aggregate only
+python scripts/evaluate.py ... --from-charts R --rest 1 --rest-max-run 8 --answer 0
+                                       # ✅ the rest pass never leaves 8 empty beats around a
+                                       #    bar it clears; every beat offered the rhythm of
+                                       #    the one before (sampler.answer_beats)
 python scripts/train.py --init C --stems ...   # ✅ C's weights and config, its audio input
                                        #    widened to the stems' 144 channels with zero
                                        #    weights (diffusion.widen_audio); a model reads its
