@@ -177,6 +177,10 @@ class Denoiser(nn.Module):
             raise ValueError("this model has no chart-stat input (trained without --chart-stats)")
         h = h + cond[:, None, :]
 
+        if mel.shape[-1] < c.n_mels:
+            raise ValueError(f"this model reads {c.n_mels} audio channels, {mel.shape[-1]} given "
+                             "(a model trained with --stems: mel.open_mel(..., stems=True))")
+        mel = mel[..., :c.n_mels]           # the mix first: an 80-channel model skips the stems
         mem = self.audio_conv(mel.transpose(1, 2)).transpose(1, 2)   # [B, L, d]
         mem = self.audio_norm(mem + self.audio_pos)
         if self.config.audio_add:
@@ -412,6 +416,28 @@ def diffusion_loss(model: nn.Module, x0: torch.Tensor, mel: torch.Tensor, s: tor
             "chunk_spread": float(per_chunk.max() / per_chunk.mean().clamp_min(1e-12)),
         }
     return loss, info
+
+
+def widen_audio(state: dict, n_mels: int) -> dict:
+    """A state dict of a model with fewer audio channels made to fit one with n_mels: the new
+    input channels of audio_conv get zero weights, so the wider model computes what the
+    narrower one did until it learns to use them (train.py --init with --stems)."""
+    w = state["audio_conv.weight"]                                  # [d, n_mels_old, r]
+    if w.shape[1] == n_mels:
+        return state
+    if w.shape[1] > n_mels:
+        raise ValueError(f"cannot narrow audio_conv from {w.shape[1]} to {n_mels} channels")
+    out = dict(state)
+    out["audio_conv.weight"] = torch.cat(
+        [w, w.new_zeros(w.shape[0], n_mels - w.shape[1], w.shape[2])], dim=1)
+    return out
+
+
+def checkpoint_n_mels(path) -> int:
+    """The audio channels a train.py checkpoint reads (80, or 80 + 64 with --stems), to open
+    the mel store before the model: mel.open_mel(..., stems=checkpoint_n_mels(p) > N_MELS)."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    return int(ckpt["config"].get("n_mels", DenoiserConfig.n_mels))
 
 
 def load_denoiser(path, device="cpu") -> Denoiser:

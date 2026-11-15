@@ -887,6 +887,51 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
                               "continue_block_T4_spread_fwdt1_ref1t0.5_eb0.5"), "--by-grade"]) == 0
 
 
+
+@requires_mp3
+def test_stems_model_end_to_end(data: Path, tmp_path: Path, monkeypatch) -> None:
+    """stems.py (a fake separator) -> train.py --init C --stems on the real mel -> evaluate.py
+    and sample.py with the 144-channel model; the --resume / --init checks."""
+    from scripts import evaluate, stems
+    from src.data.audio import resample
+    from src.models.diffusion import load_denoiser
+
+    def fake(mono, rate):
+        wav = resample(mono, rate, 44100)
+        return np.stack([wav * g for g in (0.5, 0.2, 0.2, 0.1)]), 44100
+
+    monkeypatch.setattr(stems, "demucs_separator",
+                        lambda device: (fake, ("drums", "bass", "other", "vocals")))
+    assert stems.main(["--cache", str(data / "cache"), "--raw", str(data / "raw"),
+                       "--manifest", str(data / "manifest.csv"), "--min-free", "0"]) == 0
+    base = ["--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+            "--out", str(tmp_path), "--overfit", "2", "--batch-size", "4", "--warmup", "2",
+            "--d-model", "64", "--layers", "2", "--heads", "2", "--d-ff", "128",
+            "--log-every", "2", "--val-every", "4", "--sample-steps", "4", "--device", "cpu"]
+    assert train.main([*base, "--run", "mix", "--steps", "4"]) == 0
+    assert train.main([*base, "--run", "st", "--steps", "4", "--stems",
+                       "--init", str(tmp_path / "mix" / "best.pt")]) == 0
+    model = load_denoiser(tmp_path / "st" / "best.pt")
+    assert model.config.n_mels == 144 and model.config.d_model == 64
+    cfg = json.loads((tmp_path / "st" / "config.json").read_text())
+    assert cfg["args"]["stems"] and cfg["args"]["init"].endswith("best.pt")
+    assert train.main([*base, "--run", "st", "--steps", "6",
+                       "--resume", str(tmp_path / "st" / "last.pt")]) == 2        # needs --stems
+    assert train.main([*base, "--run", "st", "--steps", "6", "--stems",
+                       "--resume", str(tmp_path / "st" / "last.pt")]) == 0
+    assert train.main([*base, "--run", "x", "--steps", "4",
+                       "--init", str(tmp_path / "st" / "best.pt")]) == 2          # needs --stems
+    assert train.main([*base, "--run", "x", "--steps", "4", "--stems",
+                       "--init", str(tmp_path / "mix" / "best.pt"),
+                       "--resume", str(tmp_path / "st" / "last.pt")]) == 2
+    common = ["--ckpt", str(tmp_path / "st" / "best.pt"), "--manifest", str(data / "manifest.csv"),
+              "--root", str(data / "raw"), "--cache", str(data / "cache"), "--device", "cpu",
+              "--steps", "4"]
+    assert evaluate.main([*common, "--split", "train", "--n", "1"]) == 0
+    key = cfg["overfit_keys"][0]
+    assert sample.main([*common, "--key", key]) == 0
+
+
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:
     folder = tmp_path / "1 A - B"
     write_osu(folder / "x.osu", Chart(4, "Audio.MP3", [(0, 500.0)], [Note(0, 0)]),

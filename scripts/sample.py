@@ -29,10 +29,10 @@ from src.data import chartstats
 from src.data.cache import read_manifest
 from src.data.chart_parser import _kv, _split_sections, parse_osu
 from src.data.chart_writer import write_osu
-from src.data.mel import open_mel
+from src.data.mel import N_MELS, open_mel
 from src.data.style import encode, read_style
 from src.data.tokenizer import HOLD_START, PAD, TAP, L, decode, grammar_violations, make_metas
-from src.models.diffusion import load_denoiser, pick_device
+from src.models.diffusion import checkpoint_n_mels, load_denoiser, pick_device
 from src.models.sampler import (
     GATE_TAPER,
     LANE_PASSES,
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     z = np.load(a.cache / "tokens" / f"{a.key}.npz")
     tps = [(float(t), float(bl)) for t, bl in z["timing_points"]]
     cell_offset, n_cells = int(z["cell_offset"]), int(z["n_cells"])
-    store = open_mel(a.cache, fake=a.fake_mel)
+    store = open_mel(a.cache, fake=a.fake_mel, stems=checkpoint_n_mels(a.ckpt) > N_MELS)
     if not store.has(a.key):
         print(f"no mel for {a.key}: run scripts/preprocess_data.py --mel", file=sys.stderr)
         return 2

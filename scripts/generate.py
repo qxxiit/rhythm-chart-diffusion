@@ -120,7 +120,7 @@ from src.data.audio import SAMPLE_RATE, load_osu
 from src.data.beat_grid import from_timing_points
 from src.data.chart_parser import _split_sections
 from src.data.chart_writer import write_osu
-from src.data.mel import FRAMES_PER_CELL, log_mel, on_grid, song_stats
+from src.data.mel import FRAMES_PER_CELL, log_mel, on_grid, reads_stems, song_stats
 from src.data.style import GENRES, genre_index, mapper_index
 from src.data.tokenizer import BAR, D, L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
@@ -501,6 +501,9 @@ def main(argv: list[str] | None = None) -> int:
           f"{f' ({len(tps)} red lines)' if len(tps) > 1 else ''}, {n_cells:,} cells")
 
     model = load_denoiser(a.ckpt, pick_device(a.device))
+    if reads_stems(model):
+        ap.error(f"{a.ckpt} reads the stems (train.py --stems): generate.py does not separate a "
+                 "new audio file yet; use evaluate.py on cached songs")
     style = {}
     if a.genre is not None or a.mapper is not None:
         vocab = getattr(model, "style", None)

@@ -38,14 +38,15 @@ class ChunkDataset(Dataset):
     label only needs a new manifest, not a new token cache.
 
     item: {"x0": long [384, 4], "mel": float [1536, 80], "s": float [], "b": float [],
-           "start": long []}  (start = token row of the window's row 0)
+           "start": long []}  (start = token row of the window's row 0; mel [1536, 144] with
+           stems=True: the charts whose audio has no stems yet are left out)
            + "genre", "mapper": long [] with style; + "stats": long [n_stats] with stats
     Each chunk appears once per epoch. Mel files are memory-mapped, not loaded.
     """
 
     def __init__(self, manifest: Path, cache: Path, splits=("train",), *,
                  keys: list[str] | None = None, max_charts: int | None = None,
-                 window: str = "chunk", fake_mel: bool = False,
+                 window: str = "chunk", fake_mel: bool = False, stems: bool = False,
                  style: dict[str, tuple[int, int]] | None = None,
                  null_style: tuple[int, int] = (0, 0),
                  stats: dict[str, tuple[int, ...]] | None = None,
@@ -61,7 +62,7 @@ class ChunkDataset(Dataset):
             wanted = set(keys)
             rows = [r for r in rows if r["key"] in wanted]
         self.tok_dir = Path(cache) / "tokens"
-        self.mel = open_mel(cache, fake=fake_mel)
+        self.mel = open_mel(cache, fake=fake_mel, stems=stems)
         rows = [r for r in rows if (self.tok_dir / f"{r['key']}.npz").exists()
                 and self.mel.has(r["key"])]
         if max_charts is not None:

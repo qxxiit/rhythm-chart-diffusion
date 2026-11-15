@@ -44,6 +44,15 @@ of the first one and counts matching cells. The loss should approach 0 and the
 sample should rebuild the chart; if not, suspect the code before the
 hyperparameters (§6, 사전 점검).
 
+--stems adds the four stems' features (scripts/stems.py: data/cache/stems, htdemucs's drums,
+bass, other and vocals as 16 bands each) to the 80 log-Mel bands: 144 audio channels, the
+charts whose audio has no stems left out. --init C starts from checkpoint C's weights and
+model config (style vocab and chart-stat spec too) with a fresh optimizer at step 0; with
+--stems, C's 80-channel audio input is widened with zero weights for the stems, so the run
+starts as C exactly (diffusion.widen_audio):
+    python scripts/train.py --init outputs/full-v4/best.pt --stems --chart-stats \
+        data/chart_stats.csv --row-mask 0.5 --steps 20000 --lr 1e-4 --run stems-v1
+
 --snapshot-every N saves the path of the run for scripts/fit_viz.py, in outputs/<run>/traj
 (Trajectory below): the parameters at step 0, N/10, N/5, N/2, every multiple of N and the
 last step. It draws no random numbers, so a run with snapshots trains as the same run
@@ -71,6 +80,7 @@ from torch.utils.data import DataLoader
 
 from src.data import chartstats
 from src.data.dataset import ChunkDataset
+from src.data.mel import N_MELS, STEM_BANDS
 from src.data.style import MIN_MAPPER_CHARTS, build_vocab, encode, read_style, sizes
 from src.data.tokenizer import HOLD_START, MASK, PAD, TAP, grammar_violations
 from src.models.diffusion import (
@@ -80,6 +90,7 @@ from src.models.diffusion import (
     diffusion_loss,
     n_params,
     pick_device,
+    widen_audio,
 )
 from src.models.sampler import sample_window
 
@@ -154,6 +165,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="save the parameters to <run>/traj for scripts/fit_viz.py; 0 = off")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", type=Path, default=None)
+    ap.add_argument("--init", type=Path, default=None,
+                    help="start from this checkpoint's weights and model config, step 0")
+    ap.add_argument("--stems", action="store_true",
+                    help="the 4 stems' features too (data/cache/stems): 80 + 64 audio channels")
     ap.add_argument("--wandb", default=None, help="wandb project name (optional)")
     a = ap.parse_args(argv)
     if a.steps is None:
@@ -386,27 +401,40 @@ def main(argv=None) -> int:
     # --- data ---
     if a.overfit:
         first = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.overfit,
-                             fake_mel=a.fake_mel)
+                             fake_mel=a.fake_mel, stems=a.stems)
         keys = [c["key"] for c in first.charts]
         train_ds = ChunkDataset(a.manifest, a.cache, ("train",), keys=keys, window=a.window,
-                                fake_mel=a.fake_mel)
+                                fake_mel=a.fake_mel, stems=a.stems)
         val_ds = first
     else:
         train_ds = ChunkDataset(a.manifest, a.cache, ("train",), max_charts=a.max_charts,
-                                window=a.window, fake_mel=a.fake_mel)
+                                window=a.window, fake_mel=a.fake_mel, stems=a.stems)
         val_ds = ChunkDataset(a.manifest, a.cache, ("val",),           # always the fixed chunks
-                              fake_mel=a.fake_mel)
+                              fake_mel=a.fake_mel, stems=a.stems)
         keys = None
     vocab, null, spec, stats_null = None, None, None, None
-    if a.resume:                                           # a style run keeps its vocab
-        saved = torch.load(a.resume, map_location="cpu", weights_only=True)
+    saved = None
+    if a.resume and a.init:
+        print("--resume and --init do not go together", file=sys.stderr)
+        return 2
+    if a.resume or a.init:                                 # a style run keeps its vocab
+        flag = "--resume" if a.resume else "--init"
+        saved = torch.load(a.resume or a.init, map_location="cpu", weights_only=True)
         vocab, spec = saved.get("style"), saved.get("chart_stats")
         if (vocab is None) != (a.style is None):
-            print("--resume: give --style exactly when the run was started with it",
+            print(f"{flag}: give --style exactly when that run was started with it",
                   file=sys.stderr)
             return 2
         if (spec is None) != (a.chart_stats is None):
-            print("--resume: give --chart-stats exactly when the run was started with it",
+            print(f"{flag}: give --chart-stats exactly when that run was started with it",
+                  file=sys.stderr)
+            return 2
+        saved_mels = int(saved["config"].get("n_mels", N_MELS))
+        if saved_mels > N_MELS and not a.stems:
+            print(f"{flag}: that run reads the stems: give --stems", file=sys.stderr)
+            return 2
+        if a.resume and a.stems and saved_mels == N_MELS:
+            print("--resume: that run was started without --stems (start one with --init)",
                   file=sys.stderr)
             return 2
     if a.style is not None:
@@ -437,13 +465,21 @@ def main(argv=None) -> int:
                             num_workers=a.num_workers)
 
     # --- model ---
-    config = DenoiserConfig(d_model=a.d_model, lane_dim=a.d_model // 4, n_layers=a.layers,
-                            n_heads=a.heads, d_ff=a.d_ff, dropout=a.dropout,
-                            audio_add=not a.no_audio_add,
-                            n_genres=null[0] if null else 0, n_mappers=null[1] if null else 0,
-                            n_stats=len(spec["names"]) if spec else 0,
-                            stat_bins=spec["bins"] if spec else 0)
+    n_mels = N_MELS + (STEM_BANDS if a.stems else 0)
+    if saved is not None:                  # the run's own shape (--init: the stems may widen it)
+        config = DenoiserConfig(**{**saved["config"], "n_mels": n_mels,
+                                   **({"dropout": a.dropout} if a.init else {})})
+    else:
+        config = DenoiserConfig(d_model=a.d_model, lane_dim=a.d_model // 4, n_layers=a.layers,
+                                n_heads=a.heads, d_ff=a.d_ff, dropout=a.dropout,
+                                audio_add=not a.no_audio_add,
+                                n_genres=null[0] if null else 0,
+                                n_mappers=null[1] if null else 0,
+                                n_stats=len(spec["names"]) if spec else 0,
+                                stat_bins=spec["bins"] if spec else 0, n_mels=n_mels)
     model = Denoiser(config).to(device)
+    if a.init:
+        model.load_state_dict(widen_audio(saved["model"], n_mels))
     if a.optim == "sgd":
         opt = torch.optim.SGD(param_groups(model, a.weight_decay), lr=a.lr, momentum=a.momentum)
     else:

@@ -104,3 +104,73 @@ def test_stops_when_the_disk_is_full(tmp_path, monkeypatch):
             "--min-free", "1e9"]
     assert stems.main(argv) == 3
     assert not list((cache / "stems").glob("*.json"))
+
+
+def _store_cache(tmp_path, n_frames=4000, stems=True):
+    """A logmel cache of one audio file for two charts, with or without its stems."""
+    cache = tmp_path / "cache"
+    (cache / "logmel").mkdir(parents=True)
+    rng = np.random.default_rng(1)
+    mix = rng.normal(-4, 2, size=(n_frames, 80)).astype(np.float16)
+    np.save(cache / "logmel" / "a1.npy", mix)
+    (cache / "logmel" / "a1.json").write_text(json.dumps(
+        {"mean": mix.astype(np.float32).mean(0).tolist(),
+         "std": mix.astype(np.float32).std(0).tolist()}))
+    with open(cache / "logmel" / "index.csv", "w", newline="") as f:
+        f.write("key,audio_id,audio\nk1,a1,x/a.mp3\nk2,a2,y/b.mp3\n")
+    st = rng.normal(-6, 3, size=(n_frames, 64)).astype(np.float16)
+    if stems:
+        (cache / "stems").mkdir()
+        np.save(cache / "stems" / "a1.npy", st)
+        (cache / "stems" / "a1.json").write_text(json.dumps(
+            {"mean": st.astype(np.float32).mean(0).tolist(),
+             "std": st.astype(np.float32).std(0).tolist()}))
+    return cache, st
+
+
+def test_mel_store_puts_the_stems_after_the_mix(tmp_path):
+    from src.data.beat_grid import from_timing_points
+    from src.data.mel import N_MELS, STEM_BANDS, MelStore, on_grid, open_mel
+    cache, st = _store_cache(tmp_path)
+    grid = from_timing_points([(0.0, 500.0)])
+    mix_only, with_stems = MelStore(cache), open_mel(cache, stems=True)
+    assert mix_only.channels == N_MELS and with_stems.channels == N_MELS + STEM_BANDS
+    a = mix_only.frames("k1", grid, 0, 24, 96)
+    b = with_stems.frames("k1", grid, 0, 24, 96)
+    assert a.shape == (96 * 4, 80) and b.shape == (96 * 4, 144)
+    assert np.array_equal(b[:, :80], a)
+    times = grid.frame_times(24, 96, frames_per_cell=4)
+    s32 = st.astype(np.float32)
+    want = (on_grid(st, times) - s32.mean(0)) / s32.std(0)
+    assert np.allclose(b[:, 80:], want, atol=1e-4)
+    assert mix_only.has("k1") and with_stems.has("k1")
+    assert not with_stems.has("k2") and not with_stems.has("nope")    # a2 has no stems
+    cache2, _ = _store_cache(tmp_path / "two", stems=False)
+    assert MelStore(cache2).has("k1") and not open_mel(cache2, stems=True).has("k1")
+
+
+def test_a_widened_model_starts_as_the_narrow_one():
+    import pytest
+    import torch
+
+    from src.data.tokenizer import MASK, K, L
+    from src.models.diffusion import Denoiser, DenoiserConfig, widen_audio
+    torch.manual_seed(0)
+    small = dict(d_model=64, lane_dim=16, n_layers=2, n_heads=2, d_ff=128)
+    narrow = Denoiser(DenoiserConfig(**small)).eval()
+    wide = Denoiser(DenoiserConfig(**small, n_mels=144)).eval()
+    wide.load_state_dict(widen_audio(narrow.state_dict(), 144))
+    x = torch.full((2, L, K), MASK, dtype=torch.long)
+    x[:, :100] = torch.randint(0, 3, (2, 100, K))
+    mel80 = torch.randn(2, L * 4, 80)
+    mel144 = torch.cat([mel80, 5 * torch.randn(2, L * 4, 64)], dim=-1)
+    s, b = torch.tensor([3.0, 4.0]), torch.tensor([400.0, 500.0])
+    with torch.no_grad():
+        want = narrow(x, mel80, s, b)
+        assert torch.allclose(wide(x, mel144, s, b), want, atol=1e-5)    # stems weigh 0 at first
+        assert torch.allclose(narrow(x, mel144, s, b), want, atol=1e-6)  # the stems are skipped
+        with pytest.raises(ValueError, match="144 audio channels"):
+            wide(x, mel80, s, b)
+    assert widen_audio(narrow.state_dict(), 80) is not None
+    with pytest.raises(ValueError):
+        widen_audio(wide.state_dict(), 80)

@@ -4196,6 +4196,64 @@ its full view lies under 0 at 95%, at once. How it could fail: the beat-to-beat 
 not rise (the model itself does not repeat a beat it has just seen), or they rise as exact
 copies, not as the human charts' answers.
 
+Results (11/14 23:58 - 11/15 03:52; the first 120 val songs, aggregates):
+
+| | human | random | block | prediction |
+|---|---|---|---|---|
+| fresh judge, full view | | 0.834 | 0.984, +0.150 [+0.118, +0.187] | -0.05 to +0.02 ✗ |
+| fresh judge, rhythm view | | 0.738 | 0.967, +0.229 [+0.185, +0.277] | -0.08 to 0.00 ✗ |
+| sr_error | | 0.227 | 1.024 | |
+| notes, AI over human (median, 10th-90th pct) | | 1.00 (0.90-1.16) | 1.24 (0.97-1.65) | |
+| next beat of the same rhythm, draw / after the passes | 26.6% | 9.3% / 12.3% | 1.4% / 2.1% | 11-14 / 13-16 ✗; 16-22 / 17-24 ✗ |
+| of those mirrored, after the passes | 8.4% | 6.2% | 9.4% (few pairs) | 6-9 ✓; 7-11 ✓ |
+| songs with an 8+ beat empty stretch, after | 8% | 18% | 21% | 15-21 ✓; 15-28 ✓ |
+| songs with a fatal one, after | 0% | 5% | 11% | |
+| drawing time | | 80 min | 85 min (+6%) | ±15% ✓ |
+
+The diagnostics judge: random 0.865 (trees 0.941), block 0.995 (0.994). Reading: block order
+is not taken. A model trained on random masks has hardly seen a window whose every later
+beat is MASK: not knowing what follows, it overfills (1.24 times the notes, sr_error four
+times), drops the beat-to-beat repeats instead of making them, and leaves more empty
+stretches. Block diffusion trains for its order (BD3-LM's block-causal objective); drawing
+in order needs a model, or a head, trained for it (block-masked fine-tuning, or CoDiLA's
+small autoregressive decoder), not only the order. The system's own draw (the windows chosen
+among 4) repeats the next beat's rhythm more than one draw a window (12.2% on 240 songs
+against 9.3% here): the choosing judge gives some of it back.
+
+### 2026-11-15 (1) · full-v4 taught the stems (predictions)
+
+The fatal empty stretches lie where the mix gets quiet but a human chart goes on following
+something (EXPERIMENTS 2026-11-14 (2)), and the user's reading of the pilot: the model does
+not hear what to follow there. `scripts/stems.py` (run_1122's last phase, 5,693 audio files,
+none failed) gives every audio file htdemucs's drums, bass, other and vocals as 16 bands each
+on the mixture's frames, standardized per song (`mel.MelStore(stems=True)`: the 80 bands of
+the mix, then the 64). `train.py --init outputs/full-v4/best.pt --stems`: full-v4's config
+and weights, its audio_conv widened from 80 to 144 input channels with zero weights
+(`diffusion.widen_audio`: it starts as full-v4 exactly), 20k steps at lr 1e-4 (warmup 500),
+full-v4's recipe otherwise (row-mask 0.5, chart stats, batch 16). A model reads the first
+config.n_mels channels, so the judges and the choosing judge (full-v4 trunks) take the same
+frames. Control: the same 20k steps without the stems (outputs/ft-v1), for val_ce only.
+
+`run_1123.sh`: waits for the stems, trains, draws the first 120 val songs as the system does
+(the windows chosen among 4 by sel_holds, hold bias 0.2, lanes at temperature 1, F's passes)
+with the new model, and reads it against the system there with the 120-song fresh judges
+(full view s1_sh 0.743, rhythm view s1_sh_rhythm 0.603), then the control.
+
+Predictions (written before it ran):
+1. val_ce (full-v4 0.0740): ft-v1 0.0735-0.0742, stems-v1 0.0715-0.0738, under ft-v1;
+   val_ce@0.9 (the audio does most of the work; full-v4 0.1734) falls the most:
+   stems-v1 0.160-0.172.
+2. After the passes, songs with a fatal empty stretch: the system 5% (on 240) -> 0-4%;
+   with an 8+ beat empty stretch 18% -> 10-17%.
+3. The next beat of the same rhythm (after the passes): 14.6% -> 13-18%.
+4. Fresh judges against the system: full view -0.06 to +0.01, rhythm view -0.06 to +0.02.
+5. sr_error 0.20-0.25 (the system 0.226 on its first 120).
+It goes into the system if its full view lies under 0 at 95%; if the full view is not worse
+and the fatal stretches fall, the stems stay for the next system run with the pass fixes.
+How it could fail: 20k steps are too few for the new channels to matter (val_ce as ft-v1's),
+or the stems help the likelihood but the passes and the choice decide the empty stretches
+(the rest pass joins them whatever the draw).
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

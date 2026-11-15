@@ -21,6 +21,12 @@ timing section (frame 4r + j belongs to row r). A store serves them:
 
 Both answer frames(key, grid, cell_offset, start_row, n_rows) with float32
 [n_rows * 4, 80]. File layout: src/data/cache.py.
+
+MelStore(stems=True) appends the four stems' features (scripts/stems.py:
+data/cache/stems/{audio_id}.npy, htdemucs's drums, bass, other and vocals as 16 bands each
+on the mixture's own frames), standardized per song with their own statistics: float32
+[n_rows * 4, 80 + 64], the mixture first. A model reads the first config.n_mels channels
+(Denoiser.hidden), so an 80-channel model takes the same frames.
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ EPS = 1e-6
 SILENCE = float(np.log(EPS))
 FRAMES_PER_CELL = 4
 STD_FLOOR = 0.1                 # a band that never moves (a low-pass mp3) is not amplified
+STEM_BANDS = 64                 # scripts/stems.py: 4 stems x 16 bands, after the 80 of the mix
 
 
 def _hz_to_mel(f):
@@ -142,10 +149,11 @@ class MelStore:
     norm="none"   raw log(x + 1e-6), for plots and checks
     """
 
-    def __init__(self, cache: str | Path, norm: str = "song"):
+    def __init__(self, cache: str | Path, norm: str = "song", stems: bool = False):
         if norm not in ("song", "none"):
             raise ValueError(f"unknown norm {norm!r}")
         self.dir = Path(cache) / "logmel"
+        self.stems_dir = Path(cache) / "stems" if stems else None
         self.norm = norm
         self.audio_of: dict[str, str] = {}
         index = self.dir / "index.csv"
@@ -153,29 +161,54 @@ class MelStore:
             with open(index, newline="", encoding="utf-8") as f:
                 self.audio_of = {r["key"]: r["audio_id"] for r in csv.DictReader(f)}
         self._open: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        self._stems: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    @property
+    def channels(self) -> int:
+        return N_MELS + (STEM_BANDS if self.stems_dir is not None else 0)
 
     def has(self, key: str) -> bool:
-        return key in self.audio_of
+        if key not in self.audio_of:
+            return False
+        return self.stems_dir is None or (self.stems_dir / f"{self.audio_of[key]}.json").exists()
+
+    @staticmethod
+    def _load(folder: Path, aid: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        meta = json.loads((folder / f"{aid}.json").read_text(encoding="utf-8"))
+        return (np.load(folder / f"{aid}.npy", mmap_mode="r"),
+                np.asarray(meta["mean"], dtype=np.float32),
+                np.asarray(meta["std"], dtype=np.float32))
 
     def audio(self, key: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """(memmap [n_frames, 80] float16, mean [80], std [80]) of the chart's audio."""
         aid = self.audio_of[key]
         if aid not in self._open:
-            meta = json.loads((self.dir / f"{aid}.json").read_text(encoding="utf-8"))
-            self._open[aid] = (np.load(self.dir / f"{aid}.npy", mmap_mode="r"),
-                               np.asarray(meta["mean"], dtype=np.float32),
-                               np.asarray(meta["std"], dtype=np.float32))
+            self._open[aid] = self._load(self.dir, aid)
         return self._open[aid]
+
+    def stems(self, key: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(memmap [n_frames, 64] float16, mean [64], std [64]): the stems' features."""
+        aid = self.audio_of[key]
+        if aid not in self._stems:
+            self._stems[aid] = self._load(self.stems_dir, aid)
+        return self._stems[aid]
 
     def frames(self, key: str, grid: BeatGrid, cell_offset: int, start_row: int,
                n_rows: int) -> np.ndarray:
-        """float32 [n_rows * 4, 80] for token rows [start_row, start_row + n_rows)."""
+        """float32 [n_rows * 4, 80] for token rows [start_row, start_row + n_rows)
+        ([.., 80 + 64] with stems)."""
         logmel, mean, std = self.audio(key)
         times = grid.frame_times(start_row - cell_offset, n_rows, frames_per_cell=FRAMES_PER_CELL)
         x = on_grid(logmel, times)
         if self.norm == "song":
             x = (x - mean) / std
-        return x
+        if self.stems_dir is None:
+            return x
+        feats, s_mean, s_std = self.stems(key)
+        y = on_grid(feats, times)
+        if self.norm == "song":
+            y = (y - s_mean) / s_std
+        return np.concatenate([x, y], axis=1)
 
     def chart(self, key: str, timing_points, cell_offset: int, n_rows: int) -> np.ndarray:
         """The whole chart: rows 0 .. n_rows - 1 (n_rows may run past the song)."""
@@ -184,6 +217,7 @@ class MelStore:
     def __getstate__(self) -> dict:              # DataLoader workers reopen the memmaps
         state = self.__dict__.copy()
         state["_open"] = {}
+        state["_stems"] = {}
         return state
 
 
@@ -219,5 +253,14 @@ class FakeMelStore:
         return state
 
 
-def open_mel(cache: str | Path, fake: bool = False, norm: str = "song"):
-    return FakeMelStore(cache) if fake else MelStore(cache, norm=norm)
+def open_mel(cache: str | Path, fake: bool = False, norm: str = "song", stems: bool = False):
+    """The store a model reads: stems=True for a model with N_MELS + STEM_BANDS channels
+    (reads_stems); the fake store has no stems."""
+    if fake and stems:
+        raise ValueError("the fake mel has no stems")
+    return FakeMelStore(cache) if fake else MelStore(cache, norm=norm, stems=stems)
+
+
+def reads_stems(model) -> bool:
+    """Whether a Denoiser (or anything with .config.n_mels) was trained on the stems too."""
+    return int(getattr(getattr(model, "config", None), "n_mels", N_MELS)) > N_MELS

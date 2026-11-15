@@ -165,7 +165,7 @@ from src.data import chartstats
 from src.data.beat_grid import from_timing_points
 from src.data.cache import read_manifest
 from src.data.chart_parser import parse_osu
-from src.data.mel import open_mel
+from src.data.mel import N_MELS, open_mel
 from src.data.style import GENRES, encode, read_style
 from src.data.tokenizer import HOLD_START, TAP, D, K, L, decode, make_metas
 from src.evaluation.holds import hold_stats, ln_agreement
@@ -185,7 +185,7 @@ from src.evaluation.structure import (
     ssm_audio,
     structure_scores,
 )
-from src.models.diffusion import load_denoiser, pick_device
+from src.models.diffusion import checkpoint_n_mels, load_denoiser, pick_device
 from src.models.sampler import (
     LANE_PASSES,
     LOUD_SIDES,
@@ -563,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--device", default="auto")
     a = ap.parse_args(argv)
 
-    store = open_mel(a.cache, fake=a.fake_mel)
+    store = open_mel(a.cache, fake=a.fake_mel, stems=checkpoint_n_mels(a.ckpt) > N_MELS)
     rows = [r for r in read_manifest(a.manifest) if r["split"] == a.split and r["sr"]
             and r.get("drop", "") == ""
             and (a.cache / "tokens" / f"{r['key']}.npz").exists()
