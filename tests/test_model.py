@@ -14,6 +14,7 @@ from src.data.tokenizer import (  # noqa: E402
     MASK,
     PAD,
     TAP,
+    D,
     K,
     L,
     decode,
@@ -386,6 +387,42 @@ def test_forward_lanes_restores_the_lanes_a_model_knows() -> None:
     out = forward_lanes(Oracle(tokens), shuffled.copy(), frames, 3.0, lambda row0: 400.0,
                         stats.n_cells, temperature=0.0, rng=np.random.default_rng(0))
     assert np.array_equal(out, song)
+
+
+def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
+    from src.models import sampler
+    from src.models.sampler import forward_lanes, refine_lanes, unit_temperature
+    song = np.zeros((3 * D, K), dtype=np.int64)
+    song[[0, 5, D + 2, D + 3, 2 * D + 7], 0] = TAP
+    song[D + 1, 1] = 2                                  # a long note's head starts a unit too
+    assert unit_temperature(song, 5, 1.0, None) == 1.0
+    assert [unit_temperature(song, r, 1.0, 0.25) for r in (0, 5, D + 2, D + 3, 2 * D + 7)] \
+        == [1.0, 0.25, 0.25, 0.25, 1.0]
+    assert unit_temperature(song, D + 1, 1.0, 0.25) == 1.0
+    assert unit_temperature(song, 5, 1.0, 0.25, unit=4) == 1.0  # rows 4..7: its first
+    _, tokens, _, stats, mel = song_fixture()
+    flat = tokens.reshape(-1, K).astype(np.int64)
+    full = np.concatenate([flat, np.full((L, K), PAD, np.int64)])
+    frames = torch.as_tensor(mel[:len(full) * 4])
+    seen = []
+    real = sampler._lane_sets
+
+    def spy(free, n, p_tap, p_empty, temperature, rng, bonus=None):
+        seen.append(temperature)
+        return real(free, n, p_tap, p_empty, temperature, rng, bonus)
+
+    monkeypatch.setattr(sampler, "_lane_sets", spy)
+    torch.manual_seed(0)
+    model = Denoiser(TINY)
+    todo = sampler.lane_choice_rows(full, stats.n_cells)
+    forward_lanes(model, full.copy(), frames, 3.0, lambda row0: 400.0, stats.n_cells,
+                  temperature=1.0, inner_temperature=0.25, rng=np.random.default_rng(0))
+    assert seen == [unit_temperature(full, r, 1.0, 0.25) for r, _, _ in todo]
+    assert 1.0 in seen and 0.25 in seen
+    seen.clear()
+    refine_lanes(model, full.copy(), frames, 3.0, lambda row0: 400.0, stats.n_cells, sweeps=1,
+                 temperature=1.0, inner_temperature=0.25, rng=np.random.default_rng(0))
+    assert set(seen) == {1.0, 0.25}
 
 
 def test_forward_lanes_hides_later_lanes_but_not_the_rhythm() -> None:

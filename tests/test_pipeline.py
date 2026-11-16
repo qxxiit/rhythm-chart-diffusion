@@ -1340,6 +1340,15 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
         assert np.array_equal(a == HOLD_START, b == HOLD_START)
         changed += int(not np.array_equal(a, b))
     assert changed >= 1                              # the lanes are drawn again
+    assert evaluate.main([*common, *relane, "--lane-inner-temp", "0.5"]) == 0   # by unit
+    unit = run.parent / (run.name + "_rlfr1t1i0.5u12")
+    assert (unit / "charts.npz").exists()
+    by_unit = np.load(unit / "charts.npz")
+    for r in relaned:                                 # still the rhythm and the long notes
+        assert np.array_equal(old[r["key"]] == HOLD_START, by_unit[r["key"]] == HOLD_START)
+        assert np.array_equal((old[r["key"]] == TAP).sum(-1), (by_unit[r["key"]] == TAP).sum(-1))
+    assert evaluate.main([*common, "--from-charts", str(run), "--lane-inner-temp", "0.5"]) == 2
+    assert evaluate.main([*common, *relane, "--lane-inner-temp", "0.5", "--lane-unit", "0"]) == 2
     assert evaluate.main([*common, "--relane", "--refine", "1"]) == 2       # no saved charts
     # the releases of the long notes added at another temperature (tag rt<x>)
     assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3", "--hold-up",

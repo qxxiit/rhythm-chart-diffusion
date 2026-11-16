@@ -543,6 +543,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="a run of these settings (its directory this run's name) whose songs keep "
                          "its charts as they are: a run grown to more songs without drawing those "
                          "again")
+    ap.add_argument("--lane-inner-temp", type=float, default=None,
+                    help="--relane: the onset rows after the first of each --lane-unit at this "
+                         "lane temperature, the first at --lane-temp / --forward-temp "
+                         "(sampler.unit_temperature; tag i<x>u<cells>)")
+    ap.add_argument("--lane-unit", type=int, default=D,
+                    help="--lane-inner-temp: cells a unit (12 = a beat)")
     ap.add_argument("--relane", action="store_true",
                     help="--from-charts: the lane passes (--lanes forward, --refine) draw the "
                          "saved charts' lanes again at --lane-temp, --forward-temp and "
@@ -599,6 +605,14 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         selectors = [WindowJudge(p, next(model.parameters()).device) for p in a.select_judge]
     lane_selector = None
+    if a.lane_inner_temp is not None and (not a.relane or a.lane_select_judge is not None):
+        print("--lane-inner-temp is a --relane setting (no --lane-select-judge): give "
+              "--from-charts R --relane",
+              file=sys.stderr)
+        return 2
+    if a.lane_unit < 1:
+        print("--lane-unit is 1 or more cells", file=sys.stderr)
+        return 2
     if a.relane and a.from_charts is None:
         print("--relane draws a saved run's lanes again: give --from-charts", file=sys.stderr)
         return 2
@@ -744,7 +758,8 @@ def main(argv: list[str] | None = None) -> int:
     relane_tag = "_rl" + ("f" if a.lanes == "forward" else "") + (
         f"r{a.refine}" if a.refine else "") + f"t{a.lane_temp:g}" + (
         f"ft{a.forward_temp:g}" if a.forward_temp is not None else "") + (
-        f"g{a.lane_guidance:g}" if a.lane_guidance is not None else "") \
+        f"g{a.lane_guidance:g}" if a.lane_guidance is not None else "") + (
+        f"i{a.lane_inner_temp:g}u{a.lane_unit}" if a.lane_inner_temp is not None else "") \
         if a.relane and a.lane_select_judge is None else ""
     sample_seed = a.seed if a.sample_seed is None else a.sample_seed
     release_temp = 0.5 if a.release_temp is None else a.release_temp
@@ -872,7 +887,9 @@ def main(argv: list[str] | None = None) -> int:
                                      jack_bias=a.jack_bias, release_gap=a.release_gap,
                                      seed=sample_seed + i, stats=buckets,
                                      lane_guidance=a.lane_guidance, select=lane_select,
-                                     select_k=a.lane_select_k if lane_select else 1, **style)
+                                     select_k=a.lane_select_k if lane_select else 1,
+                                     inner_temperature=a.lane_inner_temp, unit=a.lane_unit,
+                                     **style)
             if a.copy_bias is not None or a.refine_holds or share is not None \
                     or a.rest is not None or a.fill_holes is not None \
                     or a.carry_rhythm is not None or a.ln_tidy is not None \

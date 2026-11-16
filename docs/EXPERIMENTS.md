@@ -4451,6 +4451,46 @@ the raw draw has fewer than the human charts; the loud and onset biases double t
 quiet bars to empty), the passes add the rest, and the rest guard takes the passes' share
 back out.
 
+### 2026-11-17 (1) · The patterns followed: a unit's first row drawn freely, the rest lower (predictions)
+
+The pilot (11/14), again after run_1126: the AI's patterns are hard to make out, and so their
+repeats, mirrored or varied, do not show either (not stairs alone). On the first 120 val songs
+(patterns.py; human / the system of 11/09, lanes at 0.5 / the system, lanes at 1 since 11/10):
+
+| | human | lanes at 0.5 | lanes at 1 (the system) |
+|---|---|---|---|
+| motion_pred (the lane motion's predictability over chance: stairs, trills, unnamed motifs) | 0.128 | 0.139 | 0.085 |
+| run length (events a run) | 7.1 | 8.8 | 5.7 |
+| coverage (of the events in runs; chance-corrected repeats) | 0.042 | 0.083 | 0.029 |
+| moves: stair / trill / jack / leap | 0.199 / 0.152 / 0.051 / 0.127 | 0.163 / 0.173 / 0.043 / 0.131 | 0.148 / 0.197 / 0.040 / 0.139 |
+| the next beat of the same rhythm; of those mirrored | 26.6%; 8.4% | 18.3%; 9.4% | 14.6%; 8.2% |
+
+The mirrored share of repeated rhythms is human already; what is missing is the figure. One
+temperature for every row moves the charts along a line from blurred (1) to held too long
+(0.5); the human charts are on neither end: a figure followed while it lasts, a new one, or the
+last one mirrored or varied, where it ends. sampler.unit_temperature: the lane passes draw the
+first onset row of each unit (a beat, `--lane-unit 12`) at the lane temperature and its later
+onset rows at `--lane-inner-temp`, so the figure is picked freely and then followed (forward
+lanes sees the lanes chosen so far; refine sees both sides).
+
+`run_1127.sh`: the system's draw (run_1119's sys) on the first 120 val songs, its lanes drawn
+again (`--relane`: forward lanes, refine 2, lane guidance 2) at 1 (ul0, the control), in units
+of a beat at 0.5 (ul1), in units of two beats at 0.5 (ul2), each with the rest guard and F's
+passes; fresh full- and taps-view judges, each against ul0.
+
+Predictions (written before it ran), against ul0 (about the system: motion_pred 0.085, run
+length 5.7, coverage 0.029):
+1. ul1: motion_pred 0.10-0.13, run length 6.5-8.0, coverage 0.035-0.060; trills down to
+   0.16-0.19, stairs up to 0.15-0.19; the mirrored share of repeated rhythms 7-12%; judges
+   full view -0.03 to +0.02, taps view -0.04 to +0.04.
+2. ul2: further: motion_pred 0.11-0.14, coverage 0.04-0.07, run length 7-9; taps view -0.02 to
+   +0.06 (towards 11/09's held-too-long patterns).
+A setting is taken if its pattern numbers land nearer the human charts than ul0's (motion_pred
+within 0.02, coverage under 1.5 times the human) and its full view's step is not over 0 at 95%;
+then the user plays it against ul0 on a few songs. How it could fail: a beat is too short for a
+figure (most runs cross beats), so ul1 changes little; or the lower rows turn every figure into
+the one the model likes best (trills), which the move mix shows.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
