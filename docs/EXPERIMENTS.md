@@ -4382,7 +4382,7 @@ The answers: fewer of them cost the judges less, but none of the three biases he
 view; the beat answered from the one before is itself the tell. Not taken; the pass is left
 off.
 
-### 2026-11-16 (2) · stems-v2 or the system around it: the judges' trunk, and a raw draw of each model (predictions)
+### 2026-11-16 (2) · stems-v2 or the system around it: the judges' trunk, and a raw draw of each model (predictions, results)
 
 run_1125 left two things set on full-v4 between stems-v2 and its charts' verdict: (1) the
 fresh judges start from full-v4's trunk (judge.py --ckpt; trained 2 epochs, lr 1e-4), which
@@ -4411,6 +4411,45 @@ its raw draw is ahead in the full view from both trunks (under 0 at 95% from one
 from the other); otherwise full-v4 stays the system through the freeze (11/29) and the stems
 wait for a GPU. If the trunk changes the verdict on run_1125's pair, every judge comparing two
 models is read from both trunks from here on.
+
+Results, run_1126 (11/16 19:28 - 11/17 03:21; the first 120 val songs):
+
+| | full-v4's trunk (s1_) | stems-v2's trunk (t2_) | prediction |
+|---|---|---|---|
+| the system, full view | 0.743 | 0.833 | |
+| stm2f minus the system, full view | +0.083 [+0.037, +0.133] | +0.023 [-0.009, +0.058] | t2 +0.03 to +0.10 ✗ (under) |
+| the system, rhythm view | 0.603 | 0.757 | |
+| stm2f minus the system, rhythm view | +0.128 [+0.076, +0.190] | +0.032 [-0.008, +0.075] | t2 +0.06 to +0.15 ✗ (under) |
+| full-v4's raw draw, full view | 0.885 | 0.918 | s1 0.78-0.88 ✗ (just over) |
+| stems-v2's raw minus full-v4's, full view | +0.019 [-0.012, +0.050] | -0.013 [-0.039, +0.010] | -0.05 to +0.03 ✓ ✓ |
+| full-v4's raw draw, rhythm view | 0.767 | 0.863 | |
+| stems-v2's raw minus full-v4's, rhythm view | +0.067 [+0.029, +0.107] | +0.000 [-0.028, +0.029] | -0.05 to +0.04 ✗ ✓ |
+
+The diagnostics judge (no trunk; logistic / trees) on the raw draws: full-v4 0.967 / 0.975,
+stems-v2 0.965 / 0.981. The raw draws (human / full-v4 / stems-v2): hold share 0.225 / 0.159 /
+0.198 (prediction +0.02 to +0.06 ✓, +0.039); density ratio 1.056 / 1.067; sr_error 0.185 /
+0.214; f1@50 0.376 / 0.377; songs with a fatal empty stretch 1% / 2% (2-6% ✗ / ✓).
+
+Where the empty stretches come from (fatal.py on the same 120 songs, full-v4):
+
+| | human | raw draw | + the biases (run_1122's rnd) | + the choice among 4 (sys draw) | + F's passes (the system) | + the rest guard |
+|---|---|---|---|---|---|---|
+| songs with an 8+ beat empty stretch | 8% | 6% | 12% | 11% | 18% | 12% |
+| songs with a fatal one | 0% | 1% | 2% | 3% | 6% | 3% |
+| longest empty stretch, 90th pct (beats) | 7.9 | 7.0 | 9.6 | 8.1 | 13.0 | 8.1 |
+| the next beat of the same rhythm | 26.6% | 9.2% | 9.3% | 12.4% | 14.6% | 14.6% |
+
+Reading: each judge favours its own trunk's model, by about 0.03 in the full view (both ways)
+and up to 0.07-0.10 in the rhythm view from full-v4's; run_1125's verdict was mostly that. On
+raw draws the two models are level (the full view +0.019 / -0.013 from the two trunks, the
+diagnostics judge level), so the stems' -1.7% val_ce does not show in the charts: stems-v2 is
+not tuned (the rule: ahead from both trunks), full-v4 stays the system through the freeze,
+and the stems wait for a GPU (longer training, its own settings). Model comparisons are read
+from both trunks from here on. stems-v2's trunk is the sharper judge (the system 0.833 against
+0.743): a candidate trunk for the choosing judge. The empty stretches are not the model's:
+the raw draw has fewer than the human charts; the loud and onset biases double them (they push
+quiet bars to empty), the passes add the rest, and the rest guard takes the passes' share
+back out.
 
 ## Phase 3 Ablation A: Diffusion Design
 
