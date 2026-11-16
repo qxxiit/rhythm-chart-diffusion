@@ -4327,7 +4327,7 @@ rates, but the rhythm judge likes them less: answering wherever the model does n
 (bias 0) copies beats the music does not ask for, and the exact repeats run at twice the
 human rate. Not taken at bias 0.
 
-### 2026-11-16 (1) · The stems learned from the start; the answers made stricter (predictions)
+### 2026-11-16 (1) · The stems learned from the start; the answers made stricter (predictions, results)
 
 (1) stems-v2: `train.py --stems` from the start on full-v4's recipe exactly (60k steps, lr
 3e-4, warmup 1000, batch 16, row-mask 0.5, the chart stats, seed 0), so full-v4 is its
@@ -4346,6 +4346,41 @@ Predictions (written before it ran):
    rhythm view -0.02 to +0.03.
 Either is taken if its full view lies under 0 at 95%; stems-v2 also stays if its val_ce is
 under full-v4's by 1%+ and its judges are not worse (then a GPU sweep of its training).
+
+Results, run_1125 (11/16 03:13 - 10:01):
+
+| | human | system (full-v4) | stems-v2 | prediction |
+|---|---|---|---|---|
+| val_ce | | 0.07396 | 0.07269 (-1.7%) | 0.0720-0.0738 ✓ |
+| val_ce@0.9 | | 0.17335 | 0.17198 | 0.166-0.173 ✓ |
+| training | | | 3.6 h | 3.2-3.8 h ✓ |
+| fresh judge, full view (first 120) | | 0.743 | 0.826, +0.083 [+0.037, +0.133] | -0.06 to +0.02 ✗ |
+| fresh judge, rhythm view | | 0.603 | 0.731, +0.128 [+0.076, +0.190] | -0.04 to +0.06 ✗ |
+| diagnostics judge, logistic / trees | | 0.854 / 0.939 | 0.849 / 0.945 | |
+| songs with a fatal empty stretch, after the passes | 0% | 6% | 8% | 2-6% ✗ |
+| the next beat of the same rhythm, after | 25.0% | 14.6% | 10.9% | |
+| hold share (song mean) | 0.225 | 0.271 | 0.315 | |
+| density ratio; sr_error; f1@50 | | 1.008; 0.226; 0.382 | 1.036; 0.280; 0.386 | |
+
+| answers (with the rest guard, against it alone: s1_rgf 0.743 / 0.616) | bias -1 | bias -2 | prediction (-1 / -2) |
+|---|---|---|---|
+| beats answered a song | 6.7 | 3.4 | 6-12 ✓ / 3-8 ✓ |
+| the next beat of the same rhythm (240; human 25.0%, guard 14.6%) | 19.7% | 17.2% | 18-24% ✓ / 16-21% ✓ |
+| of those mirrored / the same (human 10.7 / 3.4%) | 9.7 / 5.9% | 9.0 / 5.7% | the same 5-7% ✓ |
+| songs with a fatal empty stretch | 3% | 3% | |
+| fresh judge, full view | +0.021 [-0.002, +0.048] | +0.011 [-0.000, +0.023] | -0.02 to +0.02 ✗ (just over) / ✓ |
+| fresh judge, rhythm view | +0.057 [+0.015, +0.110] | +0.025 [-0.014, +0.065] | -0.02 to +0.03 ✗ / ✓ |
+
+Reading: stems-v2 not taken as it stands. Its val_ce is the stems' first like-for-like gain
+(-1.7% at the same 60k steps), but its charts through the system are clearly worse: the
+system's settings were set on full-v4's draws (hold bias 0.2, the loud and onset biases, the
+choosing judge sel_holds trained on full-v4's draws, F's passes), and on stems-v2 they give
+too many long notes (0.315, the human 0.225, the system 0.271) and a looser SR. Whether the
+stems help the charts is open until the settings are set again for it (the hold bias first;
+a raw draw of each model with nothing on top tells the models apart) - each a 2-3 h run here.
+The answers: fewer of them cost the judges less, but none of the three biases helps either
+view; the beat answered from the one before is itself the tell. Not taken; the pass is left
+off.
 
 ## Phase 3 Ablation A: Diffusion Design
 
