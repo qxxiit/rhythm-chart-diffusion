@@ -15,6 +15,8 @@ human chart's and every --score run's. A window where neither the human chart no
 onset is left out. The judge sees the chart, its audio (silence with --no-audio), the chart's
 own SR (rosu: sr_gen for a run, sr_human_local for the human chart) and the beat length. Folds
 group the songs by audio (the manifest's audio_key), as the splits do.
+A --ckpt trained on the stems (train.py --stems) reads the stems too, so only songs with
+their stems are judged.
 
 Writes outputs/judge/<name>/: windows.csv (key, grade, fold, start, chart, logit, onset rows),
 rows.npz (per-row scores of the held-out windows, "<key>|<chart>" -> [windows, L] and
@@ -67,7 +69,7 @@ import torch
 
 from src.data.beat_grid import from_timing_points
 from src.data.cache import read_manifest
-from src.data.mel import open_mel
+from src.data.mel import N_MELS, open_mel
 from src.data.tokenizer import (
     BAR,
     BEATS_PER_CHUNK,
@@ -79,7 +81,7 @@ from src.data.tokenizer import (
     L,
 )
 from src.evaluation.playability import grade_of
-from src.models.diffusion import load_denoiser, pick_device
+from src.models.diffusion import checkpoint_n_mels, load_denoiser, pick_device
 from src.models.judge import Judge, stable_hash, view_tokens
 
 TRAIN_STRIDE = 4 * BAR                 # training windows every 4 bars (half overlapping)
@@ -249,7 +251,8 @@ class Songs:
             rows, charts = read_run(path)
             runs.append((label_of(path, a.ai), rows, charts))
             self.labels.append(runs[-1][0])
-        self.store = open_mel(a.cache, fake=a.fake_mel)
+        self.store = open_mel(a.cache, fake=a.fake_mel,       # a stems model reads its stems
+                              stems=checkpoint_n_mels(a.ckpt) > N_MELS)
         keys = [k for k in ai_rows if k in ai_charts and k in man                # every song of
                 and (a.cache / "tokens" / f"{k}.npz").exists() and self.store.has(k)]  # the run
         if a.limit:

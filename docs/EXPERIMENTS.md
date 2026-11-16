@@ -4382,6 +4382,36 @@ The answers: fewer of them cost the judges less, but none of the three biases he
 view; the beat answered from the one before is itself the tell. Not taken; the pass is left
 off.
 
+### 2026-11-16 (2) · stems-v2 or the system around it: the judges' trunk, and a raw draw of each model (predictions)
+
+run_1125 left two things set on full-v4 between stems-v2 and its charts' verdict: (1) the
+fresh judges start from full-v4's trunk (judge.py --ckpt; trained 2 epochs, lr 1e-4), which
+may see full-v4's own kind of mistake less; (2) the system's settings (hold bias 0.2, the loud
+and onset biases, the choosing judge sel_holds trained on full-v4's draws, F's passes), with
+which stems-v2's charts come out with too many long notes (0.315; human 0.225, the system
+0.271). judge.py now reads the stems when --ckpt is a stems model, so a judge can start from
+stems-v2's trunk.
+
+`run_1126.sh`: (1) fresh full- and rhythm-view judges from stems-v2's trunk (t2_) on the
+system's run (s1_sh's) and on stm2f (s1_stm2's); (2) a raw draw of each model on the first 120
+val songs with the system's decoding only (cosine, forward lanes at temperature 1, refine 2,
+lane guidance 2, the oracle stats, sample seed 0, one draw a window: no choice, no bias, no
+pass), judged from both trunks (s1_raw4 / s1_raw2, t2_raw4 / t2_raw2); fatal.py on both.
+
+Predictions (written before it ran):
+1. From stems-v2's trunk, stm2f against the system: full view +0.03 to +0.10, rhythm view
+   +0.06 to +0.15 (most of run_1125's gap stays: the long notes and the SR are in the charts).
+2. full-v4's raw draw, full view 0.78-0.88 from full-v4's trunk (the system's 0.743 is what the
+   biases, the choice and the passes add).
+3. stems-v2's raw draw minus full-v4's: full view -0.05 to +0.03, rhythm view -0.05 to +0.04,
+   from either trunk; its hold share above full-v4's by 0.02-0.06; songs with a fatal empty
+   stretch 2-6% for both.
+stems-v2 goes on to be tuned (the hold bias, then a choosing judge on its own draws) only if
+its raw draw is ahead in the full view from both trunks (under 0 at 95% from one, not over 0
+from the other); otherwise full-v4 stays the system through the freeze (11/29) and the stems
+wait for a GPU. If the trunk changes the verdict on run_1125's pair, every judge comparing two
+models is read from both trunks from here on.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

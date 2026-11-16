@@ -5,6 +5,7 @@ the real log-Mel path (decode as osu! does, fixed hop, token grid) is checked fo
 alignment end to end. Without PyAV's mp3 encoder those tests are skipped."""
 
 import csv
+import importlib.util
 import json
 import zipfile
 from pathlib import Path
@@ -941,6 +942,17 @@ def test_stems_model_end_to_end(data: Path, tmp_path: Path, monkeypatch) -> None
     assert evaluate.main([*common, "--split", "train", "--n", "1"]) == 0
     key = cfg["overfit_keys"][0]
     assert sample.main([*common, "--key", key]) == 0
+    if importlib.util.find_spec("rosu_pp_py") is None:
+        return
+    from scripts import judge                                    # a judge on the stems trunk
+    assert evaluate.main([*common, "--split", "train", "--per-song", "--n", "2"]) == 0
+    run = next((tmp_path / "st").glob("eval_train_songs_*"))
+    assert judge.main(["--ckpt", str(tmp_path / "st" / "best.pt"), "--ai", str(run),
+                       "--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+                       "--device", "cpu", "--out", str(tmp_path / "judge"), "--folds", "2",
+                       "--epochs", "1", "--batch-pairs", "2", "--name", "st"]) == 0
+    summary = json.loads((tmp_path / "judge" / "st" / "summary.json").read_text())
+    assert summary["ai"]["songs"] == 2
 
 
 def test_find_audio_uses_the_name_on_disk(tmp_path: Path) -> None:

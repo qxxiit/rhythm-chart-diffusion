@@ -178,6 +178,7 @@ python scripts/judge.py --ckpt C --ai R [--view taps|rhythm|holds --sr view] [--
                                        # ✅ the judge (8-bar windows, 5 folds by audio); --view: what
                                        #    of the charts it sees; --stop-bounds: stop once decided;
                                        #    --max-folds K; --eval-epochs: the auc after every epoch
+                                       #    (a stems C reads the stems: its trunk judges)
 python scripts/judge_table.py J ...    # ✅ judges of one run side by side, also on the songs they
                                        #    all have, each minus the row above (nested views)
 python scripts/evaluate.py ... --select-judge J --select-k 4
