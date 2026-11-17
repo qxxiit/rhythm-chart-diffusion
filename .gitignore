@@ -157,3 +157,6 @@ core.*
 # patch files handed around for review (keep them out of commits)
 /*.patch
 blog.html
+
+# ===== Kept out of the way (not in git) =====
+_archive/
