@@ -4518,7 +4518,7 @@ by 0.009 / 0.001); the user plays them blind (outputs/lanes_try_1117: five songs
 playtest pack, ul0 / ul1 / ul2 as X / Y / Z in a different order each song, the human chart
 named; the key in key_open_after_playing.txt) before it is decided.
 
-### 2026-11-17 (2) · Short long notes where the chart is busy become taps (predictions)
+### 2026-11-17 (2) · Short long notes where the chart is busy become taps (predictions, results)
 
 The user (11/17): in hard charts the AI covers its busy parts with short long notes, often
 repeated in one lane ("연타/난타"), where the good human charts put taps on the rhythm and
@@ -4557,6 +4557,29 @@ Predictions (written before it ran):
    +0.00 to +0.04, holds view +0.01 to +0.06 (the LN charts lose what makes them).
 dt0.15 goes into the system if neither view's step is over 0 at 95%; dt1 only if it is ahead
 of dt0.15 in both.
+
+Results, run_1128 (11/17 12:03 - 13:30; the 240 val songs, the judges on the first 120):
+
+| | human | rgf (the control) | dt0.15 | dt1 | prediction (dt0.15 / dt1) |
+|---|---|---|---|---|---|
+| SR 3.5+ (122 songs): songs with repeats 5%+ | 38% | 53% | 48% | 0% | |
+| tap-chart songs (60): short long notes among the busy notes | 4.6% | 8.5% | 4.2% | 0.0% | 1-5% ✓ |
+| tap-chart songs: repeats | 0.6% | 2.6% | 1.3% | 0.0% | 0.0-0.8% ✗ |
+| tap-chart songs: songs with repeats 5%+ | 0% | 17% | 8% | 0% | |
+| LN-chart songs (46): short long notes / repeats | 33.8% / 16.3% | 35.9% / 15.8% | 35.9% / 15.8% | 0.1% / 0.0% | unchanged ✓ / under 2% ✓ |
+| fresh judge, full view | | 0.743 | +0.009 [-0.004, +0.022] | +0.079 [+0.040, +0.117] | -0.02 to +0.01 ✓ / +0.00 to +0.04 ✗ |
+| fresh judge, holds view | | 0.724 | +0.029 [-0.000, +0.062] | +0.080 [+0.034, +0.132] | -0.03 to +0.01 ✗ / +0.01 to +0.06 ✗ |
+| diagnostics judge, logistic / trees | | 0.890 / 0.950 | 0.891 / 0.952 | 0.908 / 0.962 | |
+
+Reading: dt0.15 halves the flood in the tap-chart songs (the short long notes there now at
+the human share; the repeats 2.6% -> 1.3%, the human 0.6%: the gate, hold share under 0.15,
+misses a fifth of those songs) and leaves the LN charts alone; the full view does not mind it,
+the holds view leans against it (+0.029, its interval's lower end at 0), most likely because
+in the songs it touches no short long note is left in a busy part where the human charts keep
+a few. By the rule it goes into the system, at the edge. dt1 is clearly worse in both views:
+the LN charts need their short long notes, as the human charts have them. A milder next step
+(not run): only the repeats become taps (a short long note followed in its lane within a beat
+by another), with the gate at 0.20 (85% of the tap-chart songs, 9% of the LN-chart songs).
 
 ## Phase 3 Ablation A: Diffusion Design
 
