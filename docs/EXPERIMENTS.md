@@ -4451,7 +4451,7 @@ the raw draw has fewer than the human charts; the loud and onset biases double t
 quiet bars to empty), the passes add the rest, and the rest guard takes the passes' share
 back out.
 
-### 2026-11-17 (1) · The patterns followed: a unit's first row drawn freely, the rest lower (predictions)
+### 2026-11-17 (1) · The patterns followed: a unit's first row drawn freely, the rest lower (predictions, results)
 
 The pilot (11/14), again after run_1126: the AI's patterns are hard to make out, and so their
 repeats, mirrored or varied, do not show either (not stairs alone). On the first 120 val songs
@@ -4490,6 +4490,33 @@ within 0.02, coverage under 1.5 times the human) and its full view's step is not
 then the user plays it against ul0 on a few songs. How it could fail: a beat is too short for a
 figure (most runs cross beats), so ul1 changes little; or the lower rows turn every figure into
 the one the model likes best (trills), which the move mix shows.
+
+Results, run_1127 (11/17 04:4x - 10:04; the first 120 val songs):
+
+| | human | ul0 (all at 1) | ul1 (a beat) | ul2 (two beats) | prediction (ul1 / ul2) |
+|---|---|---|---|---|---|
+| motion_pred | 0.128 | 0.084 | 0.099 | 0.107 | 0.10-0.13 ✗ (just under) / 0.11-0.14 ✗ (just under) |
+| run length | 7.1 | 6.0 | 6.7 | 7.0 | 6.5-8.0 ✓ / 7-9 ✓ |
+| coverage | 0.042 | 0.032 | 0.039 | 0.047 | 0.035-0.060 ✓ / 0.04-0.07 ✓ |
+| moves: stair / trill | 0.199 / 0.152 | 0.154 / 0.203 | 0.164 / 0.184 | 0.162 / 0.188 | stair 0.15-0.19 ✓, trill 0.16-0.19 ✓ |
+| jack / leap | 0.051 / 0.127 | 0.042 / 0.134 | 0.037 / 0.133 | 0.039 / 0.137 | |
+| the next beat of the same rhythm | 26.6% | 14.3% | 14.0% | 14.7% | |
+| of those mirrored / the same | 8.4 / 3.6% | 6.5 / 3.7% | 14.7 / 7.0% | 17.1 / 9.0% | mirrored 7-12% ✗ |
+| songs with a fatal empty stretch | 0% | 3% | 3% | 3% | |
+| fresh judge, full view | | 0.773 | +0.023 [-0.016, +0.057] | +0.025 [-0.008, +0.053] | -0.03 to +0.02 ✗ (just over) |
+| fresh judge, taps view | | 0.695 | +0.006 [-0.023, +0.033] | +0.003 [-0.023, +0.026] | ✓ / ✓ |
+| diagnostics judge, logistic / trees | | 0.858 / 0.941 | 0.811 / 0.923 | 0.819 / 0.921 | |
+
+Reading: the units move every pattern number towards the human charts (ul2: the run length
+human, motion_pred half way, the trills fewer), the diagnostics judge (no trunk) likes both
+(-0.04 to -0.05 logistic), and the taps view, which put 11/09's lanes at 0.5 everywhere 0.095
+behind lanes at 1, is level here: the figure is followed without the whole chart held. Two
+costs: the full view leans worse (+0.02, not at 95%), and a beat that repeats the last one's
+rhythm now mirrors or copies its lanes twice as often as a human chart (the model's own choice
+once the rows are drawn lower). By the rule neither is taken (motion_pred misses "within 0.02"
+by 0.009 / 0.001); the user plays them blind (outputs/lanes_try_1117: five songs not in a
+playtest pack, ul0 / ul1 / ul2 as X / Y / Z in a different order each song, the human chart
+named; the key in key_open_after_playing.txt) before it is decided.
 
 ## Phase 3 Ablation A: Diffusion Design
 
