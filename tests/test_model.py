@@ -389,6 +389,33 @@ def test_forward_lanes_restores_the_lanes_a_model_knows() -> None:
     assert np.array_equal(out, song)
 
 
+def test_dense_taps_turns_short_long_notes_where_the_chart_is_busy_into_taps() -> None:
+    from src.models.sampler import STATS, dense_taps
+    song = np.zeros((10 * D, K), dtype=np.int64)
+    song[0:4 * D:3, 0] = TAP                            # 1/4 taps for four beats: 4 a beat
+    song[D:4 * D:6, 1] = TAP                            # and 1/2 beats on lane 1: 6 a beat
+
+    def hold(r, k, n):
+        song[r, k] = 2
+        song[r + 1:r + n, k] = 3
+        song[r + n, k] = 4
+
+    hold(D + 1, 2, 4)                                   # short, busy: a tap
+    hold(2 * D + 1, 3, 6)                               # half a beat, busy: a tap
+    hold(2 * D + 4, 2, 12)                              # a beat, busy: kept
+    hold(8 * D, 2, 3)                                   # short, nothing around: kept
+    before = np.isin(song, (TAP, 2)).copy()
+    n0 = STATS["dense_taps"]
+    assert dense_taps(song, len(song)) == 2
+    assert STATS["dense_taps"] - n0 == 2
+    assert np.array_equal(np.isin(song, (TAP, 2)), before)          # the onsets stay
+    assert song[D + 1, 2] == TAP and not song[D + 2:D + 6, 2].any()
+    assert song[2 * D + 1, 3] == TAP and not song[2 * D + 2:2 * D + 8, 3].any()
+    assert song[2 * D + 4, 2] == 2 and song[8 * D, 2] == 2
+    assert len(grammar_violations(song.reshape(-1, L, K) if len(song) % L == 0
+                                  else song[None])) == 0
+
+
 def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
     from src.models import sampler
     from src.models.sampler import forward_lanes, refine_lanes, unit_temperature

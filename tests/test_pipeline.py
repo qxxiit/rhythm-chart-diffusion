@@ -1355,6 +1355,16 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
                           "--release-temp", "1"]) == 0
     assert (run.parent / (run.name + "_hu-0.3rt1") / "charts.npz").exists()
     assert evaluate.main([*common, "--from-charts", str(run), "--release-temp", "1"]) == 2
+    # short long notes where the chart is busy, in songs whose hold share target is under 1
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3",
+                          "--dense-taps", "1"]) == 0
+    dense = run.parent / (run.name + "_hs0.3_dt1")
+    if not dense.exists():
+        dense = next(run.parent.glob(run.name + "_*dt1"))
+    with open(dense / "per_song.csv", newline="") as f:
+        assert all(int(float(r["dense_taps"])) >= 0 for r in csv.DictReader(f))
+    assert evaluate.main([*common, "--from-charts", str(run), "--dense-taps", "1"]) == 2
+    assert evaluate.main([*common, "--hold-share", "0.3", "--dense-taps", "1"]) == 2
 
 
 def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:

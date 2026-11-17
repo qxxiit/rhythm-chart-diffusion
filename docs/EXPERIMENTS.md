@@ -4518,6 +4518,46 @@ by 0.009 / 0.001); the user plays them blind (outputs/lanes_try_1117: five songs
 playtest pack, ul0 / ul1 / ul2 as X / Y / Z in a different order each song, the human chart
 named; the key in key_open_after_playing.txt) before it is decided.
 
+### 2026-11-17 (2) · Short long notes where the chart is busy become taps (predictions)
+
+The user (11/17): in hard charts the AI covers its busy parts with short long notes, often
+repeated in one lane ("연타/난타"), where the good human charts put taps on the rhythm and
+split the beat well. On the first 120 val songs at SR 3.5+ (59; busy: 4+ onsets a beat
+within a beat either side; short: half a beat or less; a repeat: a short long note followed
+in its lane within a beat by another; shares of the busy notes):
+
+| | human | raw draw | + the biases | the system |
+|---|---|---|---|---|
+| short long notes, median song | 15% | 12% | 19% | 23% |
+| repeats, median song | 3.4% | 2.3% | 4.8% | 7.2% |
+| songs with repeats 5%+ | 44% | 29% | 49% | 59% |
+| the 25 songs whose human chart has under 2% repeats: short / repeats / songs 5%+ | 4.7% / 0.6% / 0% | 5.5% / 1.1% / 8% | 8.2% / 2.0% / 12% | 9.7% / 3.1% / 24% |
+| the 26 songs whose human chart has 5%+: short / repeats | 32.8% / 15.1% | 20.7% / 6.0% | 32.3% / 11.5% | 35.4% / 15.3% |
+
+So the claim holds for the charts made mostly of taps (the system five times the human
+repeats there, a quarter of those songs flooded) and not for the others: in 26 of the 59 the
+human chart itself is built on short long notes (the LN charts), and the system matches it.
+The model alone is near the human charts in both; the hold bias (0.2) and the passes spread
+the LN charts' habit to the tap charts. The human chart's hold share, which the system already
+reads (--hold-share oracle), tells the two kinds apart: under 0.15 for 78% of the first and
+none of the second. The beat division in busy beats is near the human charts (a beat mixing
+the 1/4 and 1/3 grids: human 10.8%, the system 12.8%; a 1/12 onset 22.6% / 27.5%).
+
+sampler.dense_taps (`--dense-taps T`, after tidy_holds): in songs whose hold share target is
+under T, a long note of half a beat or less whose head has 4+ onsets a beat around it becomes
+a tap. `run_1128.sh`: F's passes with the rest guard on the system's draw (240; = run_1124's
+rgf, the control) with T 0.15 (the tap-chart songs) and T 1 (every song); fresh full- and
+holds-view judges (the holds view sees which notes are held and how long) against rgf's.
+
+Predictions (written before it ran):
+1. dt0.15, in the tap-chart songs at SR 3.5+: repeats 3.1% -> 0.0-0.8%, short long notes
+   9.7% -> 1-5%; the LN-chart songs unchanged; judges full view -0.02 to +0.01, holds view
+   -0.03 to +0.01.
+2. dt1: the LN-chart songs' repeats 15.3% -> under 2% (the human 15.1%); judges full view
+   +0.00 to +0.04, holds view +0.01 to +0.06 (the LN charts lose what makes them).
+dt0.15 goes into the system if neither view's step is over 0 at 95%; dt1 only if it is ahead
+of dt0.15 in both.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._
