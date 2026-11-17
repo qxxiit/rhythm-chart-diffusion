@@ -111,3 +111,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-17 (1) · The patterns followed: a unit's first row drawn freely, the rest lower (predictions, results)
 - 2026-11-17 (2) · Short long notes where the chart is busy become taps (predictions, results)
 - 2026-11-17 (3) · Only the repeats become taps (predictions, results)
+- 2026-11-18 (1) · Chords and releases where the human chart has them (predictions)

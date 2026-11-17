@@ -1376,6 +1376,22 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     assert next(run.parent.glob(run.name + "_*dt1r"), None) is not None
     assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3",
                           "--dense-repeats"]) == 2
+    # the chords to the human chart's share, the long notes down to the target, the releases
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3",
+                          "--chord-share", "oracle", "--hold-down", "--snap-releases", "3"]) == 0
+    late = next(run.parent.glob(run.name + "_*choracle_hd_sn3*"))
+    with open(late / "per_song.csv", newline="") as f:
+        for r in csv.DictReader(f):
+            assert all(int(float(r[c])) >= 0 for c in
+                       ("chords_thinned", "chords_added", "held_down", "releases_snapped"))
+    from src.data.tokenizer import grammar_violations
+    late_charts = np.load(late / "charts.npz")
+    for r in relaned:
+        assert len(grammar_violations(late_charts[r["key"]])) == 0
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-down"]) == 2
+    assert evaluate.main([*common, "--chord-share", "oracle"]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--chord-share", "1.5"]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--snap-releases", "0"]) == 2
     assert evaluate.main([*common, "--hold-share", "0.3", "--dense-taps", "1"]) == 2
 
 

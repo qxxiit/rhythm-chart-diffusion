@@ -499,6 +499,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dense-repeats", action="store_true",
                     help="--dense-taps: only the short long notes next to another in their lane "
                          "within a beat (sampler.dense_taps repeats; tag dt<x>r)")
+    ap.add_argument("--chord-share", default=None,
+                    help="last of the passes on saved charts: the share of onset rows with 2+ "
+                         "notes brought to this (oracle: the human chart's) when off by more "
+                         "than 0.05, the weakest chords thinned or the strongest single notes "
+                         "given a mirrored tap (sampler.chord_share_to; tag ch<x>)")
+    ap.add_argument("--hold-down", action="store_true",
+                    help="after it, long notes over the --hold-share target become taps, those "
+                         "released on no other lane's onset and the shortest first "
+                         "(sampler.hold_down; tag hd)")
+    ap.add_argument("--snap-releases", type=int, default=None, metavar="CELLS",
+                    help="last, a release where no other lane has an onset moves to the "
+                         "nearest row within CELLS that has one (sampler.snap_releases; tag sn<n>)")
     ap.add_argument("--answer", type=float, default=None,
                     help="answer_beats after align_alike: every beat offered the rhythm of the "
                          "one before it, taken when its score + this bias (nats a beat) "
@@ -738,6 +750,23 @@ def main(argv: list[str] | None = None) -> int:
         print("--dense-taps is a pass on saved charts by the songs' --hold-share: give "
               "--from-charts and --hold-share", file=sys.stderr)
         return 2
+    if (a.chord_share is not None or a.hold_down or a.snap_releases is not None) \
+            and a.from_charts is None:
+        print("--chord-share, --hold-down and --snap-releases are passes on saved charts: give "
+              "--from-charts", file=sys.stderr)
+        return 2
+    if a.hold_down and a.hold_share is None:
+        print("--hold-down needs --hold-share (its target)", file=sys.stderr)
+        return 2
+    if a.chord_share not in (None, "oracle"):
+        try:
+            assert 0.0 <= float(a.chord_share) <= 1.0
+        except (ValueError, AssertionError):
+            print(f"--chord-share {a.chord_share}: oracle or a share in [0, 1]", file=sys.stderr)
+            return 2
+    if a.snap_releases is not None and a.snap_releases < 1:
+        print("--snap-releases is 1 or more cells", file=sys.stderr)
+        return 2
     if a.dense_repeats and a.dense_taps is None:
         print("--dense-repeats needs --dense-taps", file=sys.stderr)
         return 2
@@ -803,7 +832,11 @@ def main(argv: list[str] | None = None) -> int:
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
             f"_rb{a.rest:g}" + (f"m{a.rest_max_run:g}" if a.rest_max_run is not None else "")
             if a.rest is not None else "") + light_tag + recheck_tag + (
-            end_tag) + stats_tag + (
+            end_tag) + (
+            f"_ch{a.chord_share}" if a.chord_share == "oracle"
+            else f"_ch{float(a.chord_share):g}" if a.chord_share is not None else "") + (
+            "_hd" if a.hold_down else "") + (
+            f"_sn{a.snap_releases}" if a.snap_releases is not None else "") + stats_tag + (
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
             and a.lane_guidance is not None else "")          # the carried bars' lanes
         out_dir = a.from_charts.parent / (a.from_charts.name + (suffix or "_rescored"))
@@ -871,6 +904,8 @@ def main(argv: list[str] | None = None) -> int:
         holds0, rests0, fills0 = STATS["changed_holds"], STATS["rest_bars"], STATS["filled_holes"]
         rests_kept0, answers0 = STATS["rest_bars_kept"], STATS["answered_beats"]
         dense0 = STATS["dense_taps"]
+        late0 = {k: STATS[k] for k in ("chords_thinned", "chords_added", "held_down",
+                                       "releases_snapped")}
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
         capped0, untangled0 = STATS["capped_rows"], STATS["untangled"]
@@ -878,6 +913,12 @@ def main(argv: list[str] | None = None) -> int:
         aligned0, strong0 = STATS["aligned_bars"], STATS["strong_moved"]
         more0, thinned0 = STATS["more_holds"], STATS["thinned_bars"]
         out0, in0 = STATS["recheck_out"], STATS["recheck_in"]
+        chords = None
+        if a.chord_share == "oracle":
+            ref = np.isin(z["tokens"].reshape(-1, K)[:n_cells], (TAP, HOLD_START)).sum(axis=1)
+            chords = float((ref[ref > 0] >= 2).mean()) if (ref > 0).any() else 0.0
+        elif a.chord_share is not None:
+            chords = float(a.chord_share)
         share = None
         if a.hold_share == "oracle":
             share = hold_stats(z["tokens"].reshape(-1, K)[:n_cells])["hold_share"]
@@ -913,10 +954,13 @@ def main(argv: list[str] | None = None) -> int:
                     or a.copy_sections is not None or a.chord_cap is not None \
                     or a.untangle or a.alike is not None or a.strong_chords is not None \
                     or a.light is not None or a.recheck is not None \
-                    or a.answer is not None or a.dense_taps is not None:
+                    or a.answer is not None or a.dense_taps is not None \
+                    or chords is not None or a.hold_down or a.snap_releases is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    rest_max_run=a.rest_max_run, answer=a.answer,
                                    dense=a.dense_taps, dense_repeats=a.dense_repeats,
+                                   chord_share=chords, hold_down_to=a.hold_down,
+                                   snap=a.snap_releases,
                                    answer_unit=a.answer_unit, answer_lanes=a.answer_lanes,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
@@ -996,6 +1040,13 @@ def main(argv: list[str] | None = None) -> int:
             cost["answered_beats"] = STATS["answered_beats"] - answers0
         if a.dense_taps is not None:
             cost["dense_taps"] = STATS["dense_taps"] - dense0
+        if chords is not None:
+            cost["chords_thinned"] = STATS["chords_thinned"] - late0["chords_thinned"]
+            cost["chords_added"] = STATS["chords_added"] - late0["chords_added"]
+        if a.hold_down:
+            cost["held_down"] = STATS["held_down"] - late0["held_down"]
+        if a.snap_releases is not None:
+            cost["releases_snapped"] = STATS["releases_snapped"] - late0["releases_snapped"]
         if a.fill_holes is not None:
             cost["holes_filled"] = STATS["filled_holes"] - fills0
         if a.carry_rhythm is not None:
@@ -1093,7 +1144,8 @@ def main(argv: list[str] | None = None) -> int:
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "rest_max_run": a.rest_max_run, "answer": a.answer, "dense_taps": a.dense_taps,
-               "dense_repeats": a.dense_repeats,
+               "dense_repeats": a.dense_repeats, "chord_share": a.chord_share,
+               "hold_down": a.hold_down, "snap_releases": a.snap_releases,
                "answer_unit": a.answer_unit if a.answer is not None else None,
                "answer_lanes": a.answer_lanes if a.answer is not None else None,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,

@@ -443,6 +443,74 @@ def test_dense_taps_repeats_only_takes_short_long_notes_next_to_another() -> Non
     assert dense_taps(song, len(song)) == 3             # all of them: the three short ones left
 
 
+def _hold(song, r, k, n):
+    song[r, k] = 2
+    song[r + 1:r + n, k] = 3
+    song[r + n, k] = 4
+
+
+def test_hold_down_takes_the_long_notes_over_the_target_unreleased_and_short_first() -> None:
+    from src.models.sampler import hold_down
+    song = np.zeros((8 * D, K), dtype=np.int64)
+    song[0:8 * D:D, 0] = TAP                            # a tap on every beat in lane 0
+    _hold(song, D, 1, D)                                # released on lane 0's onset (2D)
+    _hold(song, 3 * D + 1, 2, 4)                        # short, released on nothing
+    _hold(song, 5 * D + 1, 3, 8)                        # longer, released on nothing
+    before = np.isin(song, (TAP, 2)).copy()
+    assert hold_down(song, len(song), 0.5) == 0         # 3 of 11 onsets: under the target
+    assert hold_down(song, len(song), 0.1) == 2         # 3/11 -> 1/11 (<= 0.1)
+    assert np.array_equal(np.isin(song, (TAP, 2)), before)
+    assert song[D, 1] == 2 and song[3 * D + 1, 2] == TAP and song[5 * D + 1, 3] == TAP
+    assert len(grammar_violations(song[None])) == 0
+
+
+def test_snap_releases_lets_go_on_the_nearest_onset_of_another_lane() -> None:
+    from src.models.sampler import snap_releases
+    song = np.zeros((6 * D, K), dtype=np.int64)
+    song[[0, D, 2 * D, 3 * D, 4 * D], 0] = TAP
+    _hold(song, 1, 1, D - 3)                            # released at D - 2: D is 2 cells on
+    _hold(song, 2 * D + 1, 2, D + 2)                    # released at 3D + 3: 3D is 3 back
+    _hold(song, 4 * D + 1, 3, 4)                        # 4D + 5: nothing within 3 cells
+    song[D + 1, 1] = TAP                                # lane 1 pressed again right after D
+    gap = song.copy()
+    assert snap_releases(gap, len(gap), max_shift=3, min_hold=3, release_gap=2) == 1
+    assert gap[D - 2, 1] == 4                           # D + 1 too soon after D: stays
+    before = np.isin(song, (TAP, 2)).copy()
+    assert snap_releases(song, len(song), max_shift=3, min_hold=3, release_gap=0) == 2
+    assert np.array_equal(np.isin(song, (TAP, 2)), before)
+    assert song[D, 1] == 4 and song[D - 2, 1] == 3      # held on to lane 0's onset at D
+    assert song[3 * D, 2] == 4 and not song[3 * D + 1:3 * D + 4, 2].any()
+    assert song[4 * D + 5, 3] == 4
+    assert len(grammar_violations(song[None])) == 0
+
+
+def test_chord_share_to_thins_the_weakest_chords_or_adds_mirrored_taps() -> None:
+    from src.models.sampler import chord_share_to
+    n = 16 * D
+    times = np.arange(n) * 25.0                         # 1/12 beat = 25 ms: 200 BPM
+    strength = np.ones(n)
+    song = np.zeros((n, K), dtype=np.int64)
+    rows = np.arange(0, n, 6)                           # a note every half beat
+    song[rows, 0] = TAP
+    song[rows[::2], 3] = TAP                            # on every beat a chord: share 0.5
+    before_rows = np.isin(song, (TAP, 2)).any(axis=1)
+    assert chord_share_to(song.copy(), n, 0.5, strength, times, 0) == 0     # within tol
+    thin = song.copy()
+    assert chord_share_to(thin, n, 0.2, strength, times, 0) > 0
+    size = np.isin(thin, (TAP, 2)).sum(axis=1)
+    share = (size[size > 0] >= 2).mean()
+    assert share <= 0.2 + 1e-9 and np.array_equal(size > 0, before_rows)
+    kept = np.flatnonzero(size >= 2)
+    assert (kept % (4 * D) == 0).mean() > 0.5           # the downbeats keep theirs
+    add = np.zeros((n, K), dtype=np.int64)
+    add[rows, rows // 6 % 2] = TAP                      # lanes 0, 1, 0, 1 ...: no chords
+    assert chord_share_to(add, n, 0.3, strength, times, 0) > 0
+    size = np.isin(add, (TAP, 2)).sum(axis=1)
+    assert (size[size > 0] >= 2).mean() >= 0.3 - 1e-9
+    assert (np.isin(add[rows], (TAP,)).sum(axis=1) <= 2).all()
+    assert len(grammar_violations(add[None])) == 0
+
+
 def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
     from src.models import sampler
     from src.models.sampler import forward_lanes, refine_lanes, unit_temperature

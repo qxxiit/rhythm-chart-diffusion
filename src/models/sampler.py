@@ -109,7 +109,8 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "more_holds": 0, "thinned_bars": 0, "recheck_out": 0, "recheck_in": 0,
          "select_windows": 0, "select_gain": 0.0, "lane_select_windows": 0,
          "lane_select_gain": 0.0, "lane_seams": 0, "rest_bars_kept": 0, "answered_beats": 0,
-         "dense_taps": 0}
+         "dense_taps": 0, "held_down": 0, "releases_snapped": 0, "chords_thinned": 0,
+         "chords_added": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -2175,6 +2176,141 @@ def dense_taps(song: np.ndarray, n_cells: int, *, max_len: int = DENSE_LEN,
     STATS["dense_taps"] += len(todo)
     return len(todo)
 
+
+# 2026-11-18 (1): what the blind play of 11/17 heard that the passes can reach. On the first
+# 120 val songs: the system's long notes are released on another lane's onset 60% of the time
+# (human 71%), its hold share is over the human chart's (0.271 against 0.225; Mirai Puzzle
+# 0.29 against 0.14) since hold-up only raises it, and its chord share follows the human
+# chart's only roughly (correlation 0.70 across songs; zeke 0.35 against 0.12, Mirai Puzzle
+# 0.22 against 0.45).
+def _hold_spans(song: np.ndarray, n_cells: int) -> list[tuple[int, int, int]]:
+    """(lane, head row, release row) of each long note starting before n_cells."""
+    out = []
+    for k in range(song.shape[1]):
+        for h in np.flatnonzero(song[:n_cells, k] == HOLD_START).tolist():
+            e = _hold_end(song, h, k)
+            if e is not None:
+                out.append((k, h, e))
+    return out
+
+
+def hold_down(song: np.ndarray, n_cells: int, target: float, *, tol: float = 0.02) -> int:
+    """Long notes over the song's target share become taps; returns how many. While the
+    long notes are more than target + tol of the onsets (taps and long-note heads), the
+    long note released on no other lane's onset, then the shortest, becomes a tap at its
+    head (the onsets stay), down to the target."""
+    onset = np.isin(song[:n_cells], (TAP, HOLD_START))
+    n_on = int(onset.sum())
+    spans = _hold_spans(song, n_cells)
+    if not n_on or len(spans) <= (target + tol) * n_on:
+        return 0
+    others = lambda k, e: e < n_cells and bool(np.delete(onset[e], k).any())
+    order = sorted(spans, key=lambda x: (others(x[0], x[2]), x[2] - x[1], x[1]))
+    n_hold, changed = len(spans), 0
+    for k, h, e in order:
+        if n_hold <= target * n_on:
+            break
+        song[h, k] = TAP
+        song[h + 1:e + 1, k] = EMPTY
+        n_hold -= 1
+        changed += 1
+    STATS["held_down"] += changed
+    return changed
+
+
+def snap_releases(song: np.ndarray, n_cells: int, *, max_shift: int = 3, min_hold: int = 3,
+                  release_gap: int = 0) -> int:
+    """A long note released where no other lane has an onset is released instead on the
+    nearest row within max_shift cells that has one (let go as the next note comes), if
+    its lane is free up to there, the note stays min_hold cells or more and the lane's next
+    press stays more than release_gap cells after; returns how many moved. Onsets stay."""
+    onset = np.isin(song[:n_cells], (TAP, HOLD_START))
+    moved = 0
+    for k, h, e in _hold_spans(song, n_cells):
+        if e < n_cells and np.delete(onset[e], k).any():
+            continue
+        nxt = np.flatnonzero(np.isin(song[e + 1:, k], (TAP, HOLD_START)))
+        nxt = e + 1 + int(nxt[0]) if len(nxt) else len(song)
+        for r in sorted(range(e - max_shift, e + max_shift + 1), key=lambda r: (abs(r - e), r)):
+            if r == e or r >= n_cells or r - h < max(min_hold, 1) \
+                    or not np.delete(onset[r], k).any():
+                continue
+            if r > e and ((song[e + 1:r + 1, k] != EMPTY).any() or nxt - r <= release_gap):
+                continue
+            if r > e:
+                song[e:r, k] = HOLD_BODY
+            else:
+                song[r + 1:e + 1, k] = EMPTY
+            song[r, k] = HOLD_END
+            moved += 1
+            break
+    STATS["releases_snapped"] += moved
+    return moved
+
+
+def _position_weight(cell: np.ndarray) -> np.ndarray:
+    """3 on a bar's downbeat, 2 on a beat, 1 on a half beat, 0 elsewhere."""
+    return np.where(cell % BAR == 0, 3, np.where(cell % D == 0, 2, np.where(cell % (D // 2) == 0,
+                                                                              1, 0)))
+
+
+def chord_share_to(song: np.ndarray, n_cells: int, target: float, strength: np.ndarray,
+                   times: np.ndarray, cell_offset: int, *, tol: float = 0.05,
+                   release_gap: int = 0, max_beats: float = 0.25) -> int:
+    """The share of onset rows with 2+ notes brought to the song's target when it is off by
+    more than tol; returns how many rows changed. A row's weight: its place (_position_weight:
+    downbeat, beat, half beat) plus the z of its onset strength over the onset rows. Over:
+    the weakest chords lose taps (the one whose lane has the nearest other note first; long
+    note starts stay) until one note is left. Under: the strongest single notes get a tap,
+    in the mirrored lane (3 - lane) if it makes no jack within max_beats (at 180 BPM; as
+    strong_chords' STRONG_JACK_BEATS), else
+    in the lane that is freest (_jack_free_lane). The rows with notes stay."""
+    onset = np.isin(song[:n_cells], (TAP, HOLD_START))
+    size = onset.sum(axis=1)
+    rows = np.flatnonzero(size)
+    if len(rows) < 20:
+        return 0
+    z = (strength[:n_cells] - strength[rows].mean()) / (strength[rows].std() + 1e-9)
+    weight = _position_weight(np.arange(n_cells) - cell_offset) + z
+    n_chord = int((size[rows] >= 2).sum())
+    share = n_chord / len(rows)
+    changed = 0
+    if share > target + tol:
+        for r in sorted(rows[size[rows] >= 2].tolist(), key=lambda r: (weight[r], r)):
+            if n_chord <= target * len(rows):
+                break
+            taps = np.flatnonzero(song[r] == TAP).tolist()
+            taps.sort(key=lambda k: (_nearest_other(onset, times, r, k), k))
+            while size[r] >= 2 and taps:
+                k = taps.pop(0)
+                song[r, k], onset[r, k] = EMPTY, False
+                size[r] -= 1
+            if size[r] == 1:
+                n_chord -= 1
+                changed += 1
+        STATS["chords_thinned"] += changed
+    elif share < target - tol:
+        limit = max_beats * BEAT_180 + 1e-6
+        for q in sorted(rows[size[rows] == 1].tolist(), key=lambda r: (-weight[r], r)):
+            if n_chord >= target * len(rows):
+                break
+            k = int(np.flatnonzero(onset[q])[0])
+            to = None
+            j = song.shape[1] - 1 - k
+            if song[q, j] == EMPTY and _fits(song, q, j, 0, release_gap) \
+                    and _nearest_other(onset, times, q, j) > limit:
+                to = j
+            if to is None:
+                to = _jack_free_lane(song, onset, times, q, k, limit, release_gap)
+            if to is None:
+                continue
+            song[q, to], onset[q, to] = TAP, True
+            size[q] = 2
+            n_chord += 1
+            changed += 1
+        STATS["chords_added"] += changed
+    return changed
+
 # Chords over the guidelines' cap. The ranking criteria ask Easy and Normal 4K charts for at
 # most 2 notes at a time and Hard for 3, long notes held counting (src/evaluation/playability).
 # Human charts mostly keep to it (240 val songs, 2026-10-11, rows over the cap per song: Easy
@@ -2508,7 +2644,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               recheck_add: float | None = None, rest_max_run: float | None = None,
               answer: float | None = None, answer_unit: int = 1,
               answer_lanes: str = "draw", dense: float | None = None,
-              dense_repeats: bool = False) -> np.ndarray:
+              dense_repeats: bool = False, chord_share: float | None = None,
+              hold_down_to: bool = False, snap: int | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
@@ -2523,7 +2660,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     beats a unit; answer_lanes its lanes, drawn at lane_temperature with lane_guidance),
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), dense_taps
     (dense: where hold_share, the song's target, is under it; dense_repeats: its repeats),
-    fill_holes
+    and after the chord cap chord_share_to (chord_share: the song's target), hold_down
+    (hold_down_to: down to hold_share) and snap_releases (snap: max shift in cells), fill_holes
     (holes: the threshold), rest_bars (rest: the threshold; rest_max_run: its max_run),
     thin_bars (light: the threshold; light_alike: its look-alikes thinned
     alike), recheck_notes (recheck: the threshold below which a row's taps go;
@@ -2598,6 +2736,15 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               untangle_grades, release_gap, untangle_wide, untangle_insane)
     if chord_cap is not None:
         guideline_cap(lane_model, song, frames, s, beat_len, n_cells, below=chord_cap)
+    if chord_share is not None:
+        chord_share_to(song, n_cells, chord_share, onset_strength(mel, n_cells),
+                       _row_times(timing_points, cell_offset, n_cells), cell_offset,
+                       release_gap=release_gap)
+    if hold_down_to and hold_share is not None:
+        hold_down(song, n_cells, hold_share)
+    if snap is not None:
+        snap_releases(song, n_cells, max_shift=snap, min_hold=max(min_hold, 1),
+                      release_gap=release_gap)
     return song[:-L].reshape(np.shape(tokens)).astype(np.int8)
 
 
