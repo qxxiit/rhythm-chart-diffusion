@@ -40,4 +40,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1126` | 11/16-11/17 | the judges' trunk; a raw draw of each model | each judge favours its own trunk's model; the models level; full-v4 stays | 2026-11-16 (2) |
 | `run_1127` | 11/17 | the lanes in units (each unit's first row at 1, the rest at 0.5) | the pattern numbers nearer the human charts; decided by a blind play | 2026-11-17 (1) |
 | `run_1128` | 11/17 | short long notes where the chart is busy become taps | `--dense-taps 0.15` joins the system (at the edge) | 2026-11-17 (2) |
-| `run_1129` | 11/17 | only the repeats become taps | | 2026-11-17 (3) |
+| `run_1129` | 11/17 | only the repeats become taps | `--dense-taps 0.2 --dense-repeats` replaces 0.15: the holds view's cost halved | 2026-11-17 (3) |

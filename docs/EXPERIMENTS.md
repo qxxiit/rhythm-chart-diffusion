@@ -110,4 +110,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-16 (2) · stems-v2 or the system around it: the judges' trunk, and a raw draw of each model (predictions, results)
 - 2026-11-17 (1) · The patterns followed: a unit's first row drawn freely, the rest lower (predictions, results)
 - 2026-11-17 (2) · Short long notes where the chart is busy become taps (predictions, results)
-- 2026-11-17 (3) · Only the repeats become taps (predictions)
+- 2026-11-17 (3) · Only the repeats become taps (predictions, results)
