@@ -12,7 +12,7 @@
 #   passes  (~12 min) F's passes on them
 #   judges  (~20 min) the standard judge on the 240
 #   table   (seconds) against the cosine run and run_1113's 8 draws on the songs they share
-# All: for p in draw passes judges table; do sh run_1119.sh $p; done
+# All: for p in draw passes judges table; do sh experiments/runs/run_1119.sh $p; done
 set -ex
 PHASE=${1:-draw}
 SHARDS=${SHARDS:-3}

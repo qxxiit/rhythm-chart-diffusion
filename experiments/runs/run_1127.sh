@@ -14,7 +14,7 @@
 #   lanes   (~2 h 15 min) the three, three processes each
 #   judges  (~1 h 15 min) fresh full- and taps-view judges on each
 #   table   (seconds)
-# All: for p in lanes judges table; do sh run_1127.sh $p; done
+# All: for p in lanes judges table; do sh experiments/runs/run_1127.sh $p; done
 set -ex
 PHASE=${1:-lanes}
 SHARDS=${SHARDS:-3}

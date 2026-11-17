@@ -11,7 +11,7 @@
 #   judges  (~20 min) fresh standard judges (seed 1, --sr view, 2 epochs, 2 folds) on the
 #           chosen run and on the cosine run: the same 96 songs
 #   table   (seconds) the step, the diagnostics judge and the results table
-# All: for p in select passes judges table; do sh run_1113.sh $p; done
+# All: for p in select passes judges table; do sh experiments/runs/run_1113.sh $p; done
 set -ex
 PHASE=${1:-select}
 SHARDS=${SHARDS:-3}

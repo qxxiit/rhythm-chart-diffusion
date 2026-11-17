@@ -13,7 +13,7 @@
 #   judges  (~25 min) fresh full-view and taps-view judges (seed 1, --sr view, 2 epochs,
 #           5 folds of the 120 songs), as s1_sel / s1_lt1 and their taps views
 #   table   (seconds) the steps run_1112 -> lanes at 1 -> long notes drawn, both views
-# All: for p in draw passes judges table; do sh run_1116.sh $p; done
+# All: for p in draw passes judges table; do sh experiments/runs/run_1116.sh $p; done
 set -ex
 PHASE=${1:-draw}
 SHARDS=${SHARDS:-3}

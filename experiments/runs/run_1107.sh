@@ -1,5 +1,5 @@
 #!/bin/sh
-# From 11/7, one phase at a time: sh run_1107.sh <phase>, after patch 0062. Why and the
+# From 11/7, one phase at a time: sh experiments/runs/run_1107.sh <phase>, after patch 0062. Why and the
 # predictions: EXPERIMENTS 2026-11-07, second entry. F's judge scores any run unlike F lower
 # (M3 -0.83 though M3's own judge equals F's), the sweep had no control drawn with F's own
 # settings, and the table put 60 songs beside 240. Every phase reads data/ and outputs/ and
@@ -22,8 +22,8 @@ TAG_F=_hu-oracle_rc0kh1_sc1_cs4kb_cp0l8_al2k4_lt0.5_fh0.5_rb1_li0.5a_ujmgi_cc2_s
 F=${F:-$T$TAG_F}
 D=outputs/run_1105
 mkdir -p $D
-[ -d "$T" ] || { echo "no T=$T: give the base directory, T=... sh run_1107.sh $PHASE"; exit 2; }
-[ -d "$F" ] || { echo "no F=$F: give it, F=... sh run_1107.sh $PHASE"; exit 2; }
+[ -d "$T" ] || { echo "no T=$T: give the base directory, T=... sh experiments/runs/run_1107.sh $PHASE"; exit 2; }
+[ -d "$F" ] || { echo "no F=$F: give it, F=... sh experiments/runs/run_1107.sh $PHASE"; exit 2; }
 
 # the pass families of F (docs/EVALUATION.md), as in run_1105.sh
 RESTS="--rest 1 --light 0.5 --light-alike --fill-holes 0.5"

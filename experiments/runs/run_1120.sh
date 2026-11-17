@@ -13,7 +13,7 @@
 #          human lane statistics lie between 0.5 and 1), F's passes; full and taps judges
 #   hb1    (~2 h 45 min) the system drawn with the hold bias 0.1, F's passes; full and taps
 #   table  (seconds) each against the system, the views against run_1112's
-# All: for p in views lt07 hb1 table; do sh run_1120.sh $p; done
+# All: for p in views lt07 hb1 table; do sh experiments/runs/run_1120.sh $p; done
 set -ex
 PHASE=${1:-views}
 SHARDS=${SHARDS:-3}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# From 11/5, one phase at a time: sh run_1105.sh <phase>. Apply patches 0056-0060 first
+# From 11/5, one phase at a time: sh experiments/runs/run_1105.sh <phase>. Apply patches 0056-0060 first
 # (git am outputs/patches/0056-*.patch ... 0060-*.patch). Why: docs/EVALUATION.md; the
 # predictions: EXPERIMENTS 2026-11-05. Every phase reads data/ and outputs/ and writes under
 # outputs/ only; nothing is deleted. The per_song.csv files hold the playtest songs too: read
@@ -19,14 +19,14 @@ set -ex
 PHASE=${1:-meta}
 P=outputs/full-v4/best.pt
 # T: the base charts F is made from (T_ref); F: the default played on 10-12. Override T if
-# its directory has another name: T=outputs/full-v4/eval_... sh run_1105.sh meta
+# its directory has another name: T=outputs/full-v4/eval_... sh experiments/runs/run_1105.sh meta
 T=${T:-outputs/full-v4/eval_val_songs_continue_random_T128_fwd_ref2t0.5_lbq0.1_og1_ot2.7-5-0.35_st-oracle_lg2}
 TAG_F=_hu-oracle_rc0kh1_sc1_cs4kb_cp0l8_al2k4_lt0.5_fh0.5_rb1_li0.5a_ujmgi_cc2_st-oracle_lg2
 F=${F:-$T$TAG_F}
 D=outputs/run_1105
 mkdir -p $D
-[ -d "$T" ] || { echo "no T=$T: give the base directory, T=... sh run_1105.sh $PHASE"; exit 2; }
-[ -d "$F" ] || { echo "no F=$F: give it, F=... sh run_1105.sh $PHASE"; exit 2; }
+[ -d "$T" ] || { echo "no T=$T: give the base directory, T=... sh experiments/runs/run_1105.sh $PHASE"; exit 2; }
+[ -d "$F" ] || { echo "no F=$F: give it, F=... sh experiments/runs/run_1105.sh $PHASE"; exit 2; }
 
 # the pass families of F (docs/EVALUATION.md)
 RESTS="--rest 1 --light 0.5 --light-alike --fill-holes 0.5"

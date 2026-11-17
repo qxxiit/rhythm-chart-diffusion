@@ -13,7 +13,7 @@
 #   passes  (~1 h 15 min) the three, three processes each
 #   judges  (~1 h 15 min) fresh full- and rhythm-view judges on each
 #   table   (seconds)
-# All: for p in passes judges table; do sh run_1124.sh $p; done
+# All: for p in passes judges table; do sh experiments/runs/run_1124.sh $p; done
 set -ex
 PHASE=${1:-passes}
 SHARDS=${SHARDS:-3}

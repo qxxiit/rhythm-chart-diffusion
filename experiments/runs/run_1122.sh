@@ -19,7 +19,7 @@
 #   judges  (~50 min) fresh full- and rhythm-view judges on both
 #   table   (seconds) block against random, both views
 #   stems   (~20 h) scripts/stems.py: the val and test audio first (~2 h), then train
-# All: for p in draw passes judges table stems; do sh run_1122.sh $p; done
+# All: for p in draw passes judges table stems; do sh experiments/runs/run_1122.sh $p; done
 set -ex
 PHASE=${1:-draw}
 SHARDS=${SHARDS:-3}

@@ -15,7 +15,7 @@
 #   judges  (~50 min) fresh judges (seed 1, all 5 folds of the 120 songs): full view and
 #           rhythm view, on the chosen run and on the cosine run's same songs
 #   table   (seconds) the steps (chosen minus cosine) and the diagnostics
-# All: for p in selj select passes judges table; do sh run_1112.sh $p; done
+# All: for p in selj select passes judges table; do sh experiments/runs/run_1112.sh $p; done
 set -ex
 PHASE=${1:-selj}
 SHARDS=${SHARDS:-3}

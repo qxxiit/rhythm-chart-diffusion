@@ -55,7 +55,7 @@ Periodically merge `dev` → `main` when stable (after each phase, say).
 
 - All training runs → wandb.
 - Use descriptive run names: `<phase>-<model>-<key-hp>` e.g. `p2-diffusion-cosine-100steps`.
-- Log results in `docs/EXPERIMENTS.md` after each significant run.
+- Log each significant run in this month's file under `docs/experiments/` (index: `docs/EXPERIMENTS.md`); run scripts go in `experiments/runs/`.
 
 ## Meeting Notes
 

@@ -17,7 +17,7 @@
 #   table  (seconds) each setting against run_1112, the diagnostics, the results table
 #   nohu   (~25 min, not in the chain) F's passes without the long notes topped up to the
 #          human share (no --hold-share oracle --hold-up): the model's own long notes only
-# All: for p in deaf rt1 lg0 lt1 table; do sh run_1115.sh $p; done
+# All: for p in deaf rt1 lg0 lt1 table; do sh experiments/runs/run_1115.sh $p; done
 set -ex
 PHASE=${1:-deaf}
 SHARDS=${SHARDS:-3}

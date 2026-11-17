@@ -19,7 +19,7 @@
 #   table    (seconds)
 #   control  (~1 h 15 min) outputs/ft-v1: the same steps without the stems
 #   vtable   (seconds) val_ce of full-v4, ft-v1, stems-v1
-# All: for p in wait train draw passes judges table control vtable; do sh run_1123.sh $p; done
+# All: for p in wait train draw passes judges table control vtable; do sh experiments/runs/run_1123.sh $p; done
 set -ex
 PHASE=${1:-wait}
 SHARDS=${SHARDS:-3}

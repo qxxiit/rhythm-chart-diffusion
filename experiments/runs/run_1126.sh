@@ -15,7 +15,7 @@
 #   raw        (~2 h 40 min) the two draws, three processes each
 #   rawjudges  (~1 h 40 min) fresh judges on both draws, both views, both trunks
 #   table      (seconds)
-# All: for p in trunk raw rawjudges table; do sh run_1126.sh $p; done
+# All: for p in trunk raw rawjudges table; do sh experiments/runs/run_1126.sh $p; done
 set -ex
 PHASE=${1:-trunk}
 SHARDS=${SHARDS:-3}

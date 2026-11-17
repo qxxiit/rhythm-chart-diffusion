@@ -13,7 +13,7 @@
 #   passes  (~50 min) the two, three processes each
 #   judges  (~50 min) full- and holds-view judges on each
 #   table   (seconds)
-# All: for p in passes judges table; do sh run_1129.sh $p; done
+# All: for p in passes judges table; do sh experiments/runs/run_1129.sh $p; done
 set -ex
 PHASE=${1:-passes}
 SHARDS=${SHARDS:-3}

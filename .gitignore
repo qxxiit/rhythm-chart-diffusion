@@ -116,6 +116,7 @@ data/*.zip
 outputs/
 checkpoints/
 runs/
+!experiments/runs/
 lightning_logs/
 
 # Experiment tracking

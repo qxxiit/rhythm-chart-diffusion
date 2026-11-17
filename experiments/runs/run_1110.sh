@@ -9,7 +9,7 @@
 #   deaf    rhythm without the audio (not run when rhythm leaves little)
 #   full    everything: the views' reference
 #   table   results_1110.md: the steps of the nest with their intervals (judge_table.py)
-# All: for p in taps rhythm deaf full table; do sh run_1110.sh $p; done
+# All: for p in taps rhythm deaf full table; do sh experiments/runs/run_1110.sh $p; done
 # Time: 2 epochs (run_1109: epoch 2 within 0.002 of epoch 3 in three judges of four, 0.008 in
 # the fourth, the learning rate still at a quarter there), 2 folds unless the interval holds
 # 0.65 (where a step is skipped); ~10 min a judge, ~45 min in all.

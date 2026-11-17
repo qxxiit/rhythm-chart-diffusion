@@ -13,7 +13,7 @@
 #   judges  (~2 h) fresh full- and rhythm-view judges (seed 1, --sr view, 2 epochs, 5 folds)
 #           on the system's 240 songs and on this run's
 #   table   (seconds) the steps, the diagnostics, the results table
-# All: for p in draw passes judges table; do sh run_1121.sh $p; done
+# All: for p in draw passes judges table; do sh experiments/runs/run_1121.sh $p; done
 set -ex
 PHASE=${1:-draw}
 SHARDS=${SHARDS:-3}

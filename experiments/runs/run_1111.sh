@@ -10,7 +10,7 @@
 #   judge   (~10 min) its own judge, as srv_full (--sr view, 2 epochs, the same 2 folds)
 #   check   (seconds) the step against srv_full on the same songs; the diagnostics judge and
 #           the results table against the cosine run
-# All: for p in alike judge check; do sh run_1111.sh $p; done
+# All: for p in alike judge check; do sh experiments/runs/run_1111.sh $p; done
 set -ex
 PHASE=${1:-alike}
 SHARDS=${SHARDS:-3}

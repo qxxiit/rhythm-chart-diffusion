@@ -10,7 +10,7 @@
 #   deaf    rhythm without the audio (not run when rhythm leaves little)
 #   full    everything, with the human chart's SR: the views' reference
 #   table   results_1109.md (scripts/judge_table.py)
-# All: for p in taps rhythm deaf full table; do sh run_1109.sh $p; done
+# All: for p in taps rhythm deaf full table; do sh experiments/runs/run_1109.sh $p; done
 # Time: each judge stops after 2 of its 5 folds once its auc and 95% interval over songs lie
 # below 0.65, between 0.65 and 0.86, or above 0.86 (--stop-bounds; ~14 min a judge then, ~35
 # without), and scores the held-out songs after every epoch (--eval-epochs, ~4% more) to learn

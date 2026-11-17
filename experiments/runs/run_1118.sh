@@ -11,7 +11,7 @@
 #   passes  (~10 min) F's passes (their lanes at temperature 1 too)
 #   judges  (~25 min) fresh full-view and taps-view judges as run_1116's
 #   table   (seconds) the steps run_1112 -> lanes at 1 -> bias 0.2 -> bias 0.5, both views
-# All: for p in draw passes judges table; do sh run_1118.sh $p; done
+# All: for p in draw passes judges table; do sh experiments/runs/run_1118.sh $p; done
 set -ex
 PHASE=${1:-draw}
 SHARDS=${SHARDS:-3}

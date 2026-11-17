@@ -19,7 +19,7 @@
 #   answers  (~1 h 50 min) F + the rest guard + --answer -1 / -2 on the system's draw (240),
 #            fresh judges on each
 #   table    (seconds)
-# All: for p in train draw passes judges answers table; do sh run_1125.sh $p; done
+# All: for p in train draw passes judges answers table; do sh experiments/runs/run_1125.sh $p; done
 set -ex
 PHASE=${1:-train}
 SHARDS=${SHARDS:-3}

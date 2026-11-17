@@ -8,7 +8,7 @@
 #   judge   (~45 min) its own judge
 #   diag    (seconds) the diagnostics judge with F rescored
 #   table   (seconds) results.md with it
-# All four: for p in cosine judge diag table; do sh run_1108.sh $p; done
+# All four: for p in cosine judge diag table; do sh experiments/runs/run_1108.sh $p; done
 # SHARDS=N (default 3): the drawing and the passes run as N processes sharing the GPU, each on
 # the songs whose index is K mod N (evaluate.py --shard; the charts are the one-process run's),
 # then scripts/merge_shards.py puts them together. One process left the GPU mostly idle (11-08:
@@ -21,7 +21,7 @@ T=${T:-outputs/full-v4/eval_val_songs_continue_random_T128_fwd_ref2t0.5_lbq0.1_o
 TAG_F=_hu-oracle_rc0kh1_sc1_cs4kb_cp0l8_al2k4_lt0.5_fh0.5_rb1_li0.5a_ujmgi_cc2_st-oracle_lg2
 F=${F:-$T$TAG_F}
 D=outputs/run_1105
-[ -d "$F" ] || { echo "no F=$F: give it, F=... sh run_1108.sh $PHASE"; exit 2; }
+[ -d "$F" ] || { echo "no F=$F: give it, F=... sh experiments/runs/run_1108.sh $PHASE"; exit 2; }
 # the names evaluate.py gives these runs (as run_1107's ctrl: base_ref and sweep_ref)
 COS=outputs/full-v4/eval_val_songs_continue_random_T128_cosine_fwd_ref2t0.5_lbq0.1_og1_ot2.7-5-0.35_st-oracle_lg2_s0
 COSF=$COS$TAG_F

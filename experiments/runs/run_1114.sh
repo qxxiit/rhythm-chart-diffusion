@@ -19,7 +19,7 @@
 #   judges  (~13 min) a fresh judge as run_1112's s1_sel (seed 1, --sr view, all 5 folds of
 #           the 120 songs) on the run with its lanes chosen
 #   table   (seconds) the steps (cosine, windows chosen, lanes chosen too) and the diagnostics
-# All: for p in selj lanes judges table; do sh run_1114.sh $p; done
+# All: for p in selj lanes judges table; do sh experiments/runs/run_1114.sh $p; done
 set -ex
 PHASE=${1:-selj}
 SHARDS=${SHARDS:-3}
