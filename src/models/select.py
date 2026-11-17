@@ -10,7 +10,9 @@ trained on the chosen run with another seed.
 
     WindowJudge(dir, device)          the fold judges of a judge.py --save-models run
     .scorer(key, s, draws, seed)      score(cands, mel, b) -> logits [k] for the song key, or
-                                      None when no fold judge held it out
+                                      None when no kept fold judge held it out; a song
+                                      none of its folds saw (another split, e.g. the test
+                                      songs) by the kept fold stable_hash(key) % kept
     combined_scorer(scorers, gaps)    several judges' scorers as one (evaluate.py
                                       --select-judge J1 J2 ...)
 """
@@ -34,6 +36,7 @@ class WindowJudge:
         self.device = device
         self.view = self.meta["view"]
         self.fold_of = {k: int(f) for k, f in self.meta["fold_of"].items()}
+        self.saved = [int(f) for f in self.meta.get("saved", sorted(set(self.fold_of.values())))]
         self._models: dict[int, Judge] = {}
 
     def _model(self, fold: int) -> Judge:
@@ -52,7 +55,9 @@ class WindowJudge:
         and holds views the mean over draws of the random lanes. Higher looks more
         generated."""
         fold = self.fold_of.get(key)
-        if fold is None:
+        if fold is None and self.saved:     # none of the folds saw it: any kept one (11-17)
+            fold = self.saved[stable_hash(key) % len(self.saved)]
+        if fold is None or fold not in self.saved:
             return None
         judge = self._model(fold)
         h, calls = stable_hash(key), [0]

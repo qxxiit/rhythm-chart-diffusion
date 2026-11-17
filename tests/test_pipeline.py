@@ -1271,6 +1271,7 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     # the fold judges kept, scoring as they did; a drawing that chooses by them
     from src.data.beat_grid import from_timing_points
     from src.data.mel import open_mel
+    from src.models.judge import stable_hash
     from src.models.select import WindowJudge
     assert judge.main([*args, "--name", "keep", "--save-models"]) == 0
     keep = tmp_path / "judge" / "keep"
@@ -1290,7 +1291,13 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     human = judge.window(z["tokens"].reshape(-1, K), start)
     score = WindowJudge(keep, torch.device("cpu")).scorer(key, sr_human)
     assert abs(float(score([human], mel, beat)[0]) - float(seen["logit"])) < 0.05
-    assert WindowJudge(keep, torch.device("cpu")).scorer("no such song", 3.0) is None
+    other = WindowJudge(keep, torch.device("cpu"))     # a song of another split: a kept fold
+    unseen = other.scorer("no such song", 3.0)
+    assert unseen is not None and np.isfinite(unseen([human], mel, beat)).all()
+    assert other.saved[stable_hash("no such song") % 2] in other._models
+    unkept = [k for k, f in meta["fold_of"].items() if f not in meta["saved"]]
+    for k in unkept:                                  # its own song in a fold not kept: none
+        assert other.scorer(k, 3.0) is None
     assert judge.main([*args, "--name", "pick", "--view", "rhythm", "--sr", "human",
                        "--save-models"]) == 0
     pick = tmp_path / "judge" / "pick"
