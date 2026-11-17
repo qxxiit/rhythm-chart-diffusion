@@ -2135,26 +2135,45 @@ DENSE_LEN = D // 2         # cells: the longest long note dense_taps turns into 
 DENSE_ONSETS = 4.0         # onsets a beat (taps and heads, a beat either side) that make busy
 
 
+def _hold_end(song: np.ndarray, r: int, k: int) -> int | None:
+    """The row of the HOLD_END of the long note whose head is (r, k); None if it has none."""
+    e = r + 1
+    while e < len(song) and song[e, k] == HOLD_BODY:
+        e += 1
+    return e if e < len(song) and song[e, k] == HOLD_END else None
+
+
 def dense_taps(song: np.ndarray, n_cells: int, *, max_len: int = DENSE_LEN,
-               density: float = DENSE_ONSETS) -> int:
+               density: float = DENSE_ONSETS, repeats: bool = False) -> int:
     """Short long notes where the chart is busy become taps; returns how many. A long note of
     at most max_len cells whose head has density+ onsets a beat around it (taps and long-note
     heads, chords counted, within a beat either side) becomes a tap at its head, its body and
-    end EMPTY. Onsets stay, so the rhythm does too."""
+    end EMPTY. repeats (2026-11-17 (3)): only those next to another such long note in their
+    lane (the lane's onset before or after, within a beat head to head), a lone one stays.
+    Onsets stay, so the rhythm does too."""
     on = np.isin(song[:n_cells], (TAP, HOLD_START))
     busy = np.convolve(on.sum(axis=1), np.ones(2 * D + 1), mode="same") / 2.0 >= density
-    changed = 0
-    rows, lanes = np.nonzero((song[:n_cells] == HOLD_START) & busy[:, None])
-    for r, k in zip(rows.tolist(), lanes.tolist(), strict=True):
-        e = r + 1
-        while e < len(song) and song[e, k] == HOLD_BODY:
-            e += 1
-        if e < len(song) and song[e, k] == HOLD_END and e - r <= max_len:
-            song[r, k] = TAP
-            song[r + 1:e + 1, k] = EMPTY
-            changed += 1
-    STATS["dense_taps"] += changed
-    return changed
+    todo = []
+    for k in range(song.shape[1]):
+        rows = np.flatnonzero(on[:, k])
+        short = np.zeros(len(rows), dtype=bool)
+        for i, r in enumerate(rows.tolist()):
+            if song[r, k] == HOLD_START:
+                e = _hold_end(song, r, k)
+                short[i] = e is not None and e - r <= max_len
+        near = np.zeros(len(rows), dtype=bool)
+        if repeats and len(rows) > 1:
+            pair = short[:-1] & short[1:] & (np.diff(rows) <= D)
+            near[:-1] |= pair
+            near[1:] |= pair
+        keep = short & busy[rows] & (near if repeats else True)
+        todo += [(r, k) for r in rows[keep].tolist()]
+    for r, k in todo:
+        e = _hold_end(song, r, k)
+        song[r, k] = TAP
+        song[r + 1:e + 1, k] = EMPTY
+    STATS["dense_taps"] += len(todo)
+    return len(todo)
 
 # Chords over the guidelines' cap. The ranking criteria ask Easy and Normal 4K charts for at
 # most 2 notes at a time and Hard for 3, long notes held counting (src/evaluation/playability).
@@ -2488,7 +2507,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               untangle_insane: bool = False, recheck: float | None = None,
               recheck_add: float | None = None, rest_max_run: float | None = None,
               answer: float | None = None, answer_unit: int = 1,
-              answer_lanes: str = "draw", dense: float | None = None) -> np.ndarray:
+              answer_lanes: str = "draw", dense: float | None = None,
+              dense_repeats: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
@@ -2502,7 +2522,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     True in all; its lanes as the carry's), answer_beats (answer: the bias; answer_unit
     beats a unit; answer_lanes its lanes, drawn at lane_temperature with lane_guidance),
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), dense_taps
-    (dense: where hold_share, the song's target, is under it), fill_holes
+    (dense: where hold_share, the song's target, is under it; dense_repeats: its repeats),
+    fill_holes
     (holes: the threshold), rest_bars (rest: the threshold; rest_max_run: its max_run),
     thin_bars (light: the threshold; light_alike: its look-alikes thinned
     alike), recheck_notes (recheck: the threshold below which a row's taps go;
@@ -2560,7 +2581,7 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if dense is not None and hold_share is not None and hold_share < dense:
-        dense_taps(song, n_cells)
+        dense_taps(song, n_cells, repeats=dense_repeats)
     if holes is not None:
         fill_holes(model, song, frames, s, beat_len, n_cells, threshold=holes,
                    release_gap=release_gap)

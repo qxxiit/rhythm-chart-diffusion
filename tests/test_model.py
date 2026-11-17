@@ -416,6 +416,33 @@ def test_dense_taps_turns_short_long_notes_where_the_chart_is_busy_into_taps() -
                                   else song[None])) == 0
 
 
+def test_dense_taps_repeats_only_takes_short_long_notes_next_to_another() -> None:
+    from src.models.sampler import dense_taps
+    song = np.zeros((10 * D, K), dtype=np.int64)
+    song[0:6 * D:3, 0] = TAP                            # 1/4 taps for six beats: busy
+    song[D:6 * D:6, 1] = TAP
+
+    def hold(r, k, n):
+        song[r, k] = 2
+        song[r + 1:r + n, k] = 3
+        song[r + n, k] = 4
+
+    hold(D + 1, 2, 3)                                   # a repeat: these two become taps
+    hold(D + 7, 2, 3)
+    hold(2 * D + 5, 3, 12)                              # a long one, then a short one:
+    hold(3 * D + 8, 3, 3)                               # alone among short ones, it stays
+    hold(4 * D + 1, 2, 3)                               # the next one a beat and more on
+    hold(5 * D + 2, 2, 3)
+    before = np.isin(song, (TAP, 2)).copy()
+    assert dense_taps(song, len(song), repeats=True) == 2
+    assert np.array_equal(np.isin(song, (TAP, 2)), before)
+    assert song[D + 1, 2] == TAP and song[D + 7, 2] == TAP and not song[D + 8:D + 11, 2].any()
+    assert song[3 * D + 8, 3] == 2 and song[4 * D + 1, 2] == 2 and song[5 * D + 2, 2] == 2
+    assert song[2 * D + 5, 3] == 2
+    assert len(grammar_violations(song[None])) == 0
+    assert dense_taps(song, len(song)) == 3             # all of them: the three short ones left
+
+
 def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
     from src.models import sampler
     from src.models.sampler import forward_lanes, refine_lanes, unit_temperature

@@ -174,10 +174,11 @@ python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results t
 python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
                                        #    sharing the GPU, the songs shared by length; the charts
                                        #    are the one-process run's)
-python scripts/evaluate.py --from-charts R --hold-share oracle ... --dense-taps T
+python scripts/evaluate.py --from-charts R --hold-share oracle ... --dense-taps T [--dense-repeats]
                                        # ✅ in songs whose hold share target is under T, long
                                        #    notes of half a beat or less where the chart is
                                        #    busy (4+ onsets a beat) become taps (dense_taps)
+                                       #    --dense-repeats: only those next to another in their lane
 python scripts/evaluate.py --from-charts R --relane ... --lane-inner-temp T [--lane-unit 12]
                                        # ✅ the lanes drawn again, each unit's first onset row at
                                        #    --lane-temp, its later ones at T (unit_temperature)

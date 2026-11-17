@@ -496,6 +496,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="after tidy_holds, in songs whose --hold-share target is under this, "
                          "long notes of half a beat or less where the chart has 4+ onsets a "
                          "beat become taps (sampler.dense_taps); --from-charts only (tag dt<x>)")
+    ap.add_argument("--dense-repeats", action="store_true",
+                    help="--dense-taps: only the short long notes next to another in their lane "
+                         "within a beat (sampler.dense_taps repeats; tag dt<x>r)")
     ap.add_argument("--answer", type=float, default=None,
                     help="answer_beats after align_alike: every beat offered the rhythm of the "
                          "one before it, taken when its score + this bias (nats a beat) "
@@ -735,6 +738,9 @@ def main(argv: list[str] | None = None) -> int:
         print("--dense-taps is a pass on saved charts by the songs' --hold-share: give "
               "--from-charts and --hold-share", file=sys.stderr)
         return 2
+    if a.dense_repeats and a.dense_taps is None:
+        print("--dense-repeats needs --dense-taps", file=sys.stderr)
+        return 2
     if a.rest_max_run is not None and a.rest is None:
         print("--rest-max-run needs --rest", file=sys.stderr)
         return 2
@@ -792,7 +798,8 @@ def main(argv: list[str] | None = None) -> int:
             f"_cp{a.copy_bias:g}" + (f"l{a.copy_min_lag}" if a.copy_min_lag > 1 else "")
             if a.copy_bias is not None else "") + alike_tag + answer_tag + (
             f"_lt{a.ln_tidy:g}" if a.ln_tidy is not None else "") + (
-            f"_dt{a.dense_taps:g}" if a.dense_taps is not None else "") + (
+            f"_dt{a.dense_taps:g}" + ("r" if a.dense_repeats else "")
+            if a.dense_taps is not None else "") + (
             f"_fh{a.fill_holes:g}" if a.fill_holes is not None else "") + (
             f"_rb{a.rest:g}" + (f"m{a.rest_max_run:g}" if a.rest_max_run is not None else "")
             if a.rest is not None else "") + light_tag + recheck_tag + (
@@ -909,7 +916,7 @@ def main(argv: list[str] | None = None) -> int:
                     or a.answer is not None or a.dense_taps is not None:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    rest_max_run=a.rest_max_run, answer=a.answer,
-                                   dense=a.dense_taps,
+                                   dense=a.dense_taps, dense_repeats=a.dense_repeats,
                                    answer_unit=a.answer_unit, answer_lanes=a.answer_lanes,
                                    holds=a.refine_holds, hold_share=share, hold_up=a.hold_up,
                                    copy_bias=a.copy_bias, light=a.light,
@@ -1086,6 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
                "loud_bias": a.loud_bias, "loud_side": a.loud_side if a.loud_bias else None,
                "onset_bias": a.onset_bias, "onset_taper": a.onset_taper, "rest": a.rest,
                "rest_max_run": a.rest_max_run, "answer": a.answer, "dense_taps": a.dense_taps,
+               "dense_repeats": a.dense_repeats,
                "answer_unit": a.answer_unit if a.answer is not None else None,
                "answer_lanes": a.answer_lanes if a.answer is not None else None,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,

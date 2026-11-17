@@ -4581,6 +4581,28 @@ the LN charts need their short long notes, as the human charts have them. A mild
 (not run): only the repeats become taps (a short long note followed in its lane within a beat
 by another), with the gate at 0.20 (85% of the tap-chart songs, 9% of the LN-chart songs).
 
+### 2026-11-17 (3) · Only the repeats become taps (predictions)
+
+run_1128's --dense-taps 0.15 halved the tap-chart songs' repeats (2.6% -> 1.3%, the human 0.6%)
+and left the LN charts alone, the full view level, but the holds view leaned against it
+(+0.029 [-0.000, +0.062]): in a song it touches, no short long note is left in a busy part,
+where the human tap charts keep some (4.6% of the busy notes) and almost never repeat one in
+its lane. The user: only the repeats. `--dense-repeats`: dense_taps takes only a short long
+note next to another in its lane (the lane's onset before or after, within a beat head to
+head); a lone one stays. `run_1129.sh`: on the system's draw (240) with the rest guard and F's
+passes, the gate at 0.15 (rp15) and 0.20 (rp20: 85% of the tap-chart songs, 9% of the
+LN-chart songs); fresh full- and holds-view judges against rgf's and dt15's.
+
+Predictions (written before it ran; the tap-chart and LN-chart songs as in 2026-11-17 (2)):
+1. rp15: the tap-chart songs' repeats 1.1-1.5% (dt15's 1.3%), their short long notes in busy
+   parts 5-7% (dt15 4.2%, the human 4.6%, rgf 8.5%); judges against rgf: full -0.01 to +0.01,
+   holds -0.02 to +0.02; against dt15: holds -0.03 to 0.
+2. rp20: the tap-chart songs' repeats 0.6-1.1%, songs with 5%+ 3-6% (rgf 17%, dt15 8%); the
+   LN-chart songs' repeats 14-15.5% (rgf 15.8%); judges against rgf: full -0.01 to +0.02,
+   holds -0.02 to +0.03.
+Of the two, the one with the fewer tap-chart repeats whose holds view against rgf is not over 0
+at 95% replaces dt15 in the system; if neither, dt15 stays.
+
 ## Phase 3 Ablation A: Diffusion Design
 
 _TBD — target Oct 14, 2026._

@@ -1364,6 +1364,11 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     with open(dense / "per_song.csv", newline="") as f:
         assert all(int(float(r["dense_taps"])) >= 0 for r in csv.DictReader(f))
     assert evaluate.main([*common, "--from-charts", str(run), "--dense-taps", "1"]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3",
+                          "--dense-taps", "1", "--dense-repeats"]) == 0
+    assert next(run.parent.glob(run.name + "_*dt1r"), None) is not None
+    assert evaluate.main([*common, "--from-charts", str(run), "--hold-share", "0.3",
+                          "--dense-repeats"]) == 2
     assert evaluate.main([*common, "--hold-share", "0.3", "--dense-taps", "1"]) == 2
 
 
