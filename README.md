@@ -40,10 +40,10 @@ A sharper judge, from the trunk of the model that also hears the stems, reads th
 
 ### The system
 
-`sh scripts/system.sh test 0` makes the system's charts for a split's songs (DECISIONS through 2026-11-18):
+`sh scripts/system.sh test 0` makes the system's charts for a split's songs (DECISIONS through 2026-11-19):
 
 1. **Draw.** full-v4, each window drawn four times; a judge that sees the long notes (`sel_holds`) keeps the draw it finds most human. Cosine schedule (128 steps), the lanes decided row by row and refined twice, quiet bars thinned, fewer note starts where nothing in the music starts, a slight push towards long notes.
-2. **Passes on the whole song.** Rhythms carried over and sections that come back copied, bars that sound alike aligned, chords on the strong sounds, long notes up to the human chart's share, rests and holes, light bars in Easy and Normal, jacks untangled, the chord cap in Easy, no long empty stretch, in songs whose human chart is mostly taps a short long note repeated in its lane in a busy part made a tap, and long notes let go as the next note comes.
+2. **Passes on the whole song.** Rhythms carried over and sections that come back copied, bars that sound alike aligned, chords on the strong sounds, long notes up to the human chart's share, rests and holes, light bars in Easy and Normal, jacks untangled, the chord cap in Easy, no long empty stretch, in songs whose human chart is mostly taps a short long note repeated in its lane in a busy part made a tap, bars that repeat an earlier bar's rhythm mirrored as often as in the human charts, and long notes let go as the next note comes.
 
 The choosing judge is trained first on a plain cosine draw of the val songs (`python scripts/judge.py --ckpt outputs/full-v4/best.pt --ai <the draw> --view holds --sr human --epochs 2 --save-models --name sel_holds`; `outputs/` is not in git). The run scripts of every experiment are in [`experiments/runs/`](experiments/runs/) with a one-line outcome each.
 
