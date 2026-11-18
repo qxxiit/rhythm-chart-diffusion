@@ -1388,6 +1388,19 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     late_charts = np.load(late / "charts.npz")
     for r in relaned:
         assert len(grammar_violations(late_charts[r["key"]])) == 0
+    assert evaluate.main([*common, "--from-charts", str(run), "--chord-share", "oracle",
+                          "--chord-share-step", "0.5", "--chord-share-temp", "1",
+                          "--mirror-bars"]) == 0
+    soft = next(run.parent.glob(run.name + "_*choracles0.5t1_mb*"))
+    with open(soft / "per_song.csv", newline="") as f:
+        assert all(int(float(r["bars_mirrored"])) >= 0 for r in csv.DictReader(f))
+    soft_charts = np.load(soft / "charts.npz")
+    for r in relaned:
+        assert len(grammar_violations(soft_charts[r["key"]])) == 0
+    assert evaluate.main([*common, "--mirror-bars"]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--chord-share-step", "0.5"]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--chord-share", "oracle",
+                          "--chord-share-step", "1.5"]) == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--hold-down"]) == 2
     assert evaluate.main([*common, "--chord-share", "oracle"]) == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--chord-share", "1.5"]) == 2

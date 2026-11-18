@@ -110,7 +110,7 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "select_windows": 0, "select_gain": 0.0, "lane_select_windows": 0,
          "lane_select_gain": 0.0, "lane_seams": 0, "rest_bars_kept": 0, "answered_beats": 0,
          "dense_taps": 0, "held_down": 0, "releases_snapped": 0, "chords_thinned": 0,
-         "chords_added": 0}
+         "chords_added": 0, "bars_mirrored": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -2256,7 +2256,8 @@ def _position_weight(cell: np.ndarray) -> np.ndarray:
 
 def chord_share_to(song: np.ndarray, n_cells: int, target: float, strength: np.ndarray,
                    times: np.ndarray, cell_offset: int, *, tol: float = 0.05,
-                   release_gap: int = 0, max_beats: float = 0.25) -> int:
+                   release_gap: int = 0, max_beats: float = 0.25, step: float = 1.0,
+                   temperature: float | None = None, rng=None) -> int:
     """The share of onset rows with 2+ notes brought to the song's target when it is off by
     more than tol; returns how many rows changed. A row's weight: its place (_position_weight:
     downbeat, beat, half beat) plus the z of its onset strength over the onset rows. Over:
@@ -2264,7 +2265,10 @@ def chord_share_to(song: np.ndarray, n_cells: int, target: float, strength: np.n
     note starts stay) until one note is left. Under: the strongest single notes get a tap,
     in the mirrored lane (3 - lane) if it makes no jack within max_beats (at 180 BPM; as
     strong_chords' STRONG_JACK_BEATS), else
-    in the lane that is freest (_jack_free_lane). The rows with notes stay."""
+    in the lane that is freest (_jack_free_lane). The rows with notes stay.
+    step (2026-11-19 (1)): only that part of the way to the target; temperature: the rows
+    taken in an order drawn by their weight (Gumbel: weight / temperature plus noise, from
+    rng) rather than strictly by it, so the chords do not all end up on the strongest rows."""
     onset = np.isin(song[:n_cells], (TAP, HOLD_START))
     size = onset.sum(axis=1)
     rows = np.flatnonzero(size)
@@ -2275,8 +2279,17 @@ def chord_share_to(song: np.ndarray, n_cells: int, target: float, strength: np.n
     n_chord = int((size[rows] >= 2).sum())
     share = n_chord / len(rows)
     changed = 0
+    if temperature is not None:                       # an order drawn by weight, not ranked
+        noise = (rng if rng is not None else np.random.default_rng(0)).gumbel(size=n_cells)
+        key = weight / max(temperature, 1e-6)
+        down = lambda r: key[r] - noise[r]            # noqa: E731  the weakest likely first
+        up = lambda r: -key[r] - noise[r]             # noqa: E731  the strongest likely first
+    else:
+        down = lambda r: (weight[r], r)               # noqa: E731
+        up = lambda r: (-weight[r], r)                # noqa: E731
     if share > target + tol:
-        for r in sorted(rows[size[rows] >= 2].tolist(), key=lambda r: (weight[r], r)):
+        target = share + step * (target - share)
+        for r in sorted(rows[size[rows] >= 2].tolist(), key=down):
             if n_chord <= target * len(rows):
                 break
             taps = np.flatnonzero(song[r] == TAP).tolist()
@@ -2290,8 +2303,9 @@ def chord_share_to(song: np.ndarray, n_cells: int, target: float, strength: np.n
                 changed += 1
         STATS["chords_thinned"] += changed
     elif share < target - tol:
+        target = share + step * (target - share)
         limit = max_beats * BEAT_180 + 1e-6
-        for q in sorted(rows[size[rows] == 1].tolist(), key=lambda r: (-weight[r], r)):
+        for q in sorted(rows[size[rows] == 1].tolist(), key=up):
             if n_chord >= target * len(rows):
                 break
             k = int(np.flatnonzero(onset[q])[0])
@@ -2622,6 +2636,77 @@ def _beat_len_fn(timing_points, cell_offset: int):
     return beat_len
 
 
+# Mirrored bars (2026-11-19 (1)). Of the bar pairs 1, 2 and 4 bars apart with the same onset
+# rows, the human charts of the 240 val songs copy the earlier bar's lanes mirrored (lane k ->
+# 3 - k) exactly in 4.4%, 6.0% and 6.8%, the system in 2.1%, 2.5% and 2.8%; near (75%+ of the
+# notes) 12-14% against 9-10%. The same lanes again are as often in both (3-7%).
+MIRROR_SHARE = {4: 0.068, 2: 0.060, 1: 0.044}      # lag in bars: the human charts' exact share
+
+
+def _bar_closed(song: np.ndarray, a: int) -> bool:
+    """No long note crosses the edges of the bar that starts at row a."""
+    edges = [a, a + BAR] if a + BAR < len(song) else [a]
+    return not np.isin(song[edges], (HOLD_BODY, HOLD_END)).any()
+
+
+def _near(a: np.ndarray, b: np.ndarray) -> float:
+    """Of b's onsets, the share a has at the same row and lane."""
+    oa, ob = np.isin(a, (TAP, HOLD_START)), np.isin(b, (TAP, HOLD_START))
+    return float((oa & ob).sum() / max(1, ob.sum()))
+
+
+def mirror_bars(song: np.ndarray, n_cells: int, s_audio: np.ndarray | None = None, *,
+                shares: dict | None = None, rng=None) -> int:
+    """Bars that repeat an earlier bar's rhythm made its mirror (lane k -> 3 - k), as often
+    as the human charts do it; returns how many bars changed. For each lag (bars apart, 4
+    first), of the pairs with the same onset rows (3+ of them) the share already mirrored is
+    brought up to shares[lag] (MIRROR_SHARE): the later bar takes the earlier bar's tokens
+    mirrored, both bars holding their long notes inside, the pairs whose audio is most alike
+    first (s_audio [n_bars, n_bars], else in an order drawn from rng), a pair already near
+    (75%+) the same or mirrored left as it is, a bar changed once and a bar copied from
+    not changed. The rhythm stays; the
+    chords and long notes of the later bar become the earlier bar's."""
+    shares = MIRROR_SHARE if shares is None else shares
+    rng = rng if rng is not None else np.random.default_rng(0)
+    on = np.isin(song[:n_cells], (TAP, HOLD_START)).any(axis=1)
+    n_bars = n_cells // BAR
+    bar = lambda b: song[b * BAR:(b + 1) * BAR]          # noqa: E731
+    rows = [on[b * BAR:(b + 1) * BAR] for b in range(n_bars)]
+    changed: set[int] = set()                         # bars mirrored
+    sources: set[int] = set()                         # bars copied from: they stay
+    for lag in sorted(shares, reverse=True):
+        pairs, exact, total = [], 0, 0
+        for b in range(lag, n_bars):
+            if rows[b].sum() < 3 or not np.array_equal(rows[b], rows[b - lag]):
+                continue
+            total += 1
+            src, dst = bar(b - lag), bar(b)
+            if np.array_equal(src[:, ::-1], dst):
+                exact += 1
+            elif max(_near(src, dst), _near(src[:, ::-1], dst)) < 0.75:
+                pairs.append(b)
+        want = int(round(shares[lag] * total)) - exact
+        todo = [b for b in pairs if _bar_closed(song, b * BAR)
+                and _bar_closed(song, (b - lag) * BAR)]
+        if want <= 0 or not todo:
+            continue
+        if s_audio is not None and len(s_audio) >= n_bars:
+            todo.sort(key=lambda b: (-float(s_audio[b, b - lag]), b))
+        else:
+            todo = [todo[i] for i in rng.permutation(len(todo))]
+        for b in todo:
+            if want <= 0:
+                break
+            if b in changed or b in sources or b - lag in changed:
+                continue
+            song[b * BAR:(b + 1) * BAR] = bar(b - lag)[:, ::-1].copy()
+            changed.add(b)
+            sources.add(b - lag)
+            want -= 1
+    STATS["bars_mirrored"] += len(changed)
+    return len(changed)
+
+
 def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_points,
               cell_offset: int, n_cells: int, *, holds: bool = False,
               hold_share: float | None = None, hold_up: bool = False,
@@ -2645,7 +2730,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               answer: float | None = None, answer_unit: int = 1,
               answer_lanes: str = "draw", dense: float | None = None,
               dense_repeats: bool = False, chord_share: float | None = None,
-              hold_down_to: bool = False, snap: int | None = None) -> np.ndarray:
+              hold_down_to: bool = False, snap: int | None = None, mirror: bool = False,
+              chord_step: float = 1.0, chord_temperature: float | None = None) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
@@ -2660,7 +2746,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     beats a unit; answer_lanes its lanes, drawn at lane_temperature with lane_guidance),
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), dense_taps
     (dense: where hold_share, the song's target, is under it; dense_repeats: its repeats),
-    and after the chord cap chord_share_to (chord_share: the song's target), hold_down
+    mirror_bars (mirror: right after the copies and answers), and after the chord cap
+    chord_share_to (chord_share: the song's target; chord_step, chord_temperature), hold_down
     (hold_down_to: down to hold_share) and snap_releases (snap: max shift in cells), fill_holes
     (holes: the threshold), rest_bars (rest: the threshold; rest_max_run: its max_run),
     thin_bars (light: the threshold; light_alike: its look-alikes thinned
@@ -2716,6 +2803,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                                            release_gap=release_gap) \
             and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    if mirror:
+        mirror_bars(song, n_cells, s_audio, rng=rng)
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if dense is not None and hold_share is not None and hold_share < dense:
@@ -2739,7 +2828,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     if chord_share is not None:
         chord_share_to(song, n_cells, chord_share, onset_strength(mel, n_cells),
                        _row_times(timing_points, cell_offset, n_cells), cell_offset,
-                       release_gap=release_gap)
+                       release_gap=release_gap, step=chord_step,
+                       temperature=chord_temperature, rng=rng)
     if hold_down_to and hold_share is not None:
         hold_down(song, n_cells, hold_share)
     if snap is not None:

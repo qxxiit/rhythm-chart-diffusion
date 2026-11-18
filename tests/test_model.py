@@ -511,6 +511,62 @@ def test_chord_share_to_thins_the_weakest_chords_or_adds_mirrored_taps() -> None
     assert len(grammar_violations(add[None])) == 0
 
 
+def test_chord_share_to_goes_part_of_the_way_and_draws_its_order() -> None:
+    from src.models.sampler import chord_share_to
+    n = 16 * D
+    times = np.arange(n) * 25.0
+    strength = np.ones(n)
+    song = np.zeros((n, K), dtype=np.int64)
+    rows = np.arange(0, n, 6)
+    song[rows, 0] = TAP
+    song[rows[::2], 3] = TAP                            # share 0.5
+    half = song.copy()
+    assert chord_share_to(half, n, 0.2, strength, times, 0, step=0.5) > 0
+    size = np.isin(half, (TAP, 2)).sum(axis=1)
+    share = (size[size > 0] >= 2).mean()
+    assert 0.2 + 0.05 < share <= 0.35 + 1e-9                # half way: 0.35
+    ranked, drawn = song.copy(), song.copy()
+    chord_share_to(ranked, n, 0.2, strength, times, 0)
+    chord_share_to(drawn, n, 0.2, strength, times, 0, temperature=1.0,
+                   rng=np.random.default_rng(3))
+    sz = np.isin(drawn, (TAP, 2)).sum(axis=1)
+    assert (sz[sz > 0] >= 2).mean() <= 0.2 + 1e-9           # the target still reached
+    assert not np.array_equal(ranked, drawn)                # but other chords kept
+    kept = np.flatnonzero(np.isin(ranked, (TAP, 2)).sum(axis=1) >= 2)
+    kept_drawn = np.flatnonzero(sz >= 2)
+    assert (kept_drawn % (4 * D) == 0).mean() < (kept % (4 * D) == 0).mean()
+
+
+def test_mirror_bars_copies_an_earlier_bar_mirrored_where_the_rhythm_repeats() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import STATS, mirror_bars
+    n = 6 * BAR
+    song = np.zeros((n, K), dtype=np.int64)
+    rows = np.arange(0, BAR, 6)                         # 8 onsets a bar, the same in every bar
+    for b in range(6):
+        song[b * BAR + rows, (rows // 6 + b) % 4] = TAP     # a stair, shifted each bar
+    song[3 * BAR + 45] = song[3 * BAR + 42]             # bar 3: another rhythm
+    song[3 * BAR + 42] = 0
+    song[4 * BAR + 46, 2] = 2                           # bar 4 holds into bar 5
+    song[4 * BAR + 46 + 1:5 * BAR + 2, 2] = 3
+    song[5 * BAR + 2, 2] = 4
+    before = np.isin(song, (TAP, 2)).copy()
+    n0 = STATS["bars_mirrored"]
+    s_audio = np.eye(6)
+    s_audio[2, 1], s_audio[1, 0] = 0.9, 0.1             # bars 1-2 more alike than 0-1
+    assert mirror_bars(song.copy(), n, None, shares={1: 0.0}) == 0
+    one = song.copy()
+    assert mirror_bars(one, n, s_audio, shares={1: 0.5}) == 1     # 2 pairs fit: 0-1 and 1-2
+    assert np.array_equal(one[2 * BAR:3 * BAR], song[BAR:2 * BAR, ::-1])   # the alike pair
+    assert np.array_equal(one[BAR:2 * BAR], song[BAR:2 * BAR])
+    all_ = song.copy()
+    assert mirror_bars(all_, n, s_audio, shares={1: 1.0}) == 1    # 0-1 can't: bar 1 the source
+    assert STATS["bars_mirrored"] - n0 == 2
+    assert np.array_equal(np.isin(all_, (TAP, 2)).any(axis=1), before.any(axis=1))
+    assert np.array_equal(all_[3 * BAR:], song[3 * BAR:])         # other rhythm, the hold
+    assert len(grammar_violations(all_[None])) == 0
+
+
 def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
     from src.models import sampler
     from src.models.sampler import forward_lanes, refine_lanes, unit_temperature

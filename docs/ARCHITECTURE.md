@@ -174,6 +174,10 @@ python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results t
 python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
                                        #    sharing the GPU, the songs shared by length; the charts
                                        #    are the one-process run's)
+python scripts/evaluate.py --from-charts R ... --chord-share oracle [--chord-share-step S]
+    [--chord-share-temp T] [--mirror-bars]
+                                       # ✅ the chord share part of the way, in a drawn order;
+                                       #    bars mirrored where the rhythm repeats (mirror_bars)
 sh scripts/system.sh [SPLIT] [N]      # ✅ the system as decided: the draw chosen by sel_holds,
                                        #    then the passes (outputs/system/SPLIT_nN.path)
 python scripts/evaluate.py --from-charts R --hold-share oracle ... --dense-taps T [--dense-repeats]

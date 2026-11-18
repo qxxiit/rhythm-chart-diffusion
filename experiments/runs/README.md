@@ -42,3 +42,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1128` | 11/17 | short long notes where the chart is busy become taps | `--dense-taps 0.15` joins the system (at the edge) | 2026-11-17 (2) |
 | `run_1129` | 11/17 | only the repeats become taps | `--dense-taps 0.2 --dense-repeats` replaces 0.15: the holds view's cost halved | 2026-11-17 (3) |
 | `run_1130` | 11/18 | the chord share to the human chart's; releases snapped to the next note | `--snap-releases 2` joins the system; the chord share not taken (chords too exactly on the accents) | 2026-11-18 (1) |
+| `run_1131` | 11/19 | the chord share half way in a drawn order; bars mirrored where the rhythm repeats | | 2026-11-19 (1) |
