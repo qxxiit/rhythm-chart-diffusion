@@ -91,6 +91,7 @@ from src.models.diffusion import (
     n_params,
     pick_device,
     widen_audio,
+    widen_stats,
 )
 from src.models.sampler import sample_window
 
@@ -148,6 +149,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--chart-stats", type=Path, default=None,
                     help="data/chart_stats.csv: condition on the chart's long-note share, jack "
                          "and trill rate (default: none)")
+    ap.add_argument("--stats-names", default=None,
+                    help="--chart-stats: the stats, comma-separated (default hold_share, "
+                         "move_jack, move_trill; chartstats.ALL also has move_stair, "
+                         "hold_beats); with --init the model's own first, the rest added with "
+                         "zero weights (diffusion.widen_stats)")
     ap.add_argument("--stats-drop", type=float, default=0.15,
                     help="--chart-stats: probability of dropping all stats, and then each one")
     ap.add_argument("--d-model", type=int, default=256)
@@ -445,10 +451,31 @@ def main(argv=None) -> int:
         coded = {k: encode(vocab, v["genre_id"], v["mapper_id"]) for k, v in labels.items()}
         for ds in {id(train_ds): train_ds, id(val_ds): val_ds}.values():
             ds.style, ds.null_style = coded, null
+    names = None if a.stats_names is None else [n.strip() for n in a.stats_names.split(",")]
+    if names is not None and a.chart_stats is None:
+        print("--stats-names needs --chart-stats", file=sys.stderr)
+        return 2
     if a.chart_stats is not None:
         table = chartstats.read_stats(a.chart_stats)
-        if spec is None:
-            spec = chartstats.build_spec(table, [c["key"] for c in train_ds.charts])
+        train_keys = [c["key"] for c in train_ds.charts]
+        missing = [n for n in (names or []) if n not in next(iter(table.values()), {})]
+        if missing:
+            print(f"--stats-names: {a.chart_stats} has no {', '.join(missing)} "
+                  "(build_chart_stats.py --more)", file=sys.stderr)
+            return 2
+        try:
+            if spec is None:
+                spec = chartstats.build_spec(table, train_keys,
+                                             names=names or chartstats.NAMES)
+            elif names is not None and names != spec["names"]:
+                if a.resume:
+                    print("--resume: the stats are the run's own (start one with --init)",
+                          file=sys.stderr)
+                    return 2
+                spec = chartstats.extend_spec(spec, table, train_keys, names)
+        except ValueError as e:
+            print(f"--stats-names: {e}", file=sys.stderr)
+            return 2
         stats_null = chartstats.null_index(spec)
         coded_stats = {k: chartstats.encode(spec, v) for k, v in table.items()}
         for ds in {id(train_ds): train_ds, id(val_ds): val_ds}.values():
@@ -468,7 +495,8 @@ def main(argv=None) -> int:
     n_mels = N_MELS + (STEM_BANDS if a.stems else 0)
     if saved is not None:                  # the run's own shape (--init: the stems may widen it)
         config = DenoiserConfig(**{**saved["config"], "n_mels": n_mels,
-                                   **({"dropout": a.dropout} if a.init else {})})
+                                   **({"dropout": a.dropout} if a.init else {}),
+                                   **({"n_stats": len(spec["names"])} if spec else {})})
     else:
         config = DenoiserConfig(d_model=a.d_model, lane_dim=a.d_model // 4, n_layers=a.layers,
                                 n_heads=a.heads, d_ff=a.d_ff, dropout=a.dropout,
@@ -479,7 +507,10 @@ def main(argv=None) -> int:
                                 stat_bins=spec["bins"] if spec else 0, n_mels=n_mels)
     model = Denoiser(config).to(device)
     if a.init:
-        model.load_state_dict(widen_audio(saved["model"], n_mels))
+        state = widen_audio(saved["model"], n_mels)
+        if spec is not None:
+            state = widen_stats(state, len(spec["names"]), spec["bins"])
+        model.load_state_dict(state)
     if a.optim == "sgd":
         opt = torch.optim.SGD(param_groups(model, a.weight_decay), lr=a.lr, momentum=a.momentum)
     else:

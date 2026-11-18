@@ -11,10 +11,17 @@ the SR, so the model gets them as inputs, like the SR, and sampling chooses them
 
     data/chart_stats.csv   key, split, sr, hold_share, move_jack, move_trill
                            (scripts/build_chart_stats.py, from the token cache)
+    MORE                   move_stair, hold_beats (2026-11-19 (2): the user's play found each
+                           human chart keeping to its own patterns; over the 240 val songs a
+                           song's stair share follows its human chart's at 0.17, and the
+                           long notes' length varies half as much; build_chart_stats --more,
+                           train.py --stats-names)
     hold_share             long notes / onsets (evaluation.holds.hold_stats)
     move_jack, move_trill  evaluation.patterns.move_shares: of the single-note moves within
                            a beat, the same lane again; of two lane-changing single-note
                            moves in a row, straight back (1-3-1)
+    move_stair             the same: two lane-changing moves in a row the same step (1-2-3)
+    hold_beats             the long notes' mean length in beats (nan without any)
     spec                   what a model was trained with (saved in its checkpoint):
                            {"names": NAMES, "bins": BINS, "edges": [[...] per name]}, the
                            edges the quantiles of the train charts; a value goes to bucket
@@ -34,43 +41,68 @@ import numpy as np
 from src.evaluation.holds import hold_stats
 from src.evaluation.patterns import events, move_shares
 
-NAMES = ("hold_share", "move_jack", "move_trill")
-SHORT = {"hold_share": "ln", "move_jack": "jack", "move_trill": "trill"}   # spec strings
+NAMES = ("hold_share", "move_jack", "move_trill")                 # full-v4's
+MORE = ("move_stair", "hold_beats")
+ALL = NAMES + MORE
+SHORT = {"hold_share": "ln", "move_jack": "jack", "move_trill": "trill",   # spec strings
+         "move_stair": "stair", "hold_beats": "lnlen"}
 BINS = 8
 FIELDS = ["key", "split", "sr", *NAMES]
+FIELDS_ALL = ["key", "split", "sr", *ALL]
 SAMPLE_SR = 0.3            # "sample": a train chart within this SR of the target
 
 
 def chart_stats(tokens: np.ndarray) -> dict[str, float]:
-    """{name: value} of one chart ([..., K] tokens); nan where a chart has no such moves."""
+    """{name: value} of one chart ([..., K] tokens), every name of ALL; nan where a chart has
+    no such moves (or no long notes, for hold_beats)."""
     x = np.asarray(tokens).reshape(-1, np.asarray(tokens).shape[-1])
     rows, masks = events(x)
     moves = move_shares(rows, masks)
-    out = {"hold_share": hold_stats(x)["hold_share"]}
-    out.update({n: moves.get(n, float("nan")) for n in ("move_jack", "move_trill")})
-    return {n: float(out[n]) for n in NAMES}
+    holds = hold_stats(x)
+    out = {"hold_share": holds["hold_share"], "hold_beats": holds.get("hold_beats", float("nan"))}
+    out.update({n: moves.get(n, float("nan")) for n in ("move_jack", "move_trill", "move_stair")})
+    return {n: float(out[n]) for n in ALL}
 
 
 def read_stats(path: Path) -> dict[str, dict]:
-    """key -> {"split", "sr", name: float (nan if empty)}."""
+    """key -> {"split", "sr", name: float (nan if empty)}, the names of ALL the file has."""
     out = {}
     with open(path, newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        names = [n for n in ALL if n in (reader.fieldnames or [])]
+        for r in reader:
             out[r["key"]] = {"split": r["split"], "sr": float(r["sr"]) if r["sr"] else float("nan"),
-                             **{n: float(r[n]) if r[n] != "" else float("nan") for n in NAMES}}
+                             **{n: float(r[n]) if r[n] != "" else float("nan") for n in names}}
     return out
 
 
-def build_spec(stats: dict[str, dict], train_keys, bins: int = BINS) -> dict:
+def _edges(stats: dict[str, dict], train_keys, name: str, bins: int) -> list[float]:
+    v = np.array([stats[k].get(name, np.nan) for k in train_keys if k in stats], dtype=np.float64)
+    v = v[np.isfinite(v)]
+    q = np.quantile(v, np.arange(1, bins) / bins) if len(v) else np.array([])
+    return [float(e) for e in np.unique(q)]
+
+
+def build_spec(stats: dict[str, dict], train_keys, bins: int = BINS, names=NAMES) -> dict:
     """Quantile edges of each stat over the train charts (equal shares per bucket, ties
     merged: a stat with many equal values gets fewer buckets)."""
-    edges = []
-    for n in NAMES:
-        v = np.array([stats[k][n] for k in train_keys if k in stats], dtype=np.float64)
-        v = v[np.isfinite(v)]
-        q = np.quantile(v, np.arange(1, bins) / bins) if len(v) else np.array([])
-        edges.append([float(e) for e in np.unique(q)])
-    return {"names": list(NAMES), "bins": bins, "edges": edges}
+    for n in names:
+        if n not in ALL:
+            raise ValueError(f"unknown chart stat {n!r}: one of {', '.join(ALL)}")
+    return {"names": list(names), "bins": bins,
+            "edges": [_edges(stats, train_keys, n, bins) for n in names]}
+
+
+def extend_spec(spec: dict, stats: dict[str, dict], train_keys, names) -> dict:
+    """spec with the names of names it does not have added after its own (their edges from
+    the train charts, spec's bins); its own names and edges stay, so a model trained on spec
+    reads its buckets as before (train.py --init --stats-names)."""
+    if list(names)[:len(spec["names"])] != list(spec["names"]):
+        raise ValueError(f"{list(names)} does not start with the model's {spec['names']}")
+    new = [n for n in names if n not in spec["names"]]
+    extra = build_spec(stats, train_keys, spec["bins"], new)
+    return {"names": [*spec["names"], *new], "bins": spec["bins"],
+            "edges": [*spec["edges"], *extra["edges"]]}
 
 
 def null_index(spec: dict) -> int:
@@ -95,9 +127,9 @@ def parse(text: str) -> dict[str, float]:
     for part in filter(None, (p.strip() for p in text.split(","))):
         k, _, v = part.partition("=")
         name = by_short.get(k.strip(), k.strip())
-        if name not in NAMES or not v:
+        if name not in ALL or not v:
             raise ValueError(f"bad chart stat {part!r}: name=value with names "
-                             + ", ".join(f"{SHORT[n]} ({n})" for n in NAMES))
+                             + ", ".join(f"{SHORT[n]} ({n})" for n in ALL))
         out[name] = float(v)
     return out
 
@@ -113,4 +145,4 @@ def sample(stats: dict[str, dict], sr: float, rng: np.random.Generator,
     if not len(near):
         near = np.argsort(np.abs(srs - sr))[:50]
     k = keys[int(rng.choice(near))]
-    return k, {n: stats[k][n] for n in NAMES}
+    return k, {n: stats[k][n] for n in ALL if n in stats[k]}

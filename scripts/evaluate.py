@@ -1135,7 +1135,8 @@ def main(argv: list[str] | None = None) -> int:
         row["new_onsets"] = new_positions(onset_times(tokens, t_rows), ref_t)
         row["human_new_onsets"] = new_positions(onset_times(z["tokens"], t_rows), ref_t)
         if a.stats != "none":
-            row.update({f"stat_{n}": wanted.get(n, float("nan")) for n in chartstats.NAMES})
+            row.update({f"stat_{n}": wanted.get(n, float("nan"))
+                        for n in (spec["names"] if spec else chartstats.NAMES)})
             row["stat_key"] = stat_key
         if shard is not None:
             row["_index"] = i                     # merge_shards.py puts the rows back in order

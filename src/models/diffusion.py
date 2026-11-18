@@ -433,6 +433,23 @@ def widen_audio(state: dict, n_mels: int) -> dict:
     return out
 
 
+def widen_stats(state: dict, n_stats: int, bins: int) -> dict:
+    """A state dict of a model with fewer chart stats made to fit one with n_stats: the new
+    stats' embeddings (every bucket and the null) are zero, so the model computes what it did
+    whatever they are until it learns them (train.py --init --stats-names)."""
+    w = state.get("stat_emb.weight")
+    if w is None:
+        raise ValueError("that model has no chart-stat input")
+    rows = n_stats * (bins + 1)
+    if w.shape[0] == rows:
+        return state
+    if w.shape[0] > rows or w.shape[0] % (bins + 1):
+        raise ValueError(f"cannot fit stat_emb {tuple(w.shape)} to {n_stats} stats of {bins} bins")
+    out = dict(state)
+    out["stat_emb.weight"] = torch.cat([w, w.new_zeros(rows - w.shape[0], w.shape[1])])
+    return out
+
+
 def checkpoint_n_mels(path) -> int:
     """The audio channels a train.py checkpoint reads (80, or 80 + 64 with --stems), to open
     the mel store before the model: mel.open_mel(..., stems=checkpoint_n_mels(p) > N_MELS)."""

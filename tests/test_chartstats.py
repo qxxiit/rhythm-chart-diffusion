@@ -130,3 +130,39 @@ def test_style_from_audio_finds_what_the_audio_tells(tmp_path) -> None:
     assert sfa.auc(np.array([1.0, 2.0]), np.array([1.0, 0.0])) == pytest.approx(0.875)
     assert np.isnan(sfa.auc(np.array([]), np.array([1.0])))
     assert sfa.main(["--stats-csv", str(tmp_path / "none.csv")]) == 2
+
+
+def test_more_stats_stairs_and_long_note_length() -> None:
+    stairs = chartstats.chart_stats(chart([0, 1, 2, 3, 0, 1, 2, 3]))
+    assert set(stairs) == set(chartstats.ALL)
+    assert stairs["move_stair"] > 0.5 and np.isnan(stairs["hold_beats"])
+    trill = chartstats.chart_stats(chart([0, 2, 0, 2, 0, 2, 0, 2], holds=(0, 2)))
+    assert trill["move_stair"] == 0 and trill["hold_beats"] == pytest.approx(3 / 12)
+    assert chartstats.parse("stair=0.3,lnlen=1") == {"move_stair": 0.3, "hold_beats": 1.0}
+
+
+def test_extend_spec_keeps_the_model_s_own_stats(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    table = {f"k{i}": {"split": "train", "sr": 3.0, "hold_share": float(rng.uniform(0, 0.5)),
+                       "move_jack": float(rng.uniform(0, 0.2)), "move_trill": 0.1,
+                       "move_stair": float(rng.uniform(0, 0.4)),
+                       "hold_beats": float(rng.uniform(0.2, 2))} for i in range(200)}
+    old = chartstats.build_spec(table, list(table), bins=4)
+    assert old["names"] == list(chartstats.NAMES)
+    new = chartstats.extend_spec(old, table, list(table), chartstats.ALL)
+    assert new["names"] == list(chartstats.ALL) and new["edges"][:3] == old["edges"]
+    assert len(new["edges"][3]) == 3 and new["bins"] == 4
+    assert chartstats.encode(new, table["k0"])[:3] == chartstats.encode(old, table["k0"])
+    with pytest.raises(ValueError):
+        chartstats.extend_spec(old, table, list(table), ["move_stair", *chartstats.NAMES])
+    with pytest.raises(ValueError):
+        chartstats.build_spec(table, list(table), names=["move_leap"])
+    path = tmp_path / "all.csv"
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=chartstats.FIELDS_ALL, extrasaction="ignore")
+        w.writeheader()
+        w.writerows({"key": k, **v} for k, v in table.items())
+    back = chartstats.read_stats(path)
+    assert set(back["k0"]) == {"split", "sr", *chartstats.ALL}
+    key, values = chartstats.sample(back, 3.0, rng)
+    assert set(values) == set(chartstats.ALL)

@@ -293,6 +293,26 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     assert sample.main([*common, "--key", key, "--stats", "bogus=1"]) == 2
     assert sample.main([*common, "--key", key, "--stats", "ln=0.4", "--style-guidance", "1"]) == 0
     assert list((tmp_path / "cs" / "samples").glob("*-sg1-stln0.4_*.osu"))
+    # the stair share and the long notes' length added to the model's stats (--init)
+    more_csv = tmp_path / "chart_stats_more.csv"
+    assert build_chart_stats.main(["--manifest", str(data / "manifest.csv"), "--more",
+                                   "--cache", str(data / "cache"), "--out", str(more_csv)]) == 0
+    assert set(chartstats.read_stats(more_csv)[key]) >= set(chartstats.ALL)
+    base = [a for a in args if a not in ("--chart-stats", str(stats_csv))]
+    init = [*base[:base.index("--run")], *base[base.index("--run") + 2:], "--run", "cs5",
+            "--init", str(tmp_path / "cs" / "best.pt"), "--chart-stats", str(more_csv)]
+    names = ",".join(chartstats.ALL)
+    assert train.main([*init, "--stats-names", names]) == 0
+    ckpt5 = torch.load(tmp_path / "cs5" / "best.pt", weights_only=True)
+    assert ckpt5["chart_stats"]["names"] == list(chartstats.ALL)
+    assert ckpt5["chart_stats"]["edges"][:3] == spec["edges"]
+    assert ckpt5["config"]["n_stats"] == 5
+    assert train.main([*init, "--stats-names", "move_stair," + ",".join(chartstats.NAMES)]) == 2
+    assert train.main([*init[:-2], "--chart-stats", str(stats_csv), "--stats-names", names]) == 2
+    assert train.main([*base, "--stats-names", names]) == 2         # no --chart-stats
+    c5 = [*common[:1], str(tmp_path / "cs5" / "best.pt"), *common[2:]]
+    assert sample.main([*c5, "--key", key, "--stats", "oracle"]) == 0
+    assert sample.main([*c5, "--key", key, "--stats", "ln=0.2,stair=0.3,lnlen=1"]) == 0
     pytest.importorskip("rosu_pp_py")
     from scripts import evaluate
     for mode in ("oracle", "sample"):
@@ -307,6 +327,10 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                        for r in rows)
         else:
             assert all(table[r["stat_key"]]["split"] == "train" for r in rows)
+    assert evaluate.main([*c5, "--split", "train", "--n", "2", "--stats", "oracle"]) == 0
+    with open(next((tmp_path / "cs5").glob("eval_*_st-oracle")) / "per_song.csv",
+              newline="") as f:                           # the model's five stats, per song
+        assert all(r["stat_move_stair"] != "" for r in csv.DictReader(f))
     oracle_run = next((tmp_path / "cs").glob("eval_*_st-oracle"))
     with open(oracle_run / "per_song.csv", newline="") as f:      # bar kinds, both charts
         row = next(csv.DictReader(f))

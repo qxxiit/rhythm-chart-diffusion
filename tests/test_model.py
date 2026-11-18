@@ -511,6 +511,27 @@ def test_chord_share_to_thins_the_weakest_chords_or_adds_mirrored_taps() -> None
     assert len(grammar_violations(add[None])) == 0
 
 
+def test_widen_stats_gives_a_model_more_chart_stats_that_change_nothing_yet() -> None:
+    from dataclasses import replace
+
+    from src.models.diffusion import widen_stats
+    torch.manual_seed(0)
+    small = Denoiser(replace(TINY, n_stats=3, stat_bins=4)).eval()
+    big = Denoiser(replace(TINY, n_stats=5, stat_bins=4)).eval()
+    big.load_state_dict(widen_stats(small.state_dict(), 5, 4))
+    x = torch.full((1, L, K), 5, dtype=torch.long)
+    mel = torch.randn(1, L * TINY.frames_per_cell, TINY.n_mels)
+    s, b = torch.tensor([3.0]), torch.tensor([400.0])
+    three = torch.tensor([[1, 2, 4]])
+    a = small(x, mel, s, b, stats=three)
+    for extra in ([0, 0], [3, 4], [4, 1]):
+        assert torch.allclose(a, big(x, mel, s, b, stats=torch.tensor([[1, 2, 4, *extra]])),
+                              atol=1e-5)
+    assert widen_stats(big.state_dict(), 5, 4)["stat_emb.weight"].shape[0] == 25
+    with pytest.raises(ValueError):
+        widen_stats(big.state_dict(), 3, 4)
+
+
 def test_chord_share_to_goes_part_of_the_way_and_draws_its_order() -> None:
     from src.models.sampler import chord_share_to
     n = 16 * D

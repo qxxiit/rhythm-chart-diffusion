@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from src.data.cache import read_manifest
-from src.data.chartstats import BINS, FIELDS, NAMES, build_spec, chart_stats, read_stats
+from src.data.chartstats import (ALL, BINS, FIELDS, FIELDS_ALL, NAMES, build_spec,
+                                  chart_stats, read_stats)
 from src.data.tokenizer import K
 
 
@@ -29,7 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", type=Path, default=Path("data/cache"))
     ap.add_argument("--out", type=Path, default=Path("data/chart_stats.csv"))
     ap.add_argument("--bins", type=int, default=BINS)
+    ap.add_argument("--more", action="store_true",
+                    help="also the stair share and the long notes' length (chartstats.MORE)")
     a = ap.parse_args(argv)
+    names, fields = (ALL, FIELDS_ALL) if a.more else (NAMES, FIELDS)
     kept = [r for r in read_manifest(a.manifest) if r.get("drop", "") == "" and r["sr"] != ""]
     rows, missing = [], 0
     for r in kept:
@@ -40,16 +44,16 @@ def main(argv: list[str] | None = None) -> int:
         z = np.load(path)
         st = chart_stats(z["tokens"].reshape(-1, K)[:int(z["n_cells"])])
         rows.append({"key": r["key"], "split": r["split"], "sr": r["sr"],
-                     **{n: "" if not np.isfinite(st[n]) else f"{st[n]:.5f}" for n in NAMES}})
+                     **{n: "" if not np.isfinite(st[n]) else f"{st[n]:.5f}" for n in names}})
     with open(a.out, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\n")
+        w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     stats = read_stats(a.out)
     train = [k for k, v in stats.items() if v["split"] == "train"]
-    spec = build_spec(stats, train, a.bins)
+    spec = build_spec(stats, train, a.bins, names)
     print(f"{a.out}: {len(rows)} charts ({missing} without cached tokens), {len(train)} train")
-    for n, e in zip(NAMES, spec["edges"], strict=True):
+    for n, e in zip(names, spec["edges"], strict=True):
         v = np.array([stats[k][n] for k in train])
         v = v[np.isfinite(v)]
         print(f"  {n:11s} mean {v.mean():.3f} sd {v.std():.3f} p10/50/90 "
