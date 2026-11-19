@@ -174,9 +174,12 @@ python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results t
 python scripts/merge_shards.py RUN     # ✅ puts evaluate.py --shard K/N runs together (N processes
                                        #    sharing the GPU, the songs shared by length; the charts
                                        #    are the one-process run's)
-python scripts/train.py --init C --chart-stats data/chart_stats_more.csv --stats-names N,...
+python scripts/train.py [--init C] --chart-stats data/chart_stats_v2.csv --stats-names N,...
                                        # ✅ more chart stats for a model (build_chart_stats --more:
-                                       #    move_stair, hold_beats), the new ones at zero (widen_stats)
+                                       #    move_stair, hold_beats, chord_share); with --init the
+                                       #    new ones at zero (widen_stats)
+python scripts/evaluate.py ... --stats oracle,stair=0.35,lnlen=2
+                                       # ✅ the human chart's stats with some set (a probe)
 python scripts/evaluate.py --from-charts R ... --chord-share oracle [--chord-share-step S]
     [--chord-share-temp T] [--mirror-bars]
                                        # ✅ the chord share part of the way, in a drawn order;

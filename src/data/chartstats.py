@@ -15,13 +15,15 @@ the SR, so the model gets them as inputs, like the SR, and sampling chooses them
                            human chart keeping to its own patterns; over the 240 val songs a
                            song's stair share follows its human chart's at 0.17, and the
                            long notes' length varies half as much; build_chart_stats --more,
-                           train.py --stats-names)
+                           train.py --stats-names); chord_share (2026-11-20 (1): brought to the
+                           human chart's by a pass the judges found it at once, so an input)
     hold_share             long notes / onsets (evaluation.holds.hold_stats)
     move_jack, move_trill  evaluation.patterns.move_shares: of the single-note moves within
                            a beat, the same lane again; of two lane-changing single-note
                            moves in a row, straight back (1-3-1)
     move_stair             the same: two lane-changing moves in a row the same step (1-2-3)
     hold_beats             the long notes' mean length in beats (nan without any)
+    chord_share            the same: of the onset rows, the ones with two notes or more
     spec                   what a model was trained with (saved in its checkpoint):
                            {"names": NAMES, "bins": BINS, "edges": [[...] per name]}, the
                            edges the quantiles of the train charts; a value goes to bucket
@@ -42,10 +44,10 @@ from src.evaluation.holds import hold_stats
 from src.evaluation.patterns import events, move_shares
 
 NAMES = ("hold_share", "move_jack", "move_trill")                 # full-v4's
-MORE = ("move_stair", "hold_beats")
+MORE = ("move_stair", "hold_beats", "chord_share")
 ALL = NAMES + MORE
 SHORT = {"hold_share": "ln", "move_jack": "jack", "move_trill": "trill",   # spec strings
-         "move_stair": "stair", "hold_beats": "lnlen"}
+         "move_stair": "stair", "hold_beats": "lnlen", "chord_share": "chord"}
 BINS = 8
 FIELDS = ["key", "split", "sr", *NAMES]
 FIELDS_ALL = ["key", "split", "sr", *ALL]
@@ -60,7 +62,8 @@ def chart_stats(tokens: np.ndarray) -> dict[str, float]:
     moves = move_shares(rows, masks)
     holds = hold_stats(x)
     out = {"hold_share": holds["hold_share"], "hold_beats": holds.get("hold_beats", float("nan"))}
-    out.update({n: moves.get(n, float("nan")) for n in ("move_jack", "move_trill", "move_stair")})
+    out.update({n: moves.get(n, float("nan"))
+                for n in ("move_jack", "move_trill", "move_stair", "chord_share")})
     return {n: float(out[n]) for n in ALL}
 
 

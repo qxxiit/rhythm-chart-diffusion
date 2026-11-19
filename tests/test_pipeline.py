@@ -306,7 +306,7 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     ckpt5 = torch.load(tmp_path / "cs5" / "best.pt", weights_only=True)
     assert ckpt5["chart_stats"]["names"] == list(chartstats.ALL)
     assert ckpt5["chart_stats"]["edges"][:3] == spec["edges"]
-    assert ckpt5["config"]["n_stats"] == 5
+    assert ckpt5["config"]["n_stats"] == len(chartstats.ALL)
     assert train.main([*init, "--stats-names", "move_stair," + ",".join(chartstats.NAMES)]) == 2
     assert train.main([*init[:-2], "--chart-stats", str(stats_csv), "--stats-names", names]) == 2
     assert train.main([*base, "--stats-names", names]) == 2         # no --chart-stats
@@ -331,6 +331,15 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
     with open(next((tmp_path / "cs5").glob("eval_*_st-oracle")) / "per_song.csv",
               newline="") as f:                           # the model's five stats, per song
         assert all(r["stat_move_stair"] != "" for r in csv.DictReader(f))
+    assert evaluate.main([*c5, "--split", "train", "--n", "2", "--stats",
+                          "oracle,stair=0.35,lnlen=2"]) == 0       # the human chart's, two set
+    with open(next((tmp_path / "cs5").glob("eval_*_st-oraclestair0.35lnlen2")) / "per_song.csv",
+              newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert all(float(r["stat_move_stair"]) == 0.35 and float(r["stat_hold_beats"]) == 2
+               and abs(float(r["stat_hold_share"]) - float(r["human_hold_share"])) < 1e-6
+               and r["stat_chord_share"] != "" for r in rows)
+    assert evaluate.main([*c5, "--split", "train", "--n", "2", "--stats", "oracle,bogus=1"]) == 2
     oracle_run = next((tmp_path / "cs").glob("eval_*_st-oracle"))
     with open(oracle_run / "per_song.csv", newline="") as f:      # bar kinds, both charts
         row = next(csv.DictReader(f))

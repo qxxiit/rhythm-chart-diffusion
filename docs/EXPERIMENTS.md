@@ -114,3 +114,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-18 (1) · Chords and releases where the human chart has them (predictions, results)
 - 2026-11-19 (1) · A softer chord share; bars mirrored where the rhythm repeats (predictions, results)
 - 2026-11-19 (2) · Each song's own patterns as inputs: the stair share and the long notes' length (predictions, results)
+- 2026-11-20 (1) · Six chart stats from the first step: pat-v2 (predictions)

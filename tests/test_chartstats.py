@@ -139,6 +139,9 @@ def test_more_stats_stairs_and_long_note_length() -> None:
     trill = chartstats.chart_stats(chart([0, 2, 0, 2, 0, 2, 0, 2], holds=(0, 2)))
     assert trill["move_stair"] == 0 and trill["hold_beats"] == pytest.approx(3 / 12)
     assert chartstats.parse("stair=0.3,lnlen=1") == {"move_stair": 0.3, "hold_beats": 1.0}
+    assert stairs["chord_share"] == 0 and chartstats.parse("chord=0.4") == {"chord_share": 0.4}
+    chords = chartstats.chart_stats(chart([0, 1, 2, 3]) | chart([3, 2, 1, 0]))
+    assert chords["chord_share"] == 1.0
 
 
 def test_extend_spec_keeps_the_model_s_own_stats(tmp_path) -> None:

@@ -600,7 +600,8 @@ def main(argv: list[str] | None = None) -> int:
                          "(default: --style-guidance); long notes are decided before them")
     ap.add_argument("--stats", default="none",
                     help="chart stats for a model trained with --chart-stats: none, oracle, "
-                         "sample, or values like ln=0.3,jack=0.05,trill=0.15")
+                         "sample, or values like ln=0.3,jack=0.05,trill=0.15; oracle,NAME=V,... "
+                         "the human chart's with those set")
     ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"),
                     help="--stats sample: the charts to draw from (build_chart_stats.py)")
     ap.add_argument("--from-charts", type=Path, default=None,
@@ -674,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:
             table = chartstats.read_stats(a.stats_csv)
         elif a.stats != "oracle":
             try:
-                fixed_stats = chartstats.parse(a.stats)
+                fixed_stats = chartstats.parse(a.stats.removeprefix("oracle,"))
             except ValueError as e:
                 print(e, file=sys.stderr)
                 return 2
@@ -947,8 +948,9 @@ def main(argv: list[str] | None = None) -> int:
         elif a.hold_share is not None:
             share = float(a.hold_share)
         wanted, stat_key = {}, ""
-        if a.stats == "oracle":
+        if a.stats == "oracle" or a.stats.startswith("oracle,"):
             wanted = chartstats.chart_stats(z["tokens"].reshape(-1, K)[:n_cells])
+            wanted.update(fixed_stats or {})          # oracle,NAME=V: those set
         elif a.stats == "sample":
             stat_key, wanted = chartstats.sample(table, sr, np.random.default_rng([a.seed, i]))
         elif fixed_stats is not None:
