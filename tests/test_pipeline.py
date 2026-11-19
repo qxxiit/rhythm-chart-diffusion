@@ -1430,6 +1430,25 @@ def test_judge_end_to_end(data: Path, tmp_path: Path) -> None:
     soft_charts = np.load(soft / "charts.npz")
     for r in relaned:
         assert len(grammar_violations(soft_charts[r["key"]])) == 0
+    assert evaluate.main([*common, "--from-charts", str(run), "--mirror-bars",
+                          "--mirror-shares", "0.034,0.049,0.062", "--repeat-bars"]) == 0
+    rp = next(run.parent.glob(run.name + "_*rp_mbs3.4-4.9-6.2*"))
+    with open(rp / "per_song.csv", newline="") as f:
+        assert all(int(float(r["bars_repeated"])) >= 0 for r in csv.DictReader(f))
+    rp_charts = np.load(rp / "charts.npz")
+    for r in relaned:
+        assert len(grammar_violations(rp_charts[r["key"]])) == 0
+    from scripts import bar_copies
+    out = tmp_path / "copies.md"
+    assert bar_copies.main([str(run), str(rp), "--cache", str(data / "cache"),
+                            "--out", str(out)]) == 0
+    assert out.read_text().count("\n| ") == 4             # header, human, the two runs
+    assert bar_copies.main([str(tmp_path / "none")]) == 2
+    assert evaluate.main([*common, "--from-charts", str(run), "--mirror-shares",
+                          "0.03,0.05,0.06"]) == 2           # without --mirror-bars
+    assert evaluate.main([*common, "--from-charts", str(run), "--mirror-bars",
+                          "--mirror-shares", "0.03,0.05"]) == 2
+    assert evaluate.main([*common, "--repeat-bars"]) == 2
     assert evaluate.main([*common, "--mirror-bars"]) == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--chord-share-step", "0.5"]) == 2
     assert evaluate.main([*common, "--from-charts", str(run), "--chord-share", "oracle",

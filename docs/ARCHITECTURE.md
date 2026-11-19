@@ -184,6 +184,10 @@ python scripts/evaluate.py --from-charts R ... --chord-share oracle [--chord-sha
     [--chord-share-temp T] [--mirror-bars]
                                        # ✅ the chord share part of the way, in a drawn order;
                                        #    bars mirrored where the rhythm repeats (mirror_bars)
+python scripts/evaluate.py --from-charts R ... --mirror-bars [--mirror-shares S1,S2,S4]
+    [--repeat-bars]                  # ✅ the mirrors' shares at lags 1, 2, 4; the same bar
+                                       #    again 4 bars later (mirror_bars, flip off)
+python scripts/bar_copies.py RUN ...   # ✅ bars mirrored / the same again, runs and human charts
 sh scripts/system.sh [SPLIT] [N]      # ✅ the system as decided: the draw chosen by sel_holds,
                                        #    then the passes (outputs/system/SPLIT_nN.path)
 python scripts/evaluate.py --from-charts R --hold-share oracle ... --dense-taps T [--dense-repeats]

@@ -588,6 +588,35 @@ def test_mirror_bars_copies_an_earlier_bar_mirrored_where_the_rhythm_repeats() -
     assert len(grammar_violations(all_[None])) == 0
 
 
+def test_repeat_bars_copies_the_bar_four_back_and_the_mirrors_leave_it() -> None:
+    from src.data.tokenizer import BAR
+    from src.models.sampler import STATS, mirror_bars
+    n = 5 * BAR
+    song = np.zeros((n, K), dtype=np.int64)
+    rows = np.arange(0, BAR, 6)                         # 8 onsets a bar, the same in every bar
+    for b, shift in enumerate((0, 1, 2, 3, 1)):
+        song[b * BAR + rows, (rows // 6 + shift) % 4] = TAP
+    s_audio = np.zeros((5, 5))
+    s_audio[1, 0], s_audio[3, 2], s_audio[4, 3] = 0.9, 0.8, 0.95
+    r0 = STATS["bars_repeated"]
+    rep = song.copy()
+    changed, sources = set(), set()
+    assert mirror_bars(rep, n, s_audio, flip=False, shares={4: 1.0}, changed=changed,
+                       sources=sources) == 1
+    assert STATS["bars_repeated"] - r0 == 1 and changed == {4} and sources == {0}
+    assert np.array_equal(rep[4 * BAR:], song[:BAR])    # bar 4 is bar 0 again
+    after = rep.copy()
+    assert mirror_bars(after, n, s_audio, shares={1: 1.0}, changed=changed,
+                       sources=sources) == 2            # bars 1 and 3; 2 a source, 4 locked
+    assert np.array_equal(after[4 * BAR:], song[:BAR]) and np.array_equal(after[:BAR], song[:BAR])
+    assert np.array_equal(after[BAR:2 * BAR], song[:BAR, ::-1])
+    assert np.array_equal(after[3 * BAR:4 * BAR], song[2 * BAR:3 * BAR, ::-1])
+    free = rep.copy()                                   # without the shared sets bar 4 goes
+    mirror_bars(free, n, s_audio, shares={1: 1.0})
+    assert not np.array_equal(free[4 * BAR:], song[:BAR])
+    assert mirror_bars(song.copy(), n, s_audio, flip=False, shares={4: 0.0}) == 0
+
+
 def test_unit_temperature_draws_a_unit_s_first_onset_row_freely(monkeypatch) -> None:
     from src.models import sampler
     from src.models.sampler import forward_lanes, refine_lanes, unit_temperature

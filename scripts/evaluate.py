@@ -513,6 +513,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="after the copies, bars that repeat the rhythm of the bar 1, 2 or 4 "
                          "before made its mirror as often as the human charts do it "
                          "(sampler.mirror_bars; --from-charts only; tag mb)")
+    ap.add_argument("--mirror-shares", default=None, metavar="S1,S2,S4",
+                    help="--mirror-bars: the shares to bring the mirrors up to at lags 1, 2 and "
+                         "4 bars (sampler.MIRROR_SHARE by default; tag after mb)")
+    ap.add_argument("--repeat-bars", action="store_true",
+                    help="before the mirrors, bars that repeat the rhythm of the bar 4 before "
+                         "made the same bar again as often as the human charts do it "
+                         "(sampler.mirror_bars with flip off, REPEAT_SHARE; --from-charts only; "
+                         "tag rp)")
     ap.add_argument("--hold-down", action="store_true",
                     help="after it, long notes over the --hold-share target become taps, those "
                          "released on no other lane's onset and the shortest first "
@@ -761,10 +769,21 @@ def main(argv: list[str] | None = None) -> int:
               "--from-charts and --hold-share", file=sys.stderr)
         return 2
     if (a.chord_share is not None or a.hold_down or a.snap_releases is not None
-            or a.mirror_bars) and a.from_charts is None:
-        print("--chord-share, --hold-down, --snap-releases and --mirror-bars are passes on "
-              "saved charts: give --from-charts", file=sys.stderr)
+            or a.mirror_bars or a.repeat_bars) and a.from_charts is None:
+        print("--chord-share, --hold-down, --snap-releases, --mirror-bars and --repeat-bars are "
+              "passes on saved charts: give --from-charts", file=sys.stderr)
         return 2
+    mirror_shares = None
+    if a.mirror_shares is not None:
+        try:
+            mirror_shares = dict(zip((1, 2, 4), map(float, a.mirror_shares.split(",")), strict=True))
+        except ValueError:
+            mirror_shares = None
+        if not a.mirror_bars or mirror_shares is None \
+                or not all(0 <= v <= 1 for v in mirror_shares.values()):
+            print("--mirror-shares: three shares in [0, 1] (lags 1, 2, 4), with --mirror-bars",
+                  file=sys.stderr)
+            return 2
     if (a.chord_share_step != 1.0 or a.chord_share_temp is not None) and a.chord_share is None:
         print("--chord-share-step and --chord-share-temp need --chord-share", file=sys.stderr)
         return 2
@@ -856,7 +875,10 @@ def main(argv: list[str] | None = None) -> int:
             and a.chord_share_step != 1.0 else "") + (
             f"t{a.chord_share_temp:g}" if a.chord_share is not None
             and a.chord_share_temp is not None else "") + (
+            "_rp" if a.repeat_bars else "") + (
             "_mb" if a.mirror_bars else "") + (
+            "s" + "-".join(f"{100 * mirror_shares[g]:g}" for g in (1, 2, 4))
+            if mirror_shares is not None else "") + (
             "_hd" if a.hold_down else "") + (
             f"_sn{a.snap_releases}" if a.snap_releases is not None else "") + stats_tag + (
             f"_lg{a.lane_guidance:g}" if a.carry_rhythm is not None
@@ -927,7 +949,8 @@ def main(argv: list[str] | None = None) -> int:
         rests_kept0, answers0 = STATS["rest_bars_kept"], STATS["answered_beats"]
         dense0 = STATS["dense_taps"]
         late0 = {k: STATS[k] for k in ("chords_thinned", "chords_added", "held_down",
-                                       "releases_snapped", "bars_mirrored")}
+                                       "releases_snapped", "bars_mirrored",
+                                       "bars_repeated")}
         carried0, tidied0 = STATS["carried_bars"], STATS["tidied_holds"]
         carried_ln0, sections0 = STATS["carried_ln_bars"], STATS["section_bars"]
         capped0, untangled0 = STATS["capped_rows"], STATS["untangled"]
@@ -979,12 +1002,13 @@ def main(argv: list[str] | None = None) -> int:
                     or a.light is not None or a.recheck is not None \
                     or a.answer is not None or a.dense_taps is not None \
                     or chords is not None or a.hold_down or a.snap_releases is not None \
-                    or a.mirror_bars:
+                    or a.mirror_bars or a.repeat_bars:
                 tokens = post_song(model, tokens, mel, sr, tps, offset, n_cells,
                                    rest_max_run=a.rest_max_run, answer=a.answer,
                                    dense=a.dense_taps, dense_repeats=a.dense_repeats,
                                    chord_share=chords, hold_down_to=a.hold_down,
                                    snap=a.snap_releases, mirror=a.mirror_bars,
+                                   mirror_shares=mirror_shares, repeat=a.repeat_bars,
                                    chord_step=a.chord_share_step,
                                    chord_temperature=a.chord_share_temp,
                                    answer_unit=a.answer_unit, answer_lanes=a.answer_lanes,
@@ -1075,6 +1099,8 @@ def main(argv: list[str] | None = None) -> int:
             cost["releases_snapped"] = STATS["releases_snapped"] - late0["releases_snapped"]
         if a.mirror_bars:
             cost["bars_mirrored"] = STATS["bars_mirrored"] - late0["bars_mirrored"]
+        if a.repeat_bars:
+            cost["bars_repeated"] = STATS["bars_repeated"] - late0["bars_repeated"]
         if a.fill_holes is not None:
             cost["holes_filled"] = STATS["filled_holes"] - fills0
         if a.carry_rhythm is not None:
@@ -1176,7 +1202,8 @@ def main(argv: list[str] | None = None) -> int:
                "dense_repeats": a.dense_repeats, "chord_share": a.chord_share,
                "hold_down": a.hold_down, "snap_releases": a.snap_releases,
                "chord_share_step": a.chord_share_step, "chord_share_temp": a.chord_share_temp,
-               "mirror_bars": a.mirror_bars,
+               "mirror_bars": a.mirror_bars, "mirror_shares": a.mirror_shares,
+               "repeat_bars": a.repeat_bars,
                "answer_unit": a.answer_unit if a.answer is not None else None,
                "answer_lanes": a.answer_lanes if a.answer is not None else None,
                "fill_holes": a.fill_holes, "sr_offset": a.sr_offset, "sr_min": a.sr_min,

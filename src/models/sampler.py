@@ -110,7 +110,7 @@ STATS = {"passes": 0, "copied_bars": 0, "changed_holds": 0, "rest_bars": 0,
          "select_windows": 0, "select_gain": 0.0, "lane_select_windows": 0,
          "lane_select_gain": 0.0, "lane_seams": 0, "rest_bars_kept": 0, "answered_beats": 0,
          "dense_taps": 0, "held_down": 0, "releases_snapped": 0, "chords_thinned": 0,
-         "chords_added": 0, "bars_mirrored": 0}
+         "chords_added": 0, "bars_mirrored": 0, "bars_repeated": 0}
                                          # passes, copies, hold changes, bars left empty,
                                          # stream holes filled, rhythms carried over (of
                                          # them, bars with long notes), long notes turned
@@ -2641,6 +2641,10 @@ def _beat_len_fn(timing_points, cell_offset: int):
 # 3 - k) exactly in 4.4%, 6.0% and 6.8%, the system in 2.1%, 2.5% and 2.8%; near (75%+ of the
 # notes) 12-14% against 9-10%. The same lanes again are as often in both (3-7%).
 MIRROR_SHARE = {4: 0.068, 2: 0.060, 1: 0.044}      # lag in bars: the human charts' exact share
+# Counted again on the onsets (2026-11-19 (1)): mirrored 3.4 / 4.9 / 6.2% at lags 1 / 2 / 4 (the
+# count above not reproduced; --mirror-shares), and the same lanes again 2.8 / 3.5 / 6.4% against
+# the system's 2.6 / 2.9 / 2.9%: REPEAT_SHARE, only at lag 4 (2026-11-20 (2)).
+REPEAT_SHARE = {4: 0.064}
 
 
 def _bar_closed(song: np.ndarray, a: int) -> bool:
@@ -2656,7 +2660,8 @@ def _near(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def mirror_bars(song: np.ndarray, n_cells: int, s_audio: np.ndarray | None = None, *,
-                shares: dict | None = None, rng=None) -> int:
+                shares: dict | None = None, rng=None, flip: bool = True,
+                changed: set | None = None, sources: set | None = None) -> int:
     """Bars that repeat an earlier bar's rhythm made its mirror (lane k -> 3 - k), as often
     as the human charts do it; returns how many bars changed. For each lag (bars apart, 4
     first), of the pairs with the same onset rows (3+ of them) the share already mirrored is
@@ -2665,15 +2670,18 @@ def mirror_bars(song: np.ndarray, n_cells: int, s_audio: np.ndarray | None = Non
     first (s_audio [n_bars, n_bars], else in an order drawn from rng), a pair already near
     (75%+) the same or mirrored left as it is, a bar changed once and a bar copied from
     not changed. The rhythm stays; the
-    chords and long notes of the later bar become the earlier bar's."""
-    shares = MIRROR_SHARE if shares is None else shares
+    chords and long notes of the later bar become the earlier bar's. flip=False: the same bar
+    again instead of its mirror (shares REPEAT_SHARE by default; STATS bars_repeated); changed
+    and sources: the bars already changed and copied from, shared between calls (and added to)."""
+    shares = (MIRROR_SHARE if flip else REPEAT_SHARE) if shares is None else shares
     rng = rng if rng is not None else np.random.default_rng(0)
     on = np.isin(song[:n_cells], (TAP, HOLD_START)).any(axis=1)
     n_bars = n_cells // BAR
     bar = lambda b: song[b * BAR:(b + 1) * BAR]          # noqa: E731
     rows = [on[b * BAR:(b + 1) * BAR] for b in range(n_bars)]
-    changed: set[int] = set()                         # bars mirrored
-    sources: set[int] = set()                         # bars copied from: they stay
+    changed = set() if changed is None else changed   # bars mirrored (or repeated)
+    sources = set() if sources is None else sources   # bars copied from: they stay
+    n_before = len(changed)
     for lag in sorted(shares, reverse=True):
         pairs, exact, total = [], 0, 0
         for b in range(lag, n_bars):
@@ -2681,7 +2689,7 @@ def mirror_bars(song: np.ndarray, n_cells: int, s_audio: np.ndarray | None = Non
                 continue
             total += 1
             src, dst = bar(b - lag), bar(b)
-            if np.array_equal(src[:, ::-1], dst):
+            if np.array_equal(src[:, ::-1] if flip else src, dst):
                 exact += 1
             elif max(_near(src, dst), _near(src[:, ::-1], dst)) < 0.75:
                 pairs.append(b)
@@ -2699,12 +2707,13 @@ def mirror_bars(song: np.ndarray, n_cells: int, s_audio: np.ndarray | None = Non
                 break
             if b in changed or b in sources or b - lag in changed:
                 continue
-            song[b * BAR:(b + 1) * BAR] = bar(b - lag)[:, ::-1].copy()
+            song[b * BAR:(b + 1) * BAR] = (bar(b - lag)[:, ::-1] if flip else bar(b - lag)).copy()
             changed.add(b)
             sources.add(b - lag)
             want -= 1
-    STATS["bars_mirrored"] += len(changed)
-    return len(changed)
+    n = len(changed) - n_before
+    STATS["bars_mirrored" if flip else "bars_repeated"] += n
+    return n
 
 
 def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_points,
@@ -2731,7 +2740,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
               answer_lanes: str = "draw", dense: float | None = None,
               dense_repeats: bool = False, chord_share: float | None = None,
               hold_down_to: bool = False, snap: int | None = None, mirror: bool = False,
-              chord_step: float = 1.0, chord_temperature: float | None = None) -> np.ndarray:
+              chord_step: float = 1.0, chord_temperature: float | None = None,
+              mirror_shares: dict | None = None, repeat: bool = False) -> np.ndarray:
     """The passes after the lane passes on a finished chart ([n_chunks, L, K] tokens as
     generate_song returns them, e.g. from evaluate.py's charts.npz), in generate_song's
     order: refine_holds (holds=True or a hold_share; hold_up: its only_more; the releases
@@ -2746,7 +2756,8 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
     beats a unit; answer_lanes its lanes, drawn at lane_temperature with lane_guidance),
     tidy_holds (ln_tidy: the longest long note in beats it turns into a tap), dense_taps
     (dense: where hold_share, the song's target, is under it; dense_repeats: its repeats),
-    mirror_bars (mirror: right after the copies and answers), and after the chord cap
+    mirror_bars (mirror: right after the copies and answers, at mirror_shares; repeat: first
+    the same bar again 4 bars later, mirror_bars with flip off), and after the chord cap
     chord_share_to (chord_share: the song's target; chord_step, chord_temperature), hold_down
     (hold_down_to: down to hold_share) and snap_releases (snap: max shift in cells), fill_holes
     (holes: the threshold), rest_bars (rest: the threshold; rest_max_run: its max_run),
@@ -2803,8 +2814,13 @@ def post_song(model, tokens: np.ndarray, mel: np.ndarray, s: float, timing_point
                                            release_gap=release_gap) \
             and (min_hold > 0 or release_gap > 0):
         clean_holds(song, min_hold=min_hold, release_gap=release_gap)
+    copied: tuple[set, set] = (set(), set())         # the bars changed and copied from
+    if repeat:
+        mirror_bars(song, n_cells, s_audio, rng=rng, flip=False, changed=copied[0],
+                    sources=copied[1])
     if mirror:
-        mirror_bars(song, n_cells, s_audio, rng=rng)
+        mirror_bars(song, n_cells, s_audio, shares=mirror_shares, rng=rng, changed=copied[0],
+                    sources=copied[1])
     if ln_tidy is not None:
         tidy_holds(song, n_cells, max_beats=ln_tidy)
     if dense is not None and hold_share is not None and hold_share < dense:
