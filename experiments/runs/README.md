@@ -45,4 +45,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1131` | 11/19 | the chord share half way in a drawn order; bars mirrored where the rhythm repeats | `--mirror-bars` joins the system; the soft chord share not taken (the taps view +0.09) | 2026-11-19 (1) |
 | `run_1132` | 11/19 | the stair share and the long notes' length as chart stats (pat-v1, against ft-v1) | not taken: the draws hardly follow the new stats (stair correlation +0.14 -> +0.19) | 2026-11-19 (2) |
 | `run_1133` | 11/20 | six chart stats from the first step (pat-v2, against full-v4); a probe of pat-v1 | pat-v2 a candidate, not taken: long notes' length and chords follow the human chart better, stairs not; the judges level | 2026-11-20 (1) |
-| `run_1134` | 11/20 | the mirrored bars at the shares counted again; the same bar again 4 bars later | | 2026-11-20 (2) |
+| `run_1134` | 11/20 | the mirrored bars at the shares counted again; the same bar again 4 bars later | `--mirror-shares 0.034,0.049,0.062` joins the system; the repeats not taken (the taps view +0.014) | 2026-11-20 (2) |

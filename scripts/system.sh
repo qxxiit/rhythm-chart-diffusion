@@ -1,13 +1,14 @@
 #!/bin/sh
-# The system as decided (DECISIONS through 2026-11-19, run_1131), on the songs of a split:
+# The system as decided (DECISIONS through 2026-11-20, run_1134), on the songs of a split:
 #   full-v4; every window drawn 4 times and chosen by the holds-view judge sel_holds (cosine
 #   schedule, forward lanes at temperature 1, refine 2, lane guidance 2, the loud and onset
 #   biases with the onset taper by SR, hold bias 0.2, the human chart's stats as inputs); then
 #   F's passes with the rest guard (--rest-max-run 8), and in the songs whose human chart is
 #   mostly taps a short long note repeated in its lane in a busy part made a tap
 #   (--dense-taps 0.2 --dense-repeats), bars that repeat the rhythm of the bar 1, 2 or 4 bars
-#   back made its mirror as often as the human charts do (--mirror-bars), and last the releases
-#   moved to the next note within two cells (--snap-releases 2).
+#   back made its mirror as often as the human charts do (--mirror-bars --mirror-shares
+#   0.034,0.049,0.062), and last the releases moved to the next note within two cells
+#   (--snap-releases 2).
 # From the repository root:
 #   sh scripts/system.sh [SPLIT] [N]     SPLIT val or test (val), N songs, 0 for all (120)
 # Environment: SHARDS processes (3), CKPT (outputs/full-v4/best.pt), JUDGE (the choosing judge,
@@ -43,7 +44,7 @@ REUSE="--carry-rhythm 0 --carry-keep --carry-holds 1 --copy-bias 0 --copy-min-la
 HOLDS="--hold-share oracle --hold-up --ln-tidy 0.5"
 CHORDS="--strong-chords 1 --chord-cap 2"
 JACKS="--untangle --untangle-move --untangle-grades --untangle-insane"
-MIRROR="--mirror-bars"
+MIRROR="--mirror-bars --mirror-shares 0.034,0.049,0.062"
 LAST="--snap-releases 2"
 
 sharded() {             # NAME FLAGS...: SHARDS processes, merged; the run's path in $O/NAME.path
