@@ -118,3 +118,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-20 (2) · The mirrored bars at the shares counted again; the same bar four bars later (predictions, results)
 - 2026-11-21 (1) · The system drawn with pat-v2 (predictions, results)
 - 2026-11-22 (1) · Does the judge see what players hate? (predictions, results)
+- 2026-11-22 (2) · A judge of the lanes alone (predictions)
