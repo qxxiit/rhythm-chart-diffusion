@@ -1497,6 +1497,20 @@ def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:
     assert (out / "summary.md").exists()
     with open(out / "runs" / "new_0.08" / "per_song.csv", newline="") as f:
         assert {"key", "grade", "sr_gen", "sr_human_local"} <= set(next(csv.DictReader(f)))
+    from src.data.tokenizer import grammar_violations
+    more = tmp_path / "more"                                  # the players' complaints, the control
+    assert corrupt_test.main([*songs, "--n", "3", "--out", str(more), "--write-runs",
+                              "--other-human", "--corruptions", "minijack", "trill", "weakchord",
+                              "lnflood", "copypaste"]) == 0
+    assert {"minijack_0.8", "lnflood_0.8", "copypaste_0.8"} <= {d.name for d in (more / "runs").iterdir()}
+    for d in (more / "runs").iterdir():
+        z = np.load(d / "charts.npz")
+        assert all(len(grammar_violations(z[k])) == 0 for k in z.files)
+    if (more / "runs" / "other_human").exists():
+        with open(more / "runs" / "other_human" / "per_song.csv", newline="") as f:
+            assert all(float(r["sr_gen"]) > 0 for r in csv.DictReader(f))
+    with pytest.raises(SystemExit):
+        corrupt_test.main([*songs, "--n", "3", "--out", str(more), "--other-human"])
     args = ["--ckpt", str(ckpt), "--ai", str(run), "--score", str(out / "runs" / "new_0.08"),
             "--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
             "--fake-mel", "--device", "cpu", "--out", str(tmp_path / "judge"), "--folds", "3",

@@ -19,7 +19,12 @@ and blind when it is sensitive to none. Writes <out>/summary.json and <out>/summ
 aggregate only: no per-song rows, so the playtest songs not played yet stay blind.
 --write-runs also writes <out>/runs/<corruption>_<dose>/ (charts.npz, per_song.csv: key,
 path, grade, sr_gen, sr_human_local), to score with judge.py --score: does the judge find the
-corruption? Use --n 0 then, since judge.py keeps only the songs every run has.
+corruption? Use --n 0 then, since judge.py keeps only the songs every run has (or the same
+--n as the judged run's first songs). --other-human with it also writes <out>/runs/other_human/:
+for each song the human chart of another difficulty of its set nearest in SR, on the same beat
+grid (the same timing points and offset), cut to the song's rows; a song with none is left
+out. A judge should take it for human: the control against a judge that only tells this
+chart from any other.
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ from scripts.evaluate import (
 )
 from src.data.cache import read_manifest
 from src.data.mel import open_mel
-from src.data.tokenizer import HOLD_START, TAP, K, L, decode, make_metas
+from src.data.tokenizer import EMPTY, HOLD_START, TAP, K, L, decode, grammar_violations, make_metas
 from src.evaluation.corrupt import CORRUPTIONS, DOSES, corrupt, spearman_with_dose
 from src.evaluation.metrics import new_positions
 from src.evaluation.sr import star_rating
@@ -71,7 +76,32 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="default outputs/corrupt/<split>")
     ap.add_argument("--write-runs", action="store_true",
                     help="also write a judge.py --score run per corruption and dose")
-    return ap.parse_args(argv)
+    ap.add_argument("--other-human", action="store_true",
+                    help="with --write-runs: the run of another human chart of each song")
+    a = ap.parse_args(argv)
+    if a.other_human and not a.write_runs:
+        ap.error("--other-human needs --write-runs")
+    return a
+
+
+def other_human(r: dict, mates: list[str], z, by_key: dict, cache: Path):
+    """(tokens shaped as the song's own, SR) of the mate nearest in SR on the same beat
+    grid, cut to the song's rows; None when no mate fits."""
+    human, n_cells, sr = z["tokens"], int(z["n_cells"]), float(r["sr"])
+    for k in sorted((m for m in mates if by_key.get(m, {}).get("sr")),
+                    key=lambda m: abs(float(by_key[m]["sr"]) - sr)):
+        o = np.load(cache / "tokens" / f"{k}.npz")
+        if int(o["cell_offset"]) != int(z["cell_offset"]) \
+                or not np.array_equal(o["timing_points"], z["timing_points"]):
+            continue
+        flat = o["tokens"].reshape(-1, K)[:int(o["n_cells"])]
+        out = human.copy().reshape(-1, K)
+        out[:n_cells] = EMPTY
+        m = min(n_cells, len(flat))
+        out[:m] = flat[:m]
+        if len(grammar_violations(out[:n_cells])) == 0:
+            return out.reshape(human.shape), float(by_key[k]["sr"])
+    return None
 
 
 def song_columns(full: np.ndarray, human: np.ndarray, mel, n_cells: int, far_k: int,
@@ -119,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
             and (a.cache / "tokens" / f"{r['key']}.npz").exists()
             and store.has(r["key"])]
     by_set: dict[str, list[str]] = {}
+    by_key = {m["key"]: m for m in read_manifest(a.manifest)}
+    others: tuple[dict, list] = ({}, [])
     for m in read_manifest(a.manifest):
         if (a.cache / "tokens" / f"{m['key']}.npz").exists():
             by_set.setdefault(m["set_id"], []).append(m["key"])
@@ -166,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
                     table.append({"key": r["key"], "path": r["path"], "grade": grade,
                                   "sr_gen": round(cols["sr"], 4),
                                   "sr_human_local": round(base["sr"], 4)})
+        if a.other_human:
+            got = other_human(r, mates, z, by_key, a.cache)
+            if got is not None:
+                others[0][r["key"]] = got[0]
+                others[1].append({"key": r["key"], "path": r["path"], "grade": grade,
+                                  "sr_gen": round(got[1], 4), "sr_human_local": round(base["sr"], 4)})
         for c, cols in song.items():
             for k, seq in cols.items():
                 if len(seq) == 1 + len(DOSES[c]):
@@ -202,8 +240,12 @@ def main(argv: list[str] | None = None) -> int:
     lines += ["", "Blind (sensitive to none): " + (", ".join(summary["blind"]) or "none")]
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     if a.write_runs:
-        for (c, d), (charts, rows_out) in runs.items():
-            run = out / "runs" / f"{c}_{d:g}"
+        named = {f"{c}_{d:g}": v for (c, d), v in runs.items()}
+        if a.other_human and others[1]:
+            named["other_human"] = others
+            print(f"other_human: {len(others[1])} of {len(rows)} songs")
+        for name, (charts, rows_out) in named.items():
+            run = out / "runs" / name
             run.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(run / "charts.npz", **charts)
             with open(run / "per_song.csv", "w", newline="", encoding="utf-8") as f:

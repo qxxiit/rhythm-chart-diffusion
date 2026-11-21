@@ -163,9 +163,10 @@ python scripts/hold_stats.py           # ✅ long notes in human charts by grade
 python scripts/human_baselines.py      # ✅ human levels of the §4.11 metrics (train split)
 python scripts/check_sr.py             # ✅ local SR vs API SR, and what tokenization moves
 python scripts/tempo_density.py        # ✅ tempo vs notes per beat inside each SR grade
-python scripts/corrupt_test.py --split val --per-song   # ✅ the metrics against 4 corruptions x 3
+python scripts/corrupt_test.py --split val --per-song   # ✅ the metrics against 9 corruptions x 3
                                        #    doses of the human charts (docs/EVALUATION.md);
-                                       #    --write-runs: runs for judge.py --score
+                                       #    --write-runs: runs for judge.py --score;
+                                       #    --other-human: another human chart (the control)
 python scripts/judge_vs_diag.py --judge J --run R      # ✅ what of the judge's per-song scores
                                        #    the diagnostics explain (ridge R^2 over 5 folds)
 python scripts/results_table.py RUN ... [--judge J ...]  # ✅ the one results table: judge

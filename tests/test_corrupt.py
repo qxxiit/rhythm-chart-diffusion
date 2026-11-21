@@ -11,13 +11,13 @@ from src.data.tokenizer import EMPTY, HOLD_BODY, HOLD_END, HOLD_START, TAP, K, g
 from src.evaluation.corrupt import CORRUPTIONS, DOSES, corrupt, spearman_with_dose
 
 
-def chart(seed: int = 0, rows: int = 2000) -> np.ndarray:
+def chart(seed: int = 0, rows: int = 2000, p_hold: float = 0.1) -> np.ndarray:
     """Taps and long notes on a 1/4-beat grid (3 rows), some chords, grammar intact."""
     rng = np.random.default_rng(seed)
     x = np.full((rows, K), EMPTY, dtype=np.int64)
     r = 6
     while r < rows - 30:
-        if rng.random() < 0.1:                                    # a long note
+        if rng.random() < p_hold:                                 # a long note
             k, n = int(rng.integers(K)), int(rng.integers(3, 12))
             x[r, k], x[r + 1:r + n, k], x[r + n, k] = HOLD_START, HOLD_BODY, HOLD_END
             r += n + 3
@@ -34,13 +34,16 @@ def holds(x: np.ndarray) -> np.ndarray:
 
 @pytest.mark.parametrize("name", CORRUPTIONS)
 def test_corruptions_keep_the_grammar_and_the_long_notes(name: str) -> None:
-    x = chart()
+    x = chart(p_hold=0.02 if name == "copypaste" else 0.1)
     assert len(grammar_violations(x)) == 0
     changed = []
     for dose in DOSES[name]:
         y = corrupt(x, name, dose, np.random.default_rng(1))
         assert len(grammar_violations(y)) == 0
-        assert np.array_equal(holds(y), holds(x)) and np.array_equal(y[holds(y)], x[holds(x)])
+        if name == "lnflood":                                 # the long notes it adds, only
+            assert (holds(y) >= holds(x)).all() and np.array_equal(y[holds(x)], x[holds(x)])
+        else:
+            assert np.array_equal(holds(y), holds(x)) and np.array_equal(y[holds(y)], x[holds(x)])
         changed.append(int((y != x).sum()))
     assert 0 < changed[0] < changed[-1]                       # more with the dose
     assert np.array_equal(corrupt(x, name, 0.0, np.random.default_rng(1)), x)
@@ -65,6 +68,29 @@ def test_what_each_corruption_keeps() -> None:
     rows = np.flatnonzero(pairs)
     hands = [{0, 1}, {2, 3}]
     assert all(set(np.flatnonzero(y[r] == TAP)) in hands for r in rows)
+    rhythm = np.isin(x, (TAP, HOLD_START)).any(axis=1)
+    for name in ("minijack", "trill"):                        # lanes only: rhythm, chords stay
+        y = corrupt(x, name, 0.8, rng)
+        assert np.array_equal(np.isin(y, (TAP, HOLD_START)).any(axis=1), rhythm)
+        assert np.array_equal((y == TAP).sum(axis=1), (x == TAP).sum(axis=1))
+    y = corrupt(x, "minijack", 0.8, rng)                      # the same lane again, close by
+    on = np.flatnonzero(np.isin(y, (TAP, HOLD_START)).any(axis=1))
+    same = [(y[a] == TAP) @ (y[b] == TAP) for a, b in zip(on[:-1], on[1:]) if b - a <= 6]
+    assert sum(same) > sum((x[a] == TAP) @ (x[b] == TAP) for a, b in zip(on[:-1], on[1:])
+                           if b - a <= 6)
+    y = corrupt(x, "trill", 0.8, rng)                         # one hand's two lanes in turn
+    assert (y != x).any()
+    y = corrupt(x, "weakchord", 0.4, rng)                     # chords off the beat, only
+    grown = np.flatnonzero((y == TAP).sum(axis=1) > (x == TAP).sum(axis=1))
+    assert len(grown) > 0 and all(r % 12 != 0 for r in grown)
+    y = corrupt(x, "lnflood", 0.8, rng)                       # quarter-beat long notes
+    starts = np.argwhere((y == HOLD_START) & (x == TAP))
+    assert len(starts) > 0 and all(y[r + 3, k] == HOLD_END for r, k in starts)
+    z = chart(p_hold=0.0)
+    y = corrupt(z, "copypaste", 0.8, rng)                     # bars made the bar before
+    same_bars = [np.array_equal(y[b * 48:(b + 1) * 48], y[(b - 1) * 48:b * 48])
+                 for b in range(1, len(z) // 48)]
+    assert sum(same_bars) > len(same_bars) // 2
     with pytest.raises(ValueError):
         corrupt(x, "mirror", 0.5, rng)
 
