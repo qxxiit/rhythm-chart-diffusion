@@ -46,4 +46,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1132` | 11/19 | the stair share and the long notes' length as chart stats (pat-v1, against ft-v1) | not taken: the draws hardly follow the new stats (stair correlation +0.14 -> +0.19) | 2026-11-19 (2) |
 | `run_1133` | 11/20 | six chart stats from the first step (pat-v2, against full-v4); a probe of pat-v1 | pat-v2 a candidate, not taken: long notes' length and chords follow the human chart better, stairs not; the judges level | 2026-11-20 (1) |
 | `run_1134` | 11/20 | the mirrored bars at the shares counted again; the same bar again 4 bars later | `--mirror-shares 0.034,0.049,0.062` joins the system; the repeats not taken (the taps view +0.014) | 2026-11-20 (2) |
-| `run_1135` | 11/21 | the system drawn with pat-v2 (a choosing judge of its own), against the system | | 2026-11-21 (1) |
+| `run_1135` | 11/21 | the system drawn with pat-v2 (a choosing judge of its own), against the system | not taken: each trunk's judge favours its own (averages +0.008, +0.012); full-v4 stays through the freeze | 2026-11-21 (1) |
