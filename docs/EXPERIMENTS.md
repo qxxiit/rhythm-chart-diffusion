@@ -117,4 +117,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-20 (1) · Six chart stats from the first step: pat-v2 (predictions, results)
 - 2026-11-20 (2) · The mirrored bars at the shares counted again; the same bar four bars later (predictions, results)
 - 2026-11-21 (1) · The system drawn with pat-v2 (predictions, results)
-- 2026-11-22 (1) · Does the judge see what players hate? (predictions)
+- 2026-11-22 (1) · Does the judge see what players hate? (predictions, results)
