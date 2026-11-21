@@ -340,6 +340,19 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                and abs(float(r["stat_hold_share"]) - float(r["human_hold_share"])) < 1e-6
                and r["stat_chord_share"] != "" for r in rows)
     assert evaluate.main([*c5, "--split", "train", "--n", "2", "--stats", "oracle,bogus=1"]) == 2
+    assert evaluate.main([*c5, "--split", "train", "--n", "3", "--stats", "oracle",
+                          "--sample-seed", "1"]) == 0               # a judge from its trunk chooses
+    run5 = next((tmp_path / "cs5").glob("eval_*_s1"))
+    from scripts import judge
+    assert judge.main(["--ckpt", str(tmp_path / "cs5" / "best.pt"), "--ai", str(run5),
+                       "--manifest", str(data / "manifest.csv"), "--cache", str(data / "cache"),
+                       "--fake-mel", "--device", "cpu", "--out", str(tmp_path / "judge5"),
+                       "--folds", "2", "--epochs", "1", "--batch-pairs", "2", "--log-every", "1",
+                       "--view", "holds", "--sr", "human", "--save-models", "--name", "p5"]) == 0
+    assert evaluate.main([*c5, "--split", "train", "--n", "3", "--stats", "oracle", "--select-judge",
+                          str(tmp_path / "judge5" / "p5"), "--select-k", "2"]) == 0
+    with open(next((tmp_path / "cs5").glob("eval_*_sel2p5*")) / "per_song.csv", newline="") as f:
+        assert all(float(r["select_windows"]) >= 1 for r in csv.DictReader(f))
     oracle_run = next((tmp_path / "cs").glob("eval_*_st-oracle"))
     with open(oracle_run / "per_song.csv", newline="") as f:      # bar kinds, both charts
         row = next(csv.DictReader(f))

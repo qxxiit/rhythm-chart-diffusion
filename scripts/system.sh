@@ -15,9 +15,9 @@
 #   outputs/judge/sel_holds: judge.py --save-models), SEED (0), DENSE (the dense-taps flags,
 #   "--dense-taps 0.2 --dense-repeats"), EXTRA (more flags for the passes, e.g. the lanes
 #   drawn again in units: "--relane --lanes forward --refine 2 --lane-temp 1
-#   --lane-inner-temp 0.5 --lane-unit 24").
+#   --lane-inner-temp 0.5 --lane-unit 24"), OUT (where the paths and logs go, outputs/system).
 # The draw and the final run are written where evaluate.py writes them (CKPT's directory); the
-# final run's path is in outputs/system/SPLIT_nN.path, the logs beside it. 120 songs take
+# final run's path is in OUT/SPLIT_nN.path, the logs beside it. 120 songs take
 # about 1 h 30 min on the MacBook (M-series, MPS). Then, for a playtest pack:
 #   python scripts/playtest_pack.py --single --from-run "$(cat outputs/system/test_n0.path)" ...
 set -e
@@ -29,7 +29,7 @@ JUDGE=${JUDGE:-outputs/judge/sel_holds}
 SEED=${SEED:-0}
 DENSE=${DENSE:---dense-taps 0.2 --dense-repeats}
 EXTRA=${EXTRA:-}
-O=outputs/system
+O=${OUT:-outputs/system}
 [ -f "$CKPT" ] || { echo "no $CKPT"; exit 2; }
 [ -d "$JUDGE" ] || { echo "no $JUDGE (the choosing judge)"; exit 2; }
 mkdir -p $O
