@@ -160,3 +160,6 @@ blog.html
 
 # ===== Kept out of the way (not in git) =====
 _archive/
+
+# songs the user brings (audio: not for the repository)
+/inputs/

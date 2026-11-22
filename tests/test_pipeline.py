@@ -353,6 +353,25 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
                           str(tmp_path / "judge5" / "p5"), "--select-k", "2"]) == 0
     with open(next((tmp_path / "cs5").glob("eval_*_sel2p5*")) / "per_song.csv", newline="") as f:
         assert all(float(r["select_windows"]) >= 1 for r in csv.DictReader(f))
+    from scripts import generate_system                      # the system on a new song's .osz
+    import zipfile
+    folder = next((data / "raw").glob("100 *"))
+    osz = tmp_path / "new song.osz"
+    with zipfile.ZipFile(osz, "w") as zf:
+        for name in ("v0.osu", "audio.mp3"):
+            zf.write(folder / name, name)
+    gen = ["--ckpt", str(tmp_path / "cs5" / "best.pt"), "--judge", str(tmp_path / "judge5" / "p5"),
+           "--stats-csv", str(more_csv), "--steps", "4", "--device", "cpu"]
+    out = tmp_path / "gen_system"
+    assert generate_system.main([*gen, "--osz", str(osz), "--sr", "2", "3", "--out", str(out)]) == 0
+    names = zipfile.ZipFile(out / "new song.osz").namelist()
+    assert "audio.mp3" in names and sorted(n for n in names if n.endswith(".osu")) == [
+        "new song [AI 2].osu", "new song [AI 3].osu"]
+    text = (out / "new song [AI 2].osu").read_text()
+    assert "Version:AI 2" in text and "Mode: 3" in text
+    assert generate_system.main([*gen, "--audio", str(folder / "audio.mp3")]) == 2   # no timing
+    assert generate_system.main([*gen, "--osz", str(osz), "--max-ln", "-1", "--sr", "2",
+                                 "--out", str(out)]) == 2                    # no such chart
     oracle_run = next((tmp_path / "cs").glob("eval_*_st-oracle"))
     with open(oracle_run / "per_song.csv", newline="") as f:      # bar kinds, both charts
         row = next(csv.DictReader(f))

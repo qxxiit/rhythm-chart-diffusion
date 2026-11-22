@@ -194,6 +194,9 @@ python scripts/playtest_pack.py --single --split test --songs 16 --max-seconds 1
     --max-hold-share 0.3 --list-songs F    # ✅ the songs a pack would take, their keys to F;
                                        #    SONGS=F sh scripts/system.sh test 0 draws only
                                        #    those (evaluate.py --keys-file), then --keys
+python scripts/generate_system.py --osz SET.osz --sr 2.5 3.5 4.5
+                                       # ✅ the system (system.sh's two stages) on a new song:
+                                       #    its audio and red lines; stats of a train chart
 python scripts/set_positions.py --run R --mode drop|snap|same --out O
                                        # ✅ R's notes on new positions out or moved,
                                        #    the set's other charts as the oracle (val)

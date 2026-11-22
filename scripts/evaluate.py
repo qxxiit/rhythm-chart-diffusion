@@ -339,7 +339,8 @@ def bootstrap_ci(values, n: int = 2000, seed: int = 0) -> list[float]:
     return [round(float(q), 4) for q in np.percentile(means, [2.5, 97.5])]
 
 
-def main(argv: list[str] | None = None) -> int:
+def make_parser() -> argparse.ArgumentParser:
+    """evaluate.py's options (scripts/generate_system.py reads the system's from it too)."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--split", default="val")
@@ -619,6 +620,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="score the charts.npz of this earlier run (after --copy-bias, if "
                          "given) instead of sampling")
     ap.add_argument("--device", default="auto")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = make_parser()
     a = ap.parse_args(argv)
 
     store = open_mel(a.cache, fake=a.fake_mel, stems=checkpoint_n_mels(a.ckpt) > N_MELS)

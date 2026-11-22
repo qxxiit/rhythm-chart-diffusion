@@ -52,3 +52,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1138` | 11/22 | the system's lane passes (untangle, mirrored bars) and all its passes on run_1137's lt1, by the lane-only judge | both stay (-0.003, -0.010, across 0); all the passes cost a human chart +0.016: the draw's rhythm is what is left | 2026-11-22 (3) |
 | `run_1139` | 11/22 | the system's notes on new positions taken out or moved, the mapset's other charts as the oracle: their ceiling by the judge | out +0.029, moved +0.041 [+0.003, +0.089]: easier to tell, no pass; the rhythm stays for the playtest | 2026-11-22 (4) |
 | `run_1140` | 11/23 | the main playtest's pack: 16 test songs (at most 2 min, SR 1.5-4.5, long notes at most 30%), the system drawn on them, two versions | | 2026-11-23 (2) |
+| `run_1141` | 11/23 | the system's charts of the user's arcade songs (inputs/arcade/*.osz), SR 2.5 / 3.5 / 4.5, to play | | 2026-11-23 (3) |
