@@ -8,6 +8,9 @@
     python scripts/playtest_pack.py --pairs --songs 16 --settings \
         random:128:continue:fwd+ref2 random:128:continue:fwd+ref2+cp4
     python scripts/playtest_pack.py --single --from-run R --songs 20 --versions 2
+    python scripts/playtest_pack.py --single --split test --songs 16 --max-seconds 120 \
+        --max-hold-share 0.3 --list-songs songs.txt     # then SONGS=songs.txt system.sh test 0,
+    python scripts/playtest_pack.py --single --from-run R --keys $(cat songs.txt) ...  # and pack
     python scripts/playtest_pack.py --score outputs/full-v1/playtest/answers.csv ratings_*.csv
 
 Songs come from --split (val by default: not seen in training), one chart per
@@ -344,8 +347,11 @@ def style_args(setting: dict, vocab: dict | None, label: dict) -> dict:
     return {"genre": genre, "mapper": mapper, "style_guidance": setting["style_guidance"]}
 
 
-def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float) -> list[dict]:
-    """One chart per song (seeded), filtered, then n spread evenly over SR."""
+def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float,
+               max_hold: float | None = None, cache: Path | None = None) -> list[dict]:
+    """One chart per song (seeded), filtered, then n spread evenly over SR. max_hold: leave
+    out the songs whose chart (the human one) has more long notes than this share of its
+    onsets (hold_stats; players skipped such charts as too hard, 2026-11-23 (1))."""
     by_song: dict[str, list[dict]] = {}
     for r in rows:
         by_song.setdefault(r["audio_key"], []).append(r)
@@ -354,6 +360,11 @@ def pick_songs(rows: list[dict], n: int, seed: int, sr_range, max_seconds: float
     lo, hi = sr_range
     one = [r for r in one if lo <= float(r["sr"]) <= hi
            and (not r.get("duration_s") or float(r["duration_s"]) <= max_seconds)]
+    if max_hold is not None:
+        def hold_share(r: dict) -> float:
+            share = hold_stats(np.load(cache / "tokens" / f"{r['key']}.npz")["tokens"])["hold_share"]
+            return 0.0 if share != share else share
+        one = [r for r in one if hold_share(r) <= max_hold]
     one.sort(key=lambda r: float(r["sr"]))
     if len(one) <= n:
         return one
@@ -386,7 +397,8 @@ def build(a) -> int:
         pool = [r for r in rows if r["split"] == a.split and r["audio_key"] not in seen]
         if seen:
             print(f"--exclude: {len(seen)} songs of earlier packs left out")
-        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds)
+        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds,
+                           a.max_hold_share, a.cache)
     if not songs:
         print("no songs to pack", file=sys.stderr)
         return 2
@@ -546,9 +558,45 @@ def single_humans(n: int, seed: int) -> np.ndarray:
     return human
 
 
+def readme_length(songs: list[dict]) -> str:
+    """The README's line on how long the pack takes (the songs' audio, as the manifest has it)."""
+    seconds = sum(float(r["duration_s"]) for r in songs if r.get("duration_s"))
+    if not seconds:
+        return ""
+    return f"\n곡 {len(songs)}개, 음악 길이를 모두 합치면 약 {max(1, round(seconds / 60))}분입니다.\n"
+
+
+def list_songs(a) -> int:
+    """--single --list-songs F: the songs the pack would take from --split (one chart per
+    song, within --sr-range, --max-seconds and --max-hold-share, not in --exclude), their
+    chart keys to F, one per line."""
+    rows = [r for r in read_manifest(a.manifest) if r["sr"] and r.get("drop", "") == ""
+            and (a.cache / "tokens" / f"{r['key']}.npz").exists()]
+    seen = set()
+    for path in a.exclude or []:
+        keys = {r["key"] for r in read_csv(path)}
+        seen |= {r["audio_key"] for r in rows if r["key"] in keys}
+    pool = [r for r in rows if r["split"] == a.split and r["audio_key"] not in seen]
+    songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds, a.max_hold_share,
+                       a.cache)
+    if not songs:
+        print("no songs within --sr-range, --max-seconds and --max-hold-share", file=sys.stderr)
+        return 2
+    a.list_songs.parent.mkdir(parents=True, exist_ok=True)
+    a.list_songs.write_text("".join(r["key"] + "\n" for r in songs))
+    seconds = sum(float(r["duration_s"]) for r in songs if r.get("duration_s"))
+    print(f"{len(songs)} songs of {a.split} (SR {float(songs[0]['sr']):.2f}-"
+          f"{float(songs[-1]['sr']):.2f}, {seconds / 60:.0f} min of audio) -> {a.list_songs}")
+    return 0
+
+
 def build_single(a) -> int:
     """--single: one chart per song, the human one or a saved run's AI chart (--from-run),
-    about half each; --versions 2 a second pack with each song's other chart."""
+    about half each; --versions 2 a second pack with each song's other chart. --list-songs F:
+    only the songs it would pick from the split, their chart keys written to F (to draw just
+    those, system.sh SONGS=F), then --keys $(cat F) packs them."""
+    if a.list_songs is not None:
+        return list_songs(a)
     if not a.from_run:
         print("--single takes its AI charts from saved evaluate.py runs: give --from-run",
               file=sys.stderr)
@@ -579,7 +627,8 @@ def build_single(a) -> int:
             keys = {r["key"] for r in read_csv(path)}
             seen |= {r["audio_key"] for r in rows if r["key"] in keys}
         pool = [r for r in rows if r["split"] == a.split and r["audio_key"] not in seen]
-        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds)
+        songs = pick_songs(pool, a.songs, a.seed, a.sr_range, a.max_seconds,
+                           a.max_hold_share, a.cache)
     if not songs:
         print("no songs to pack (the runs' songs, within --sr-range and --max-seconds)",
               file=sys.stderr)
@@ -641,7 +690,8 @@ def build_single(a) -> int:
             w = csv.DictWriter(f, fieldnames=SINGLE_FIELDS)
             w.writeheader()
             w.writerows(sheets[v - 1])
-        (out / pack / "README.txt").write_text(README_SINGLE, encoding="utf-8")
+        (out / pack / "README.txt").write_text(README_SINGLE + readme_length(songs),
+                                               encoding="utf-8")
         zip_pack(out, pack, "playtest_pack.zip" if len(packs) == 1 else f"playtest_{pack}.zip")
     with open(out / "answers.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(answers[0]))
@@ -902,6 +952,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="empty cells required between a release and the next onset in its lane; "
                          "0 = keep; default by SR (sampler.HOLD_RULES)")
     ap.add_argument("--sr-range", type=float, nargs=2, default=(1.5, 4.5))
+    ap.add_argument("--max-hold-share", type=float, default=None,
+                    help="leave out songs whose chart has more long notes than this share of "
+                         "its onsets (0.3: the long-note charts players skipped, 2026-11-23)")
+    ap.add_argument("--list-songs", type=Path, default=None,
+                    help="--single: write the chart keys of the songs it would pick to this file "
+                         "and stop (draw them with system.sh SONGS=FILE, then --keys)")
     ap.add_argument("--max-seconds", type=float, default=150.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--manifest", type=Path, default=Path("data/manifest.csv"))

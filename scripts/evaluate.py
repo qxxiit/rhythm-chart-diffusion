@@ -481,6 +481,9 @@ def main(argv: list[str] | None = None) -> int:
                          "processes share the GPU and end together (the seeds stay the full "
                          "run's, so the charts match it); the directory gets _shardKofN, and "
                          "scripts/merge_shards.py makes the run")
+    ap.add_argument("--keys-file", type=Path, default=None,
+                    help="only these charts (keys, one per line or space-separated; e.g. "
+                         "playtest_pack.py --list-songs); tag _k<file name>")
     ap.add_argument("--sr-min", type=float, default=None,
                     help="only the charts at this SR or above (the seeds stay those of the "
                          "full run, so the charts match it)")
@@ -627,6 +630,14 @@ def main(argv: list[str] | None = None) -> int:
     for m in read_manifest(a.manifest):
         if (a.cache / "tokens" / f"{m['key']}.npz").exists():
             by_set.setdefault(m["set_id"], []).append(m["key"])
+    if a.keys_file is not None:                  # these charts only (a playtest's songs)
+        wanted = {k.strip() for k in a.keys_file.read_text().split() if k.strip()}
+        found = {r["key"] for r in rows if r["key"] in wanted}
+        if found != wanted:
+            print(f"{a.keys_file}: {len(wanted - found)} of {len(wanted)} keys not {a.split} charts "
+                  f"with SR, tokens and mel: {sorted(wanted - found)[:5]}", file=sys.stderr)
+            return 2
+        rows = [r for r in rows if r["key"] in wanted]
     if a.per_song:
         rows = pick_per_song(rows, a.seed)
     if a.n:
@@ -846,6 +857,8 @@ def main(argv: list[str] | None = None) -> int:
         tag += f"_s{a.sample_seed}"
     if a.sr_min is not None:
         tag += f"_min{a.sr_min:g}"
+    if a.keys_file is not None:
+        tag += f"_k{a.keys_file.stem}"
     out_dir = a.ckpt.parent / f"eval_{tag}"
     saved = None
     if a.from_charts is not None:

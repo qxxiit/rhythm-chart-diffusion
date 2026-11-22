@@ -15,7 +15,8 @@
 #   outputs/judge/sel_holds: judge.py --save-models), SEED (0), DENSE (the dense-taps flags,
 #   "--dense-taps 0.2 --dense-repeats"), EXTRA (more flags for the passes, e.g. the lanes
 #   drawn again in units: "--relane --lanes forward --refine 2 --lane-temp 1
-#   --lane-inner-temp 0.5 --lane-unit 24"), OUT (where the paths and logs go, outputs/system).
+#   --lane-inner-temp 0.5 --lane-unit 24"), OUT (where the paths and logs go, outputs/system),
+#   SONGS (a file of chart keys: only those charts, evaluate.py --keys-file; with N 0).
 # The draw and the final run are written where evaluate.py writes them (CKPT's directory); the
 # final run's path is in OUT/SPLIT_nN.path, the logs beside it. 120 songs take
 # about 1 h 30 min on the MacBook (M-series, MPS). Then, for a playtest pack:
@@ -30,12 +31,17 @@ SEED=${SEED:-0}
 DENSE=${DENSE:---dense-taps 0.2 --dense-repeats}
 EXTRA=${EXTRA:-}
 O=${OUT:-outputs/system}
+SONGS=${SONGS:-}
 [ -f "$CKPT" ] || { echo "no $CKPT"; exit 2; }
 [ -d "$JUDGE" ] || { echo "no $JUDGE (the choosing judge)"; exit 2; }
 mkdir -p $O
 
 EV="python scripts/evaluate.py --ckpt $CKPT --split $SPLIT --n $N --per-song --lane-guidance 2 \
 --lane-temp 1 --stats oracle"
+if [ -n "$SONGS" ]; then
+    [ -f "$SONGS" ] || { echo "no $SONGS"; exit 2; }
+    EV="$EV --keys-file $SONGS"
+fi
 DRAW="--lanes forward --refine 2 --loud-bias 0.1 --onset-bias 1 --onset-taper 2.7,5,0.35 \
 --schedule cosine --sample-seed $SEED --select-judge $JUDGE --select-k 4 --hold-bias 0.2"
 RESTS="--rest 1 --light 0.5 --light-alike --fill-holes 0.5 --rest-max-run 8"

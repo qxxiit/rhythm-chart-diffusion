@@ -190,6 +190,10 @@ python scripts/evaluate.py --from-charts R ... --mirror-bars [--mirror-shares S1
     [--repeat-bars]                  # ✅ the mirrors' shares at lags 1, 2, 4; the same bar
                                        #    again 4 bars later (mirror_bars, flip off)
 python scripts/bar_copies.py RUN ...   # ✅ bars mirrored / the same again, runs and human charts
+python scripts/playtest_pack.py --single --split test --songs 16 --max-seconds 120 \
+    --max-hold-share 0.3 --list-songs F    # ✅ the songs a pack would take, their keys to F;
+                                       #    SONGS=F sh scripts/system.sh test 0 draws only
+                                       #    those (evaluate.py --keys-file), then --keys
 python scripts/set_positions.py --run R --mode drop|snap|same --out O
                                        # ✅ R's notes on new positions out or moved,
                                        #    the set's other charts as the oracle (val)

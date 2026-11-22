@@ -747,6 +747,12 @@ def test_train_and_sample_on_real_mel(data: Path, tmp_path: Path) -> None:
               "--manifest", str(data / "manifest.csv"), "--root", str(data / "raw"),
               "--cache", str(data / "cache"), "--out", str(ps)]
     assert playtest_pack.main(["--single", *single]) == 2                  # no --from-run
+    listed = tmp_path / "songs.txt"                    # --list-songs: the songs, for system.sh
+    assert playtest_pack.main(["--single", *single, "--max-hold-share", "1",
+                               "--list-songs", str(listed)]) == 0
+    assert len(listed.read_text().split()) == 2
+    assert playtest_pack.main(["--single", *single, "--max-hold-share", "-1",
+                               "--list-songs", str(listed)]) == 2           # none that short of holds
     assert playtest_pack.main(["--single", "--from-run", str(fake), "--versions", "2",
                                *single]) == 0
     with open(ps / "answers.csv", encoding="utf-8-sig") as f:
@@ -1487,6 +1493,18 @@ def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:
     assert evaluate.main(["--ckpt", str(ckpt), "--root", str(data / "raw"), "--device", "cpu",
                           "--steps", "4", *songs, "--n", "3"]) == 0
     run = next((tmp_path / "c").glob("eval_*"))
+    with open(run / "per_song.csv", newline="") as f:      # --keys-file: those charts only
+        first = next(csv.DictReader(f))["key"]
+    keys = tmp_path / "pick.txt"
+    keys.write_text(first + "\n")
+    assert evaluate.main(["--ckpt", str(ckpt), "--root", str(data / "raw"), "--device", "cpu",
+                          "--steps", "4", *songs, "--n", "0", "--keys-file", str(keys)]) == 0
+    picked = next((tmp_path / "c").glob("eval_*_kpick"))
+    with open(picked / "per_song.csv", newline="") as f:
+        assert [r["key"] for r in csv.DictReader(f)] == [first]
+    keys.write_text("no_such_chart\n")
+    assert evaluate.main(["--ckpt", str(ckpt), "--root", str(data / "raw"), "--device", "cpu",
+                          "--steps", "4", *songs, "--n", "0", "--keys-file", str(keys)]) == 2
     from scripts import set_positions                        # the oracle on new positions
     from src.data.tokenizer import grammar_violations
     pos = ["--run", str(run), "--manifest", str(data / "manifest.csv"), "--cache",
