@@ -137,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
-        stem = safe(a.osz.stem)
+        stem = safe(f"{meta['Artist']} - {meta['Title']}") if meta.get("Title") \
+            and meta.get("Artist") else safe(a.osz.stem)
     else:
         audio, timing, stem = a.audio, a.timing, safe(a.audio.stem)
     title = a.title or meta.get("Title") or stem

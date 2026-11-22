@@ -364,10 +364,13 @@ def test_chart_stats_end_to_end(data: Path, tmp_path: Path) -> None:
            "--stats-csv", str(more_csv), "--steps", "4", "--device", "cpu"]
     out = tmp_path / "gen_system"
     assert generate_system.main([*gen, "--osz", str(osz), "--sr", "2", "3", "--out", str(out)]) == 0
-    names = zipfile.ZipFile(out / "new song.osz").namelist()
+    from src.data.chart_parser import _kv, _split_sections   # named by the set's artist - title
+    meta = _kv(_split_sections((folder / "v0.osu").read_text(encoding="utf-8-sig"))["Metadata"])
+    stem = generate_system.safe(f"{meta['Artist']} - {meta['Title']}")
+    names = zipfile.ZipFile(out / f"{stem}.osz").namelist()
     assert "audio.mp3" in names and sorted(n for n in names if n.endswith(".osu")) == [
-        "new song [AI 2].osu", "new song [AI 3].osu"]
-    text = (out / "new song [AI 2].osu").read_text()
+        f"{stem} [AI 2].osu", f"{stem} [AI 3].osu"]
+    text = (out / f"{stem} [AI 2].osu").read_text()
     assert "Version:AI 2" in text and "Mode: 3" in text
     assert generate_system.main([*gen, "--audio", str(folder / "audio.mp3")]) == 2   # no timing
     assert generate_system.main([*gen, "--osz", str(osz), "--max-ln", "-1", "--sr", "2",
