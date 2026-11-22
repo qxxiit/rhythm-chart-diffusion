@@ -121,3 +121,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-22 (2) · A judge of the lanes alone (predictions, results)
 - 2026-11-22 (3) · The system's lane passes on the human rhythm (predictions, results)
 - 2026-11-22 (4) · The notes on new positions, their ceiling (predictions, results)
+- 2026-11-23 (1) · The two systems played blind: full-v4 against pat-v2 (results)

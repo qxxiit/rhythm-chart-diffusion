@@ -117,6 +117,7 @@
 | 2026-11-22 | The lanes stay at temperature 1; lane settings and passes are judged by the lane-only judge (the human rhythm, the lanes drawn again) | run_1137: full-v4's lanes on the human rhythm 0.559 [0.515, 0.604] (80% shuffled lanes 0.974); at 0.7 +0.133 [+0.089, +0.175], in units +0.165 [+0.112, +0.216], though their lane means come nearer the human charts' (EXPERIMENTS 2026-11-22 (2)) |
 | 2026-11-22 | The untangle and the mirrored bars stay in the system as they are | run_1138, the lane-only judge on full-v4's lanes on the human rhythm: the untangle -0.003 [-0.033, +0.020], the mirrored bars -0.010 [-0.035, +0.019], both -0.008 [-0.037, +0.021]; all the system's passes +0.016 [-0.054, +0.083] (EXPERIMENTS 2026-11-22 (3)) |
 | 2026-11-22 | No pass for the notes on new positions; the rhythm stays as it is for the playtest | run_1139, the mapset's other charts as the oracle on the system's charts: taken out +0.029 [-0.007, +0.070], moved onto the mappers' positions +0.041 [+0.003, +0.089]; easier to tell, not harder (EXPERIMENTS 2026-11-22 (4)) |
+| 2026-11-23 | The playtest is drawn with full-v4 (as on 11/21) | the two systems played blind (the 1121 pack, 4 of 6 val songs played): full-v4 2, pat-v2 1 (by taste), 1 mixed; against pat-v2 runs of hits for no reason (EXPERIMENTS 2026-11-23 (1)) |
 
 260806 "방학 스프린트 중엔 conda base 사용, 환경 정식화(environment.yml 갱신)는 vast.ai 세팅 시점(8월 중순)에"
 
