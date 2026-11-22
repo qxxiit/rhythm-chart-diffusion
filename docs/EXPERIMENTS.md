@@ -119,4 +119,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-21 (1) · The system drawn with pat-v2 (predictions, results)
 - 2026-11-22 (1) · Does the judge see what players hate? (predictions, results)
 - 2026-11-22 (2) · A judge of the lanes alone (predictions, results)
-- 2026-11-22 (3) · The system's lane passes on the human rhythm (predictions)
+- 2026-11-22 (3) · The system's lane passes on the human rhythm (predictions, results)
