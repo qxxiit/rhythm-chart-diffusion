@@ -76,6 +76,7 @@ AdamW, warmup + cosine, gradient clipping and accumulation, bf16 autocast on CUD
 - ✅ **`holds.py`**: long-note share of onsets, mean length, share shorter than 1/4 beat, and re-presses within 2 cells of a release, per chart; `scripts/hold_stats.py` gives the human levels by grade.
 - ✅ **`structure.py`**: rho over bar pairs (all / in / cross / far) from bar self-similarity of standardized log-Mel and of the note grid (§4.11-2).
 - ✅ **`patterns.py`**: pattern clarity by periodicity (§4.11-2b): runs of repeating lane motifs at one snap, their coverage (and the chance level of the same rhythm), length, and one-note breaks. Parameters are frozen before model output is scored. `motion_pred`: how predictable the lane motion is with no pattern names (share of bits an online context model saves over the same chart with lanes redrawn). `move_shares`: the kinds of lane motion (stairs, trills, jacks, 1-4 leaps, chords).
+- ✅ **`oracle.py`**: a chart's notes on new positions (no onset of the mapset's other charts within 5 ms) taken out or moved to the nearest such onset within 1/4 beat, the other charts as the oracle: a ceiling, never a pass (`scripts/set_positions.py`).
 - `scripts/human_baselines.py`: human-chart levels of pattern clarity by grade, chart similarity by bar distance (for rho_far's k), human rho.
 - ⚪ long-note mAP@tIoU: deferred.
 
@@ -189,6 +190,9 @@ python scripts/evaluate.py --from-charts R ... --mirror-bars [--mirror-shares S1
     [--repeat-bars]                  # ✅ the mirrors' shares at lags 1, 2, 4; the same bar
                                        #    again 4 bars later (mirror_bars, flip off)
 python scripts/bar_copies.py RUN ...   # ✅ bars mirrored / the same again, runs and human charts
+python scripts/set_positions.py --run R --mode drop|snap|same --out O
+                                       # ✅ R's notes on new positions out or moved,
+                                       #    the set's other charts as the oracle (val)
 sh scripts/system.sh [SPLIT] [N]      # ✅ the system as decided: the draw chosen by sel_holds,
                                        #    then the passes (outputs/system/SPLIT_nN.path)
 python scripts/evaluate.py --from-charts R --hold-share oracle ... --dense-taps T [--dense-repeats]

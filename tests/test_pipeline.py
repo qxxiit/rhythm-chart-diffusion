@@ -1487,6 +1487,21 @@ def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:
     assert evaluate.main(["--ckpt", str(ckpt), "--root", str(data / "raw"), "--device", "cpu",
                           "--steps", "4", *songs, "--n", "3"]) == 0
     run = next((tmp_path / "c").glob("eval_*"))
+    from scripts import set_positions                        # the oracle on new positions
+    from src.data.tokenizer import grammar_violations
+    pos = ["--run", str(run), "--manifest", str(data / "manifest.csv"), "--cache",
+           str(data / "cache"), "--fake-mel"]
+    for mode in ("same", "drop", "snap"):
+        assert set_positions.main([*pos, "--mode", mode, "--out", str(tmp_path / mode)]) == 0
+        moved = json.loads((tmp_path / mode / "summary.json").read_text())
+        assert moved["songs"] == 3 and moved["mode"] == mode
+        z = np.load(tmp_path / mode / "charts.npz")
+        assert len(z.files) == 3 and all(len(grammar_violations(z[k])) == 0 for k in z.files)
+        with open(tmp_path / mode / "per_song.csv", newline="") as f:
+            assert {"key", "grade", "sr_gen", "sr_human_local", "new_onsets", "moved"} \
+                <= set(next(csv.DictReader(f)))
+    same = json.loads((tmp_path / "same" / "summary.json").read_text())
+    assert same["moved"] == same["dropped"] == 0 and same["sr_gen_max_diff"] < 1e-3
     out = tmp_path / "corrupt"
     assert corrupt_test.main([*songs, "--n", "3", "--out", str(out), "--write-runs",
                               "--corruptions", "lanes", "new"]) == 0
@@ -1497,7 +1512,6 @@ def test_corruptions_and_the_judge_checks(data: Path, tmp_path: Path) -> None:
     assert (out / "summary.md").exists()
     with open(out / "runs" / "new_0.08" / "per_song.csv", newline="") as f:
         assert {"key", "grade", "sr_gen", "sr_human_local"} <= set(next(csv.DictReader(f)))
-    from src.data.tokenizer import grammar_violations
     more = tmp_path / "more"                                  # the players' complaints, the control
     assert corrupt_test.main([*songs, "--n", "3", "--out", str(more), "--write-runs",
                               "--other-human", "--corruptions", "minijack", "trill", "weakchord",
