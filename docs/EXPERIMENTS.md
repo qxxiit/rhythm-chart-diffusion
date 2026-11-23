@@ -124,4 +124,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-23 (1) · The two systems played blind: full-v4 against pat-v2 (results)
 - 2026-11-23 (2) · The main playtest's pack
 - 2026-11-23 (3) · The system on new songs
-- 2026-11-23 (4) · The final results table on the test split (predictions)
+- 2026-11-23 (4) · The final results table on the test split (predictions, results)
