@@ -38,3 +38,47 @@ def test_the_options_are_evaluates():
     assert d.rest is None and d.mirror_bars is False                 # no passes in the draw
     assert p.rest == 1 and p.mirror_bars and p.snap_releases == 2 and p.dense_taps == 0.2
     assert p.hold_share is None and p.stats == "sample"
+
+
+OSU = """osu file format v14
+
+[General]
+AudioFilename: Audio.MP3
+
+[Metadata]
+Title:T
+Artist:A
+
+[TimingPoints]
+0,500,4,2,0,100,1,0
+"""
+
+
+def test_zip_names_in_shift_jis_come_back():
+    import zipfile
+    info = zipfile.ZipInfo("稲.mp3".encode("cp932").decode("cp437"))   # as zipfile reads it
+    info.flag_bits = 0
+    assert generate_system.member_name(info) == "稲.mp3"
+    flagged = zipfile.ZipInfo("稲.mp3")
+    flagged.flag_bits = 0x800
+    assert generate_system.member_name(flagged) == "稲.mp3"
+
+
+def test_from_osz_finds_the_audio_whatever_its_case(tmp_path):
+    import zipfile
+    osz = tmp_path / "set.osz"
+    with zipfile.ZipFile(osz, "w") as zf:
+        zf.writestr("song [x].osu", OSU)
+        zf.writestr("audio.mp3", b"not really audio")
+        zf.writestr("../outside.txt", b"stays out")
+    into = tmp_path / "into"
+    into.mkdir()
+    audio, osu, meta = generate_system.from_osz(osz, into)
+    assert audio.name == "audio.mp3" and osu.name == "song [x].osu" and meta["Title"] == "T"
+    assert not (tmp_path / "outside.txt").exists()
+    assert generate_system.find_audio_file(into, "") == into / "audio.mp3"   # the only one
+
+
+def test_long_notes_are_capped_by_default():
+    a = generate_system.parse_args(["--osz", "x.osz"])
+    assert a.hold_down and not generate_system.parse_args(["--osz", "x.osz", "--no-hold-down"]).hold_down

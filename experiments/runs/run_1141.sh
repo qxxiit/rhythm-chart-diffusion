@@ -10,11 +10,13 @@
 #   download (~1 min) inputs/arcade/<beatmap id>_<set id>.osz, the songs' titles printed
 #   charts  (~3-5 min a song, three at a time) outputs/arcade_1123/<id>/<artist - title>.osz
 #   pack    (seconds) outputs/arcade_1123/arcade_1123.zip: the .osz files, README, a sheet
+# O=outputs/arcade_1123_v2 for another round (its zip arcade_1123_v2.zip).
 # All: for p in download charts pack; do sh experiments/runs/run_1141.sh $p; done
 set -ex
 PHASE=${1:-charts}
 IN=${IN:-inputs/arcade}
-O=outputs/arcade_1123
+O=${O:-outputs/arcade_1123}
+NAME=$(basename $O)
 SR=${SR:-2.5 3.5 4.5}
 JOBS=${JOBS:-3}
 
@@ -82,9 +84,8 @@ EOF
         echo "곡 | 난이도 | 좋았던 곳 | 어색했던 곳"
         for f in $O/pack/*.osz; do echo "$(basename "$f" .osz) | | |"; done
     } > $O/pack/피드백.txt
-    [ -f $O/arcade_1123.zip ] && { echo "$O/arcade_1123.zip is there"; exit 0; }
-    (cd $O/pack && zip -q -r ../arcade_1123.zip .)
-    ls -l $O/arcade_1123.zip
+    (cd $O/pack && zip -q -r ../$NAME.zip .)          # adds to the zip if it is there
+    ls -l $O/$NAME.zip
     ;;
 *)
     echo "phases: charts pack"; exit 2

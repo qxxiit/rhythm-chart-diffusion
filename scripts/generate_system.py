@@ -14,8 +14,9 @@ evaluate.py's; tests/test_generate_system.py checks the flags against system.sh.
 A new song has no human chart. The chart stats come from a human train chart of about the
 target SR (as evaluate.py --stats sample), drawn again until its long notes are at most
 --max-ln of its onsets (players skipped the long-note charts as too hard, 2026-11-23), and the
-long-note share the passes aim at (--hold-share oracle in the system) is that chart's; the
-choosing judge reads the target SR where it read the human chart's. Writes
+long-note share the passes aim at (--hold-share oracle in the system) is that chart's, and
+by default the long notes over it are made taps (--hold-down, not in the system); the choosing
+judge reads the target SR where it read the human chart's. Writes
 <out>/<stem>.osz (the audio and one .osu per SR), default outputs/generated_system/<stem>/.
 """
 
@@ -39,6 +40,7 @@ from src.data.chart_parser import _kv, _split_sections
 from src.data.chart_writer import write_osu
 from src.data.tokenizer import L, decode, grammar_violations, make_metas
 from src.models.diffusion import load_denoiser, pick_device
+from src.models.judge import stable_hash
 from src.models.sampler import generate_song, post_song
 from src.models.select import WindowJudge
 
@@ -73,6 +75,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="the choosing judge (judge.py --save-models)")
     ap.add_argument("--max-ln", type=float, default=0.3,
                     help="the sampled chart's long notes at most this share of its onsets")
+    ap.add_argument("--hold-down", action=argparse.BooleanOptionalAction, default=True,
+                    help="long notes over that share made taps (evaluate.py --hold-down; not in "
+                         "the system: 11-23's first charts reached 56%% where 28%% was asked)")
     ap.add_argument("--stats-csv", type=Path, default=Path("data/chart_stats.csv"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--title", default=None)
@@ -92,26 +97,70 @@ def system_options(ckpt: Path, judge: Path, seed: int) -> tuple[argparse.Namespa
             parser.parse_args(common + PASSES))
 
 
+AUDIO_SUFFIXES = (".mp3", ".ogg", ".wav", ".flac", ".m4a")
+
+
+def member_name(info: zipfile.ZipInfo) -> str:
+    """A zip member's name as its writer meant it: names without the UTF-8 flag come back from
+    zipfile as cp437, and beatmap sets made on Japanese systems are often Shift-JIS (cp932;
+    11-23: INARI's audio and .osu)."""
+    if info.flag_bits & 0x800:
+        return info.filename
+    raw = info.filename.encode("cp437", errors="replace")
+    for encoding in ("utf-8", "cp932"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return info.filename
+
+
+def find_audio_file(folder: Path, name: str) -> Path | None:
+    """The .osu's AudioFilename in its folder: as written, else ignoring case, else the
+    folder's only audio file."""
+    if name and (folder / name).is_file():
+        return folder / name
+    files = [f for f in folder.iterdir() if f.is_file()]
+    same = [f for f in files if f.name.lower() == name.lower()] if name else []
+    if same:
+        return same[0]
+    audio = [f for f in files if f.suffix.lower() in AUDIO_SUFFIXES]
+    return audio[0] if len(audio) == 1 else None
+
+
 def from_osz(osz: Path, into: Path) -> tuple[Path, Path, dict]:
     """(audio, an .osu with red lines, its metadata) of a beatmap set, unpacked into `into`."""
+    root = into.resolve()
     with zipfile.ZipFile(osz) as zf:
-        zf.extractall(into)
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            target = (into / member_name(info)).resolve()
+            if root not in target.parents:              # nothing written outside `into`
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
     for osu in sorted(into.rglob("*.osu")):
         sections = _split_sections(osu.read_text(encoding="utf-8-sig", errors="replace"))
-        audio = _kv(sections.get("General", [])).get("AudioFilename", "").strip()
-        if audio and (osu.parent / audio).exists():
+        name = _kv(sections.get("General", [])).get("AudioFilename", "").strip()
+        audio = find_audio_file(osu.parent, name)
+        if audio is not None:
             try:
                 red_lines(osu)
             except ValueError:
                 continue
-            return osu.parent / audio, osu, _kv(sections.get("Metadata", []))
+            return audio, osu, _kv(sections.get("Metadata", []))
     raise ValueError(f"{osz}: no .osu with red lines and its audio file")
 
 
-def sample_stats(table: dict, sr: float, max_ln: float, seed: int, i: int) -> tuple[str, dict]:
-    """A human train chart's stats near SR sr whose long notes are at most max_ln of onsets."""
+def sample_stats(table: dict, sr: float, max_ln: float, seed: int, i: int,
+                 song: str = "") -> tuple[str, dict]:
+    """A human train chart's stats near SR sr whose long notes are at most max_ln of onsets
+    (seeded by the song too, so the songs do not all take the same chart)."""
     for t in range(200):
-        key, wanted = chartstats.sample(table, sr, np.random.default_rng([seed, i, t]))
+        key, wanted = chartstats.sample(table, sr,
+                                        np.random.default_rng([seed, stable_hash(song), i, t]))
         if np.isfinite(wanted.get("hold_share", np.nan)) and wanted["hold_share"] <= max_ln:
             return key, wanted
     raise ValueError(f"no train chart near SR {sr} with long notes at most {max_ln}")
@@ -126,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         print("--audio needs --timing (an .osu with the red lines)", file=sys.stderr)
         return 2
     d, p = system_options(a.ckpt, a.judge, a.seed)
+    p.hold_down = a.hold_down
     if a.steps is not None:
         d.steps = a.steps
     tmp = None
@@ -171,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     written = []
     for i, sr in enumerate(a.sr):
         try:
-            stat_key, wanted = sample_stats(table, sr, a.max_ln, a.seed, i)
+            stat_key, wanted = sample_stats(table, sr, a.max_ln, a.seed, i, stem)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
