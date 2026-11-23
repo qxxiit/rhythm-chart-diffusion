@@ -53,3 +53,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1139` | 11/22 | the system's notes on new positions taken out or moved, the mapset's other charts as the oracle: their ceiling by the judge | out +0.029, moved +0.041 [+0.003, +0.089]: easier to tell, no pass; the rhythm stays for the playtest | 2026-11-22 (4) |
 | `run_1140` | 11/23 | the main playtest's pack: 16 test songs (at most 2 min, SR 1.5-4.5, long notes at most 30%), the system drawn on them, two versions | | 2026-11-23 (2) |
 | `run_1141` | 11/23 | the system's charts of the user's arcade songs (beatmap ids in inputs/arcade/ids.txt, downloaded), SR 2.5 / 3.5 / 4.5, to play | | 2026-11-23 (3) |
+| `run_1143` | 11/23 | the final results table on the test split: the system, its draw before the passes, another human chart and timing as controls; full and taps judges | | 2026-11-23 (4) |
