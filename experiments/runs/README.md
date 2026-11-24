@@ -54,3 +54,4 @@ The current system in one command is [`scripts/system.sh`](../../scripts/system.
 | `run_1140` | 11/23 | the main playtest's pack: 16 test songs (at most 2 min, SR 1.5-4.5, long notes at most 30%), the system drawn on them, two versions | | 2026-11-23 (2) |
 | `run_1141` | 11/23 | the system's charts of the user's arcade songs (beatmap ids in inputs/arcade/ids.txt, downloaded), SR 2.5 / 3.5 / 4.5, to play | | 2026-11-23 (3) |
 | `run_1143` | 11/23 | the final results table on the test split: the system, its draw before the passes, another human chart and timing as controls; full and taps judges | full 0.863, taps 0.776 (281-song judges); another human chart 0.503; the passes +0.008 by the judges, nearer by the diagnostics | 2026-11-23 (4) |
+| `run_1144` | 11/25 | the rest of the final table on test: the raw draw (no choosing, no passes), the same with every chunk on its own, the system's judge on 60/120/200 songs | | 2026-11-25 (1) |
