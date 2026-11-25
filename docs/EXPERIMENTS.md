@@ -125,4 +125,4 @@ Phase 1 (the AR baselines) is on hold since 2026-09-30 (MASTERPLAN).
 - 2026-11-23 (2) · The main playtest's pack
 - 2026-11-23 (3) · The system on new songs
 - 2026-11-23 (4) · The final results table on the test split (predictions, results)
-- 2026-11-25 (1) · The system's steps, the chunks on their own, and the judge's songs (predictions)
+- 2026-11-25 (1) · The system's steps, the chunks on their own, and the judge's songs (predictions, results)
